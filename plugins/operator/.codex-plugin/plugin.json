@@ -1,6 +1,6 @@
 {
   "name": "ratserver-operator",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Reusable Operator plans and projects guidance.",
   "author": {
     "name": "Operator contributors"
@@ -10,12 +10,13 @@
     "displayName": "Operator",
     "developerName": "Operator contributors",
     "shortDescription": "Projects and human actions",
-    "longDescription": "Existing MCP tools for action plans, task graphs and bounded workflows.",
+    "longDescription": "Operator plans and project graphs through the existing workspace OAuth app, with preserved permissions.",
     "category": "Productivity",
     "defaultPrompt": "Check my existing Operator connection and show projects and next actions.",
     "brandColor": "#218D8A",
     "capabilities": [],
     "logo": "./assets/operator-icon.svg",
     "composerIcon": "./assets/operator-icon.svg"
-  }
+  },
+  "apps": "./.app.json"
 }
