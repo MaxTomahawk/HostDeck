@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ratserver-operator",
+  "version": "1.2.0",
+  "description": "Reusable human action plans, project graphs and bounded workflow guidance.",
+  "author": {
+    "name": "Operator contributors"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Operator",
+        "developerName": "Operator contributors",
+        "category": "Productivity",
+        "shortDescription": "Projects and human actions",
+        "longDescription": "Create and resume human action plans, task dependencies and bounded workflows using an existing Operator MCP connection.",
+        "defaultPrompt": "Check my existing Operator connection and show projects and next actions.",
+        "brandColor": "#218D8A",
+        "capabilities": [],
+        "logo": "./assets/operator-icon.svg",
+        "composerIcon": "./assets/operator-icon.svg"
+      }
+    }
+  }
+}

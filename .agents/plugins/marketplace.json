@@ -1,0 +1,23 @@
+{
+  "name": "maxtomahawk-public-plugins",
+  "interface": {
+    "displayName": "Max public plugins"
+  },
+  "plugins": [
+    {
+      "name": "ratserver-operator",
+      "source": {
+        "source": "local",
+        "path": "./plugins/operator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity",
+      "interface": {
+        "displayName": "Operator"
+      }
+    }
+  ]
+}

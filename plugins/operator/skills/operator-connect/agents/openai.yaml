@@ -1,0 +1,3 @@
+interface:
+  display_name: "Operator Connect"
+  short_description: "Use the currently connected Operator MCP tools"

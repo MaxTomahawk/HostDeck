@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Operator — de hoeder van de plannen</title>
+  <desc id="desc">Een kleurrijke, gestileerde opperhoeder met drie pijlers van het RatServer-embleem, een gouden kroon en een afgeronde takenlijst.</desc>
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1F214C"/><stop offset="1" stop-color="#102D44"/></linearGradient>
+    <linearGradient id="robe" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#46DAB2"/><stop offset="1" stop-color="#1883A2"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFE788"/><stop offset="1" stop-color="#FBA83C"/></linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#night)"/>
+  <circle cx="128" cy="113" r="99" fill="none" stroke="#5C6889" stroke-width="2" stroke-dasharray="3 9" opacity=".65"/>
+  <circle cx="128" cy="118" r="83" fill="#204765" opacity=".55"/>
+  <path d="M55 209Q65 162 99 150L128 166L157 150Q191 162 201 209L194 221H62Z" fill="url(#robe)"/>
+  <path d="M87 163Q90 129 102 111H154Q166 129 169 163L147 195H109Z" fill="#233557"/>
+  <path d="M91 105Q91 68 128 68Q165 68 165 105V124Q156 154 128 156Q100 154 91 124Z" fill="#F1B58F"/>
+  <path d="M90 113Q92 83 105 77L128 86L150 77Q167 89 166 113L153 104L143 86Q123 105 90 113Z" fill="#263B65"/>
+  <circle cx="110" cy="118" r="3.3" fill="#27344D"/>
+  <circle cx="146" cy="118" r="3.3" fill="#27344D"/>
+  <path d="M115 135Q128 142 141 135" fill="none" stroke="#9C6060" stroke-width="3" stroke-linecap="round"/>
+  <path d="M93 79L103 50L120 62L128 38L137 62L154 50L164 79Z" fill="url(#gold)" stroke="#FEE2A0" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="128" cy="69" r="6" fill="#F75858"/>
+  <g transform="translate(70 156) scale(2.6)">
+    <path d="M3 13.5C3 12.1193 4.11929 11 5.5 11H9V21H5.5C4.11929 21 3 19.8807 3 18.5V13.5Z" fill="#FFD400"/>
+    <path d="M15 7H18.5C19.8807 7 21 8.11929 21 9.5V18.5C21 19.8807 19.8807 21 18.5V21H15V7Z" fill="#F75858"/>
+    <path d="M9 5.5C9 4.11929 10.1193 3 11.5 3H12.5C13.8807 3 15 4.11929 15 5.5V21H9V5.5Z" fill="#FFA43D"/>
+  </g>
+  <g transform="translate(157 151) rotate(10)">
+    <rect x="0" y="0" width="55" height="68" rx="9" fill="#F6F5E8" stroke="#92D8C6" stroke-width="3"/>
+    <rect x="15" y="-6" width="26" height="12" rx="4" fill="#FBA83C"/>
+    <path d="M11 20l5 5 9-11M11 40l5 5 9-11" stroke="#16A987" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M31 21h14M31 42h14M12 56h33" stroke="#829CAC" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <circle cx="60" cy="69" r="5" fill="#FFD400"/>
+  <circle cx="200" cy="70" r="4" fill="#4BD5C3"/>
+  <path d="M29 139l9-4M209 124l12 5" stroke="#FBA83C" stroke-width="3" stroke-linecap="round"/>
+</svg>
