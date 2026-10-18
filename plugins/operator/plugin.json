@@ -1,26 +1,22 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ratserver-operator",
-  "version": "1.2.1",
-  "description": "Reusable human action plans, project graphs and bounded workflow guidance.",
+  "version": "1.3.0",
+  "description": "Operator projects, human plans, validated inputs and bounded workflows.",
   "author": {
     "name": "Operator contributors"
   },
-  "extensions": {
-    "com.openai": {
-      "interface": {
-        "displayName": "Operator",
-        "developerName": "Operator contributors",
-        "category": "Productivity",
-        "shortDescription": "Projects and human actions",
-        "longDescription": "Operator action plans, project dependencies and verified workflows, backed by the registered Operator OAuth MCP app in your workspace.",
-        "defaultPrompt": "Check my existing Operator connection and show projects and next actions.",
-        "brandColor": "#218D8A",
-        "capabilities": [],
-        "logo": "./assets/operator-icon.svg",
-        "composerIcon": "./assets/operator-icon.svg"
-      },
-      "apps": "./.app.json"
-    }
-  }
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Operator",
+    "developerName": "Operator contributors",
+    "shortDescription": "Projects and human actions",
+    "longDescription": "Coordinate projects, phases, typed inputs, task claims and durable evidence through the existing workspace OAuth app. Open original human steps directly; proposed human work requires owner acceptance. Existing permissions and bounded execution remain unchanged.",
+    "category": "Productivity",
+    "defaultPrompt": "Check my existing Operator connection and show projects and next actions.",
+    "brandColor": "#218D8A",
+    "capabilities": [],
+    "logo": "./assets/operator-icon.svg",
+    "composerIcon": "./assets/operator-icon.svg"
+  },
+  "apps": "./.app.json"
 }
