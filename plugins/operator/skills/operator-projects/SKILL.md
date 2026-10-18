@@ -1,14 +1,18 @@
 ---
 name: operator-projects
-description: Manage durable Operator projects, phases, task dependencies and separate human/agent queues through connected MCP tools.
+description: Manage durable Operator projects, phases, dependencies, typed input gates, human proposals, leased agent work and evidence. Use for multi-session tasks, parallel coordination, project graphs, recovery and complete exports through the connected Operator MCP app.
 ---
-# Project and task graph
+# Projects and tasks
 
-1. List projects and inspect the existing graph before selecting an item.
-2. Resolve current task versions and dependency readiness; reject invented or cyclic dependencies.
-3. Use atomic claims and short leases where the connected server supports them.
-4. On concurrent edits, reload after a conflict; preserve expected versions and stable request IDs.
-5. Human steps remain in the normal human-action plan with their existing approval and secret gates.
-6. Never treat task scheduling as authority for privileged operations.
-7. Record durable evidence and next-actor state to support later continuation.
-8. Use only live exposed tool names; disclose missing backend features.
+Use Operator as the durable coordination record. Read [project contracts](references/projects-contract.md) before a write involving leases, inputs, human assignment, recovery or paging.
+
+1. Resolve the existing project with `operator_list_projects`. Read the graph and selected task from the server, including prerequisites, source state, current version, inputs, claim, checkpoints and next action. Caller context and remembered chat state never override authoritative server data.
+2. Use `operator_get_project_graph` or `operator_list_project_tasks` for actual project/actor/state views. Follow opaque `next_cursor` pages with identical filters until null; restart from page one on a stale snapshot. Never present a partial page or mixed snapshot as the full project or export.
+3. Create or edit projects, phases and tasks with the corresponding tools and stable request IDs. Include goal, expected output, environment, tools/capabilities, assets, acceptance/quality criteria and input location where relevant. Preserve existing human plan identities. Use atomic bulk creation only for a reviewed set of new tasks and valid dependency edges.
+4. Select ready work through `operator_next_project_tasks`; claim agent work atomically with `operator_claim_next_project_task`. Keep the returned task version, lease ID, fence and expiry. Renew before expiry when needed, use the current lease/fence for claimed writes, and release when safely stopping. A lease coordinates ownership; it grants no execution privileges.
+5. Define or submit typed nonsecret inputs through `operator_set_project_task_input`. Submission does not validate them. Check the actual criteria before `operator_validate_project_task_input`; required human validation stays in the portal and cannot be downgraded by an agent.
+6. Propose human work only after considering available agent/tool alternatives. `operator_propose_project_human_task` requires the proposal, alternatives, limitations, expected quality and benefit. The owner must explicitly accept in the portal; an unaccepted proposal is not a human assignment. Continue independent ready agent work.
+7. Open linked human work directly in its original plan and exact step using the server's canonical link. Preserve inputs, feedback, attachments and protected controls. Never add an AI-chat handoff or second human editor, or force a human source task done through the project API.
+8. Record nonsecret `progress`, `handoff`, `output` or `blocked` checkpoints after meaningful work. Preserve artifact references, blockers and the next action. Read checkpoints on resumption. A reference is a pointer, and a checkpoint is a report; neither alone establishes a verified upload, execution or accepted result.
+9. Complete only after server prerequisites, validated required inputs, acceptance criteria and the actual evidence are satisfied. Use explicit `operator_rework_project_task` with a reason when rework is needed; reread dependent work after its claims/results are invalidated. On conflicts reload and reconcile without discarding edits.
+10. Inspect `operator_get_project_runtime` and `operator_project_changes` for worker/event state. Use bounded `operator_replay_project_events` for persisted event recovery. Worker scheduling, notifications and replay do not constitute an autonomous LLM daemon or permission to repeat external effects. Export all pages with `operator_export_project` when a complete project export is requested.
