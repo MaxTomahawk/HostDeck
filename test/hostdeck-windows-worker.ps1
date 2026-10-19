@@ -11,14 +11,17 @@ $unknown = (@{ id = 'unknown'; operation = 'hostdeck_unregistered'; args = @{ se
 if ($unknown.error.code -ne 'UNKNOWN_OPERATION') { throw 'Unknown operation was not denied.' }
 $workspace = Join-Path $env:TEMP ('hostdeck-runner-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $workspace | Out-Null
+$jobId = [guid]::NewGuid().ToString('N')
+$requestPath = Join-Path $workspace "$jobId.request.json"
 $request = @{
     command = 'echo hostdeck-runner-ok'; cwd = $workspace
     shellExecutable = (Join-Path $env:WINDIR 'System32/cmd.exe'); timeoutSeconds = 10
-    stdoutPath = (Join-Path $workspace 'stdout.txt'); stderrPath = (Join-Path $workspace 'stderr.txt')
-    receiptPath = (Join-Path $workspace 'receipt.json'); cancelPath = (Join-Path $workspace 'cancel')
+    stdoutPath = (Join-Path $workspace "$jobId.out"); stderrPath = (Join-Path $workspace "$jobId.err")
+    receiptPath = (Join-Path $workspace "$jobId.json"); cancelPath = (Join-Path $workspace "$jobId.cancel")
+    statusMarkerPath = (Join-Path $workspace "$jobId.live.json")
 }
-$request | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $workspace 'request.json')
-& $worker --run-job (Join-Path $workspace 'request.json')
+$request | ConvertTo-Json -Compress | Set-Content -LiteralPath $requestPath -Encoding utf8
+& $worker --run-job $requestPath
 $receipt = Get-Content -LiteralPath $request.receiptPath -Raw | ConvertFrom-Json
 if ($receipt.status -ne 'completed' -or $receipt.exitCode -ne 0 -or -not $receipt.descendantsContained) {
     throw 'Job Object runner did not produce a successful receipt.'

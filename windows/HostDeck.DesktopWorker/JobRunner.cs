@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HostDeck.DesktopWorker;
 
@@ -13,30 +14,54 @@ internal static class JobRunner
 {
     internal static async Task Run(string requestPath)
     {
-        var request = JsonSerializer.Deserialize<JobRequest>(await File.ReadAllTextAsync(requestPath),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? throw new InvalidDataException("Invalid job request.");
-        Validate(request);
         var status = "failed";
         uint? exitCode = null;
         var descendantsContained = false;
         var started = DateTimeOffset.UtcNow;
+        var safePaths = TryGetOwnedPaths(requestPath);
         try {
-            (status, exitCode, descendantsContained) = await Execute(request);
+            if (safePaths is null) throw new InvalidDataException("Invalid job request path.");
+            var request = JsonSerializer.Deserialize<JobRequest>(await File.ReadAllTextAsync(requestPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidDataException("Invalid job request.");
+            Validate(request, safePaths);
+            try { (status, exitCode, descendantsContained) = await Execute(request); }
+            catch { status = "uncertain"; exitCode = null; descendantsContained = false; }
         } catch (Exception) {
             status = "failed";
         } finally {
-            var receipt = new {
-                status, exitCode, startedAt = started, endedAt = DateTimeOffset.UtcNow,
-                descendantsContained
-            };
-            var temp = request.ReceiptPath + ".tmp-" + Guid.NewGuid().ToString("N");
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(receipt));
-            File.Move(temp, request.ReceiptPath, false);
+            if (safePaths is not null) {
+                try { if (!File.Exists(safePaths.Stdout)) using (File.Create(safePaths.Stdout)) { } } catch { }
+                try { if (!File.Exists(safePaths.Stderr)) using (File.Create(safePaths.Stderr)) { } } catch { }
+                var receipt = new {
+                    status, exitCode, startedAt = started, endedAt = DateTimeOffset.UtcNow,
+                    descendantsContained
+                };
+                var temp = safePaths.Receipt + ".tmp-" + Guid.NewGuid().ToString("N");
+                try {
+                    await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(receipt));
+                    File.Move(temp, safePaths.Receipt, false);
+                } finally { try { File.Delete(temp); } catch { } }
+            }
         }
     }
 
-    private static void Validate(JobRequest r)
+    private sealed record OwnedPaths(string Receipt, string Stdout, string Stderr, string Cancel, string Marker);
+
+    private static OwnedPaths? TryGetOwnedPaths(string requestPath)
+    {
+        try {
+            var full = Path.GetFullPath(requestPath);
+            var match = Regex.Match(Path.GetFileName(full), @"^(?<id>[0-9a-f]{32})\.request\.json$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success) return null;
+            var directory = Path.GetDirectoryName(full)!;
+            var id = match.Groups["id"].Value;
+            return new OwnedPaths(Path.Combine(directory, id + ".json"), Path.Combine(directory, id + ".out"),
+                Path.Combine(directory, id + ".err"), Path.Combine(directory, id + ".cancel"), Path.Combine(directory, id + ".live.json"));
+        } catch { return null; }
+    }
+
+    private static void Validate(JobRequest r, OwnedPaths safePaths)
     {
         if (Native.IsElevated() || System.Diagnostics.Process.GetCurrentProcess().SessionId == 0)
             throw new InvalidOperationException("Job runner must use unelevated user token.");
@@ -45,12 +70,22 @@ internal static class JobRunner
         foreach (var path in new[] { r.ShellExecutable, r.Cwd, r.StdoutPath, r.StderrPath, r.ReceiptPath, r.CancelPath, r.StatusMarkerPath })
             if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
                 throw new InvalidDataException("Absolute paths required.");
+        if (!PathEquals(r.ReceiptPath, safePaths.Receipt) || !PathEquals(r.StdoutPath, safePaths.Stdout)
+            || !PathEquals(r.StderrPath, safePaths.Stderr) || !PathEquals(r.CancelPath, safePaths.Cancel)
+            || !PathEquals(r.StatusMarkerPath, safePaths.Marker))
+            throw new InvalidDataException("Job paths must match the private request identity.");
         if (!File.Exists(r.ShellExecutable) || !Directory.Exists(r.Cwd)) throw new FileNotFoundException("Shell or working directory missing.");
         if (new[] { r.StdoutPath, r.StderrPath, r.ReceiptPath, r.CancelPath, r.StatusMarkerPath }.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 5)
             throw new InvalidDataException("Job paths must be distinct.");
         if (r.Environment is { Count: > 128 } || r.Environment?.Any(pair =>
             string.IsNullOrEmpty(pair.Key) || pair.Key.Contains('=') || pair.Key.Contains('\0') || pair.Value.Contains('\0')) == true)
             throw new InvalidDataException("Invalid environment.");
+    }
+
+    private static bool PathEquals(string left, string right)
+    {
+        try { return string.Equals(Path.GetFullPath(left), right, StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     private static async Task<(string Status, uint? ExitCode, bool DescendantsContained)> Execute(JobRequest r)

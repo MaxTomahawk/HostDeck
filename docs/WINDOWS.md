@@ -80,7 +80,11 @@ cannot supply this field through the canonical tool schema.
 is a separate, detached mode. Its request has `command`, `cwd`,
 `shellExecutable` (absolute path to `cmd.exe`, `powershell.exe` or `pwsh.exe`),
 `timeoutSeconds`, `stdoutPath`, `stderrPath`, `receiptPath`, `cancelPath`,
-and optional `environment`. All paths must be absolute. The user agent must
+and optional `environment`. All paths must be absolute. Requests use a private
+`<32-hex-job-id>.request.json` file, with matching `.out`, `.err`, `.json`,
+`.cancel` and `.live.json` siblings for output, receipt, cancellation and liveness.
+Validation failures before execution also produce a failed receipt when this
+private request identity is valid. The user agent must
 create the request/output directory with user-only ACLs and start this runner
 under the authorized unelevated user token. The runner creates the shell
 suspended, assigns it to a Windows Job Object with kill-on-close, then resumes
