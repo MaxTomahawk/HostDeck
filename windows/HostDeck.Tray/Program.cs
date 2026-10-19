@@ -129,8 +129,6 @@ internal static class Native
 {
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint processId);
-    [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint OpenSCManager(string? machine, string? database, uint access);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint OpenService(nint manager, string name, uint access);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
@@ -152,8 +150,9 @@ internal static class Native
     }
     internal static bool IsTrustedService(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, string configPath)
     {
-        if (!GetNamedPipeServerProcessId(pipe, out var pid) || !ProcessIdToSessionId(pid, out var session) || session != 0)
-            return false;
+        if (!GetNamedPipeServerProcessId(pipe, out var pid)) return false;
+        try { if (Process.GetProcessById(checked((int)pid)).SessionId != 0) return false; }
+        catch (Exception error) when (error is ArgumentException or System.ComponentModel.Win32Exception or InvalidOperationException or OverflowException) { return false; }
         var configFile = Path.GetFullPath(configPath);
         var configDirectory = Path.GetDirectoryName(configFile);
         if (configDirectory is null || !Path.GetFileName(configFile).Equals("facade.json", StringComparison.OrdinalIgnoreCase)

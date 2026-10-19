@@ -67,13 +67,15 @@ internal sealed class LifecycleService : ServiceBase
                 if (line is null) continue;
                 var sid = "";
                 var logon = "";
+                var session = 0;
                 current.RunAsClient(() => {
                     using var identity = WindowsIdentity.GetCurrent(true);
                     sid = identity?.User?.Value ?? "";
                     logon = identity is null ? "" : Native.LogonId(identity.Token);
+                    session = identity is null ? 0 : Native.SessionId(identity.Token);
                 });
                 if (!Native.GetNamedPipeClientProcessId(current.SafePipeHandle, out var pid)
-                    || !Native.ProcessIdToSessionId(pid, out var session) || session == 0
+                    || pid == 0 || session <= 0
                     || sid != enrolledSid || logon == "") continue;
                 using var request = JsonDocument.Parse(line);
                 var operation = request.RootElement.TryGetProperty("operation", out var requested)
@@ -84,13 +86,13 @@ internal sealed class LifecycleService : ServiceBase
                     continue;
                 }
                 if (operation == "register") {
-                    if (lastLogon is not null && (lastLogon != logon || lastSession != (int)session)
+                    if (lastLogon is not null && (lastLogon != logon || lastSession != session)
                         && lastAgentSeen > DateTimeOffset.UtcNow.AddMinutes(-1)) continue;
                     lastAgentSeen = DateTimeOffset.UtcNow;
-                    lastSession = (int)session;
+                    lastSession = session;
                     lastLogon = logon;
                 }
-                if (lastLogon is not null && (lastLogon != logon || lastSession != (int)session)) continue;
+                if (lastLogon is not null && (lastLogon != logon || lastSession != session)) continue;
                 await writer.WriteLineAsync(JsonSerializer.Serialize(new {
                     healthy = true, agent_online = lastAgentSeen > DateTimeOffset.UtcNow.AddMinutes(-1),
                     agent_seen_at = lastAgentSeen, agent_session_id = lastSession,
@@ -187,8 +189,13 @@ internal static class Native
             return $"{value.AuthenticationId.High:x8}{value.AuthenticationId.Low:x8}";
         } finally { Marshal.FreeHGlobal(buffer); }
     }
-    [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+    internal static int SessionId(nint token)
+    {
+        var buffer = Marshal.AllocHGlobal(sizeof(int));
+        try {
+            return GetTokenInformation(token, 12, buffer, sizeof(int), out _) ? Marshal.ReadInt32(buffer) : 0;
+        } finally { Marshal.FreeHGlobal(buffer); }
+    }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle handle, out uint processId);
 }

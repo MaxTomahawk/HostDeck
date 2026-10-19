@@ -55,8 +55,6 @@ internal static class VerifierNative
 {
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
-    [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ProcessIdToSessionId(uint pid, out uint session);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint OpenSCManager(string? machine, string? database, uint access);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -83,8 +81,9 @@ internal static class VerifierNative
     }
     internal static bool IsTrustedHostDeckService(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, string metadataPath)
     {
-        if (!GetNamedPipeServerProcessId(pipe, out var pid) || !ProcessIdToSessionId(pid, out var session) || session != 0)
-            return false;
+        if (!GetNamedPipeServerProcessId(pipe, out var pid)) return false;
+        try { if (System.Diagnostics.Process.GetProcessById(checked((int)pid)).SessionId != 0) return false; }
+        catch (Exception error) when (error is ArgumentException or System.ComponentModel.Win32Exception or InvalidOperationException or OverflowException) { return false; }
         var metadata = Path.GetFullPath(metadataPath);
         var enrollment = Path.GetDirectoryName(metadata);
         if (enrollment is null || !Path.GetFileName(metadata).Equals("device.json", StringComparison.OrdinalIgnoreCase)
