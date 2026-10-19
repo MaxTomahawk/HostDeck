@@ -218,7 +218,8 @@ async function main(){
       await fs.writeFile(temporary,JSON.stringify({generation:control.generation}),{flag:'wx',mode:0o600});await fs.rename(temporary,target);return;
     }
     if(!config.http)throw new RuntimeError('HTTP_NOT_CONFIGURED');
-    await promisify(execFile)(path.join(process.env.SystemRoot!,'System32','rundll32.exe'),['url.dll,FileProtocolHandler',`http://127.0.0.1:${config.http.port}/ui`],{windowsHide:true});return;
+    const managementUrl=config.http.auth_mode==='cloudflare-access'?new URL('/ui',config.http.resource).href:`http://127.0.0.1:${config.http.port}/ui`;
+    await promisify(execFile)(path.join(process.env.SystemRoot!,'System32','rundll32.exe'),['url.dll,FileProtocolHandler',managementUrl],{windowsHide:true});return;
   }
   const running=await startHostDeck(args[2],args[0]==='--stdio'?'stdio':'http');
   const stop=()=>{void running.close().then(()=>process.exit(0),()=>process.exit(1));};

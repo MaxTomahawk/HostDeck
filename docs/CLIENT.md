@@ -27,7 +27,10 @@ the installed device/executor/session and explicit scopes. This profile binds th
 Cloudflare application, not individual OAuth clients; Cloudflare manages its
 client revocation. Email and group names do not grant tool permissions. The
 standalone protected page connects using its Cloudflare session without token
-paste. Native OAuth/PKCE and the MCP Apps host bridge remain supported.
+paste. In this mode `--ui` opens the protected public `/ui` address so Cloudflare
+can attach the signed assertion; direct loopback requests cannot fabricate it.
+Local owner stdio/CLI operation remains available without Cloudflare. Native
+OAuth/PKCE and the MCP Apps host bridge remain supported.
 Configure the Access application and operator-only policy before publishing the
 Tunnel route. See Cloudflare's [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 and [MCP security guidance](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/).
