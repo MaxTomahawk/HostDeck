@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-19",
+  "automatic_monitoring_enabled": false,
+  "license_hash_basis": "SHA256 of Git blob bytes at the pinned commit, before checkout line-ending conversion",
+  "sources": [
+    {
+      "repository": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+      "commit": "f508e524469c26f6366e17dbfd3ee5a69d112127",
+      "role": "inherited file/document/terminal baseline",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "e77cff545e0506903bf6a4bf29169fa40911eb76d70d239267df10c5c59370dd"
+    },
+    {
+      "repository": "https://github.com/exalsch/windows-commander-mcp",
+      "commit": "a5b33fed0994dc65782bf8cfb8e1168253098fcf",
+      "role": "primary desktop-session source candidate; not yet imported",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "72399cdf5576d8a9837b00c23bd7ae7e9df6d6831c6f5d869b0b0e4cd66dcbbe"
+    },
+    {
+      "repository": "https://github.com/CursorTouch/Windows-MCP",
+      "commit": "128f2960c79b74bd2630f4dbc9d4f664f4ce89b3",
+      "role": "complementary desktop behavior/source reference",
+      "license": "MIT",
+      "license_path": "LICENSE.md",
+      "license_sha256": "20ced59173768e20e91a43e3a80443aa1200b129c134f07f0cc45779747a1743"
+    },
+    {
+      "repository": "https://github.com/deploymenttheory/windows-mcp-server",
+      "commit": "3da251abb639b973af6f0c3a4ad23cf2c1cd2746",
+      "role": "security/control reference; no containment effects enabled",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "b67e8487f48f008922de0ea548b21d27463056c9bb8cfb436d7cb321b2aa78e9"
+    },
+    {
+      "repository": "https://github.com/TransductiveScience/desktop-commander-mcp",
+      "commit": "04ea82e8e064a7aa687971e05e3b31d5d2f89489",
+      "role": "incremental HTTP/terminal reliability source reference",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "e77cff545e0506903bf6a4bf29169fa40911eb76d70d239267df10c5c59370dd"
+    }
+  ]
+}
