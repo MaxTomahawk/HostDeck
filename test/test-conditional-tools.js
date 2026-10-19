@@ -24,8 +24,9 @@ async function testConditionalTools() {
     );
 
     const regularTransport = new StdioClientTransport({
-        command: "node",
-        args: ["../dist/index.js"]
+        command: process.execPath,
+        args: ["../dist/index.js", "--no-onboarding"],
+        env: { ...process.env },
     });
 
     await regularClient.connect(regularTransport);
@@ -71,8 +72,9 @@ async function testConditionalTools() {
     );
 
     const dcTransport = new StdioClientTransport({
-        command: "node",
-        args: ["../dist/index.js"]
+        command: process.execPath,
+        args: ["../dist/index.js", "--no-onboarding"],
+        env: { ...process.env },
     });
 
     await dcClient.connect(dcTransport);
