@@ -46,6 +46,7 @@
     "prepare": "npm run build",
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
+    "test:hostdeck:contracts": "node --import tsx --test test/hostdeck-contracts.test.ts",
     "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
     "test:transport:telemetry": "npm run build && node test/test-transport-telemetry.js",
     "test:debug": "node --inspect test/run-all-tests.js",
