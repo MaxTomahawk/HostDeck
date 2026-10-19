@@ -124,10 +124,25 @@ rule or change a tunnel, DNS or production identity. An enrolled user then
 runs `windows/install/Register-HostDeckUser.ps1` unelevated with
 `-InstallRoot`; it verifies the enrolled SID and sets only that user's HKCU Run entry.
 `windows/install/Rollback-HostDeck.ps1 -InstallRoot <path>` restores the
-previous package. A live Windows installation transaction is in progress. It
-is not accepted until service and enrolled-user session behavior are
-independently verified. Reboot recovery and real upgrade/rollback acceptance
-remain pending; see [NEXT_RUN.md](NEXT_RUN.md) for the current checkpoint.
+previous package. A real fresh installation and package update completed;
+installed enrollment revealed Windows process-query permission failures.
+Built fixes require the pending elevated update before session acceptance.
+Reboot recovery and final upgrade/rollback acceptance remain pending; see
+[NEXT_RUN.md](NEXT_RUN.md) for the current checkpoint.
+
+## Direct Cloudflare Tunnel
+
+`Install-HostDeckCloudflared.ps1` prepares a dedicated locally managed Windows
+tunnel. Supply the exact official binary's SHA-256, tunnel UUID, public hostname
+and protected per-tunnel JSON file. It copies verified executable bytes into a
+protected directory, uses LocalService, routes the hostname to loopback port
+18763 and ends ingress with 404. It refuses an unrelated existing service.
+Validate configuration with `-ValidateOnly` before installation. Configure the
+Cloudflare access application/policy and compatible HostDeck authentication
+before publishing DNS. Keep account-management certificates out of the service
+directory; only per-tunnel credentials belong there. No inbound firewall rule or
+RatServer proxy is needed. `-RemoveService` removes only the owned service and
+retains protected files for recovery. A prepared helper is not live-tunnel proof.
 
 The LocalService named pipe `HostDeck.Service` accepts only short
 `{"operation":"register"}` messages or status queries. The service checks

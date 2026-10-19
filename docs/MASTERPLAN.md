@@ -52,6 +52,7 @@ flowchart TD
 - Public tool contracts are stable and namespaced; adapters must not reveal unreviewed backend tools or silently bypass risk rules.
 - Privilege boundaries are explicit: service runtime vs logged-in UI session vs external administrative authority. A system service cannot act as an interactive Windows desktop user.
 - Network ingress initially binds to loopback; remote publication requires correct OAuth issuer, audience/resource, scopes, expiry, replay controls, external identity checks and independent security review.
+- The selected ingress is a dedicated outbound Cloudflare Tunnel on the Windows device forwarding to its loopback listener. RatServer supplies architecture/runbook knowledge only, not an ingress intermediary. Configure the actual access policy before publishing a hostname. Operator hands off only concrete human actions available agent tools cannot perform.
 - A list of allowed tool names is not a shell sandbox. OS account permissions, path restrictions, process isolation, egress policy and high-impact operation checks are separately enforced.
 - Credentials reside only in approved secret stores; never in repo, prompt templates, job metadata, logs, URLs or screenshots.
 - HostDeck's runtime is not dependent on a chat window remaining open. Job state and evidence survive client disconnect; interrupted work reports truthful state and is never silently marked successful.

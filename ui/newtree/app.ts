@@ -20,7 +20,7 @@ let screenshotUrl: string | undefined;
 let accessToken: string | undefined;
 
 interface OAuthConfig { issuer: string; clientId: string; resource: string; scopes: string[]; authorizationEndpoint: string; tokenEndpoint: string; }
-declare global { interface Window { __HOSTDECK_OAUTH__?: OAuthConfig; } }
+declare global { interface Window { __HOSTDECK_OAUTH__?: OAuthConfig; __HOSTDECK_AUTH_MODE__?: 'cloudflare-access'; } }
 const OAUTH_STATE_KEY = 'hostdeck.oauth.state';
 const OAUTH_VERIFIER_KEY = 'hostdeck.oauth.verifier';
 const OAUTH_CREATED_KEY = 'hostdeck.oauth.createdAt';
@@ -71,9 +71,11 @@ function rows(value: any, key: string): any[] { const data = unwrap(value); retu
 function encodeBase64Url(bytes: Uint8Array): string { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function randomUrlToken(): string { const bytes = crypto.getRandomValues(new Uint8Array(32)); return encodeBase64Url(bytes); }
 function oauthConfig(): OAuthConfig | undefined { return window.__HOSTDECK_OAUTH__; }
-async function connectWithAccessToken(token: string): Promise<void> {
+async function connectWithAccessToken(token?: string): Promise<void> {
   const next = new Client({ name: 'HostDeck local panel', version: '1.2.0' }, { capabilities: {} });
-  const nextTransport = new StreamableHTTPClientTransport(new URL('/mcp', window.location.origin), { requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' } });
+  const headers: Record<string,string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const nextTransport = new StreamableHTTPClientTransport(new URL('/mcp', window.location.origin), { requestInit: { headers, credentials: 'include', redirect: 'error' } });
   try { await next.connect(nextTransport); }
   catch (error) { await next.close().catch(() => {}); throw error; }
   client = next; transport = nextTransport; accessToken = token; connected = true;
@@ -202,6 +204,10 @@ function render(): void {
 document.querySelectorAll<HTMLButtonElement>('nav button').forEach(item => item.addEventListener('click', () => { currentView = item.dataset.view!; render(); }));
 $('#refresh').addEventListener('click', render);
 $('#connect').addEventListener('click', async () => {
+  if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') {
+    try { await connectWithAccessToken(); } catch { status.textContent = 'Cloudflare Access connection failed. Sign in to the protected HostDeck page and retry.'; }
+    return;
+  }
   if (oauthConfig()) {
     try { await beginOAuth(); } catch { status.textContent = 'HostDeck sign-in could not be started.'; }
     return;
@@ -217,7 +223,8 @@ if (window.parent !== window) {
   void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => { connected = true; connection.hidden = true; status.textContent = 'Connected to HostDeck. Enter the authorized device ID.'; }).catch(() => { status.textContent = 'HostDeck MCP App connection unavailable.'; });
 } else {
   connection.hidden = false;
-  if (oauthConfig()) { $('#token').closest('label')!.hidden = true; $('#connect').textContent = 'Sign in with HostDeck'; status.textContent = 'Sign in with HostDeck to connect this local panel.'; }
+  if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') { $('#token').closest('label')!.hidden = true; $('#connect').textContent = 'Connect with Cloudflare Access'; status.textContent = 'Use the Cloudflare Access session for this protected HostDeck page.'; }
+  else if (oauthConfig()) { $('#token').closest('label')!.hidden = true; $('#connect').textContent = 'Sign in with HostDeck'; status.textContent = 'Sign in with HostDeck to connect this local panel.'; }
   else status.textContent = 'Local mode: paste a short-lived access token. Token stays in memory only.';
   void handleOAuthCallback();
 }

@@ -36,6 +36,8 @@ const configuration=z.object({
   remote_tls:z.object({host:z.string().refine(value=>/^100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/.test(value)&&value.split('.').every(part=>Number(part)<=255)),port:z.number().int().min(1024).max(65535),pfx_file:absolute}).strict().optional(),
   http:z.object({port:z.number().int().min(1024).max(65535),resource:https,issuer:https,jwks_uri:https,
     access_token_profile:z.enum(['rfc9068','keycloak']).default('rfc9068'),oauth_client_id:z.string().min(1).max(256).optional(),
+    auth_mode:z.enum(['native-oauth','cloudflare-access']).default('native-oauth'),
+    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read'])).min(1).max(10)}).strict().optional(),
     allowed_origins:z.array(z.string().url()).max(20).default([]),proxy_hosts:z.array(z.string().regex(/^[A-Za-z0-9.:[\]-]{1,255}$/)).max(10).default([])}).strict().optional(),
 }).strict();
 const grantSchema=z.array(z.object({issuer:z.string().min(1).max(2048),subject:z.string().min(1).max(256),clientId:z.string().min(1).max(256),
@@ -53,7 +55,15 @@ function outside(workspace:string,target:string):boolean {const relative=path.re
 export async function startHostDeck(configPath:string,transport:'stdio'|'http') {
   if(process.platform!=='win32')throw new RuntimeError('WINDOWS_REQUIRED');
   const config=configuration.parse(await jsonFile(configPath));
-  if(config.remote_tls&&(!config.installed||!config.http?.oauth_client_id))throw new RuntimeError('REMOTE_NOT_ENROLLED');
+  if(config.http?.auth_mode==='cloudflare-access'){
+    const issuer=new URL(config.http.issuer);
+    if(config.http.oauth_client_id!==undefined||issuer.protocol!=='https:'||!issuer.hostname.endsWith('.cloudflareaccess.com')
+      ||issuer.pathname!=='/'||issuer.search||issuer.hash||issuer.username||issuer.password
+      ||config.http.jwks_uri!==new URL('/cdn-cgi/access/certs',issuer).href)throw new RuntimeError('CLOUDFLARE_AUTH_CONFIGURATION_INVALID');
+  }
+  if(config.remote_tls&&(!config.installed||!(config.http?.auth_mode==='cloudflare-access'||config.http?.oauth_client_id)))throw new RuntimeError('REMOTE_NOT_ENROLLED');
+  if(config.http?.auth_mode==='cloudflare-access'&&!config.http.cloudflare_access)throw new RuntimeError('CLOUDFLARE_AUTH_CONFIGURATION_REQUIRED');
+  if(config.http?.auth_mode!=='cloudflare-access'&&config.http?.cloudflare_access)throw new RuntimeError('CLOUDFLARE_AUTH_CONFIGURATION_INVALID');
   const workspace=await fs.realpath(config.workspace);
   // The file adapter must not reach its own grant store, audit keys or executable configuration.
   for(const protectedPath of [configPath,config.state_directory,config.grants_file,config.desktop_worker]) {
@@ -134,7 +144,9 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   let appHtml:string|undefined;
   try{const [html,css,js]=await Promise.all(['index.html','styles.css','app.js'].map(file=>fs.readFile(path.join(appRoot,file),'utf8')));
     appHtml=html.replace('<link rel="stylesheet" href="./styles.css">',()=>`<style>${css}</style>`).replace('<script type="module" src="./app.js"></script>',()=>`<script type="module">${js.replace(/<\/script/gi,'<\\/script')}</script>`);
-    if(settings?.oauth_client_id){
+    if(settings?.auth_mode==='cloudflare-access'){
+      appHtml=appHtml.replace('</head>',()=>`<script>window.__HOSTDECK_AUTH_MODE__="cloudflare-access";</script></head>`);
+    } else if(settings?.oauth_client_id){
       const oauth=await loadOAuthMetadata({issuer:settings.issuer,clientId:settings.oauth_client_id,resource:settings.resource,
         scopes:[...new Set((await loadGrants()).filter(g=>g.issuer===settings.issuer&&g.clientId===settings.oauth_client_id).flatMap(g=>g.scopes))]});
       appHtml=appHtml.replace('</head>',()=>`<script>window.__HOSTDECK_OAUTH__=${JSON.stringify(oauth).replace(/</g,'\\u003c')};</script></head>`);
@@ -151,11 +163,15 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     stopTransport=()=>handle.close();
   }else{
     if(!settings)throw new RuntimeError('HTTP_NOT_CONFIGURED');
-    if(config.remote_tls&&!(await loadGrants()).some(g=>g.issuer===settings.issuer&&g.deviceId===config.device_id&&g.executorId===config.executor_id&&g.expiresAt>Date.now()/1000))throw new RuntimeError('REMOTE_GRANT_REQUIRED');
+    // The fixed sentinel binds grants to this Access application/AUD, not an individual DCR OAuth client.
+    const cloudflareClientId=settings.auth_mode==='cloudflare-access'?`cloudflare-access:${settings.cloudflare_access!.audience}`:undefined;
+    if(config.remote_tls&&!(await loadGrants()).some(g=>g.issuer===settings.issuer&&g.clientId===(cloudflareClientId??settings.oauth_client_id)&&g.deviceId===config.device_id&&g.executorId===config.executor_id&&g.expiresAt>Date.now()/1000))throw new RuntimeError('REMOTE_GRANT_REQUIRED');
     const resource=new URL(settings.resource);
     if(resource.pathname!=='/mcp'||resource.search||resource.hash)throw new RuntimeError('INVALID_RESOURCE');
     const boundary=createHttpBoundary(facade,authority,{issuer:settings.issuer,resource:settings.resource,
-      oauthOrigin:settings.oauth_client_id?new URL(settings.issuer).origin:undefined,
+      oauthOrigin:settings.auth_mode==='native-oauth'&&settings.oauth_client_id?new URL(settings.issuer).origin:undefined,
+      cloudflareAccess:settings.auth_mode==='cloudflare-access'?{audience:settings.cloudflare_access!.audience,
+        scopes:settings.cloudflare_access!.capability_ceiling,clientId:cloudflareClientId!}:undefined,
       allowedHosts:[`127.0.0.1:${settings.port}`,resource.host,...settings.proxy_hosts,...(config.remote_tls?[`${config.remote_tls.host}:${config.remote_tls.port}`]:[])],allowedOrigins:[`http://127.0.0.1:${settings.port}`,...settings.allowed_origins]});
     const nodeHandler=toNodeHandler(boundary,{maxRequestBodySize:2_097_152,onerror:()=>{}});
     const server=http.createServer((req,res)=>void nodeHandler(req,res));

@@ -116,6 +116,7 @@ export interface HttpBoundaryOptions {
   allowedHosts: readonly string[]; allowedOrigins: readonly string[];
   resource: string; issuer: string;
   oauthOrigin?: string;
+  cloudflareAccess?: { audience: string; scopes: readonly string[]; clientId: string };
 }
 export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAuthority, options: HttpBoundaryOptions) {
   const principals = new AsyncLocalStorage<Principal>();
@@ -143,6 +144,7 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
       }
       if (url.pathname === '/health' && request.method === 'GET') return Response.json({product:'HostDeck',status:'ready'});
       if (['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname) && request.method === 'GET') {
+        if (options.cloudflareAccess) return new Response('NOT_FOUND',{status:404});
         return Response.json({ resource:options.resource,authorization_servers:[options.issuer],bearer_methods_supported:['header'],scopes_supported:['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read'] });
       }
       if (url.pathname !== '/mcp') return new Response('NOT_FOUND',{status:404});
@@ -150,9 +152,17 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
       const authorization = request.headers.get('authorization');
       let principal: Principal;
       try {
-        if (!authorization?.startsWith('Bearer ') || authorization.length > 16_400) throw new RuntimeError('UNAUTHENTICATED');
-        principal = await authority.verify(authorization.slice(7));
-      } catch { return new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}}); }
+        if (options.cloudflareAccess) {
+          const assertion = request.headers.get('cf-access-jwt-assertion');
+          if (!assertion) throw new RuntimeError('UNAUTHENTICATED');
+          principal = await authority.verifyCloudflareAssertion(assertion, options.cloudflareAccess.audience,
+            options.cloudflareAccess.scopes, options.cloudflareAccess.clientId);
+        } else {
+          if (!authorization?.startsWith('Bearer ') || authorization.length > 16_400) throw new RuntimeError('UNAUTHENTICATED');
+          principal = await authority.verify(authorization.slice(7));
+        }
+      } catch { return options.cloudflareAccess ? new Response('UNAUTHENTICATED',{status:403})
+        : new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}}); }
       pending++;
       try { return await principals.run(principal, () => handler.fetch(request)); }
       catch { return new Response('REQUEST_FAILED',{status:400}); }

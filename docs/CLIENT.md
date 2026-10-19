@@ -14,6 +14,24 @@ When OAuth client metadata is configured, the page offers authorization-code log
 
 The server loads authorization-server metadata only for its configured issuer and validates the returned issuer and HTTPS endpoints. The owner must provision the client ID, resource/audience and least-privilege scopes through the approved identity-provider process. A successful metadata fetch or local UI login alone is not end-to-end acceptance.
 
+For the selected direct Windows Tunnel, the optional `http.auth_mode: "cloudflare-access"`
+uses Cloudflare Managed OAuth at the edge. Configure the exact HTTPS team issuer,
+its `/cdn-cgi/access/certs` JWKS URL, `cloudflare_access.audience` and an explicit
+`capability_ceiling`. Configure application sessions for at most 15 minutes.
+HostDeck independently verifies the signed `Cf-Access-Jwt-Assertion`, issuer,
+application audience, subject, type and lifetime. It ignores a forwarded opaque
+Authorization token; that token alone never authenticates to HostDeck.
+
+Grants bind the verified issuer and subject to `clientId: "cloudflare-access:<AUD>"`,
+the installed device/executor/session and explicit scopes. This profile binds the
+Cloudflare application, not individual OAuth clients; Cloudflare manages its
+client revocation. Email and group names do not grant tool permissions. The
+standalone protected page connects using its Cloudflare session without token
+paste. Native OAuth/PKCE and the MCP Apps host bridge remain supported.
+Configure the Access application and operator-only policy before publishing the
+Tunnel route. See Cloudflare's [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+and [MCP security guidance](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/).
+
 ## Management panel
 
 The local panel and MCP Apps resource share the same client application. The host registers `ui://hostdeck/management` as an MCP App resource and associates it with supported tools using the MCP Apps metadata. Local UI uses the same-origin `/mcp` route. Device/session selection comes from authorized server responses; files require explicit save, terminal activity is submitted as bounded jobs, and screenshot previews are retrieved as owned artifacts.
@@ -22,4 +40,4 @@ The managed browser requires an explicitly configured Chrome or Edge executable 
 
 ## Acceptance status
 
-The local UI, CLI modes and PKCE client flow are prepared. A Windows installation is in progress. Real provider login, approved remote ingress, actual ChatGPT connection and MCP Apps use, reboot recovery, and upgrade/rollback remain pending acceptance. See [NEXT_RUN.md](NEXT_RUN.md) for the live execution sequence.
+The UI/CLI, native PKCE and optional Cloudflare profile are prepared; focused signed-assertion checks pass. A real fresh installation and package update completed; a native session fix is awaiting the pending elevated update. Real Cloudflare login/provisioning, actual ChatGPT connection and MCP Apps use, reboot recovery, and final upgrade/rollback acceptance remain open. See [NEXT_RUN.md](NEXT_RUN.md).

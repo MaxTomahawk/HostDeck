@@ -103,6 +103,23 @@ export class TokenAuthority {
     } catch { throw new RuntimeError('UNAUTHENTICATED'); }
   }
 
+  /** Cloudflare Access assertion path. Never accepts the opaque Managed OAuth bearer token. */
+  async verifyCloudflareAssertion(token: string, audience: string, scopes: readonly string[], clientId: string): Promise<Principal> {
+    try {
+      if (!token || token.length > 16_384 || !audience || !clientId) throw new Error('token');
+      const { payload, protectedHeader } = await jwtVerify(token, this.options.jwks, {
+        issuer: this.options.issuer, audience, algorithms: ['RS256'],
+        requiredClaims: ['iss','sub','aud','exp','iat'], clockTolerance: 30,
+      });
+      const now = Date.now() / 1000;
+      if (protectedHeader.typ !== 'JWT' || payload.type !== 'app'
+        || !Number.isSafeInteger(payload.exp) || !Number.isSafeInteger(payload.iat)
+        || payload.exp! <= now || payload.iat! > now + 30 || payload.exp! <= payload.iat! || payload.exp! - payload.iat! > 900
+        || typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 256) throw new Error('claims');
+      return this.mint({issuer:payload.iss!,subject:payload.sub,clientId,scopes,expiresAt:payload.exp!});
+    } catch { throw new RuntimeError('UNAUTHENTICATED'); }
+  }
+
   /** Called only by the private OS-verified bootstrap; never from MCP arguments or HTTP claims. */
   local(identity: { sid: string; sessionId: number; elevated: boolean; eligible: boolean }, expectedSid: string, scopes: string[]): Principal {
     if (!identity.eligible || identity.elevated || identity.sessionId <= 0 || !expectedSid || identity.sid !== expectedSid) throw new RuntimeError('UNAUTHENTICATED');
