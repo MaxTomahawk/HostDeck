@@ -234,12 +234,17 @@ export class DocumentAdapter {
       const bytes = await fs.readFile(file);
       const { getDocumentProxy, extractText } = await import('unpdf');
       const pdf = await getDocumentProxy(new Uint8Array(bytes));
-      if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
-      const result = await extractText(pdf);
-      const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
-      if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
-      const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
-      return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
+      try {
+        if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
+        const result = await extractText(pdf);
+        const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
+        if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
+        const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
+        return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
+      } finally {
+        // unpdf 1.8 removed PDFDocumentProxy.destroy(); the loading task owns worker cleanup in both supported shapes.
+        try { await pdf.loadingTask.destroy(); } catch { /* Cleanup must not mask the read result or original failure. */ }
+      }
     }
     throw new Error('DOCUMENT_FORMAT_UNSUPPORTED');
   }

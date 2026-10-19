@@ -57,3 +57,48 @@ test('reads DOCX, XLSX and exact PDF pages; edits stage bytes without mutating s
     await assert.rejects(adapter.handle('hostdeck_write_pdf', { path: path.join(workspace, 'unsafe.pdf'), markdown: 'x', options: { launch_options: { executablePath: 'unknown' } } }), /PDF_RENDER_OPTION_DENIED/);
   } finally { await rm(workspace, { recursive: true, force: true }); }
 });
+
+test('PDF reads close the unpdf loading task after success and extraction failure', async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-pdf-lifecycle-'));
+  const pdfPath = path.join(workspace, 'lifecycle.pdf');
+  try {
+    const document = await PDFDocument.create();
+    document.addPage().drawText('Lifecycle fixture');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(pdfPath, await document.save());
+
+    const { getDocumentProxy } = await import('unpdf');
+    const probe = await getDocumentProxy(new Uint8Array(await readFile(pdfPath)));
+    const documentPrototype = Object.getPrototypeOf(probe);
+    const taskPrototype = Object.getPrototypeOf(probe.loadingTask);
+    const pageDescriptor = Object.getOwnPropertyDescriptor(documentPrototype, 'getPage');
+    const destroyDescriptor = Object.getOwnPropertyDescriptor(taskPrototype, 'destroy');
+    assert.equal(typeof pageDescriptor?.value, 'function');
+    assert.equal(typeof destroyDescriptor?.value, 'function');
+    await probe.loadingTask.destroy();
+
+    let destroys = 0;
+    let failNextPageRead = false;
+    Object.defineProperty(documentPrototype, 'getPage', { ...pageDescriptor, value: function(...args: unknown[]) {
+      if (failNextPageRead) { failNextPageRead = false; throw new Error('PDF_EXTRACT_FIXTURE_FAILURE'); }
+      return pageDescriptor!.value.apply(this, args);
+    }});
+    Object.defineProperty(taskPrototype, 'destroy', { ...destroyDescriptor, value: function(...args: unknown[]) {
+      destroys++;
+      return destroyDescriptor!.value.apply(this, args);
+    }});
+    try {
+      const adapter = await DocumentAdapter.create({ workspace });
+      const read = await adapter.handle('hostdeck_read_document', { path: pdfPath }) as { content: Array<{ text: string }> };
+      assert.match(read.content[0].text, /Lifecycle fixture/);
+      assert.equal(destroys, 1, 'successful PDF read destroys its loading task');
+
+      failNextPageRead = true;
+      await assert.rejects(adapter.handle('hostdeck_read_document', { path: pdfPath }), /PDF_EXTRACT_FIXTURE_FAILURE/);
+      assert.equal(destroys, 2, 'extraction failure after opening still destroys its loading task');
+    } finally {
+      Object.defineProperty(documentPrototype, 'getPage', pageDescriptor!);
+      Object.defineProperty(taskPrototype, 'destroy', destroyDescriptor!);
+    }
+  } finally { await rm(workspace, { recursive: true, force: true }); }
+});
