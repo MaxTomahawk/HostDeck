@@ -1,0 +1,2 @@
+# Keep the exact upstream runtime license, including its original indentation.
+windows/licenses/Node.LICENSE -whitespace

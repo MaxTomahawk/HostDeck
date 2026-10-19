@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hostdeck",
+  "version": "0.3.0",
+  "description": "Authenticated management of an enrolled HostDeck Windows device.",
+  "author": { "name": "Eduards Ruzga" },
+  "homepage": "https://github.com/MaxTomahawk/HostDeck",
+  "repository": "https://github.com/MaxTomahawk/HostDeck",
+  "license": "MIT",
+  "keywords": ["windows", "mcp", "device-management"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "HostDeck",
+        "shortDescription": "Windows device operations",
+        "longDescription": "Use authenticated HostDeck MCP tools to inspect and manage an enrolled Windows device, its files, jobs, desktop sessions and managed browser. Server-side grants and effect checks remain authoritative.",
+        "developerName": "HostDeck contributors",
+        "category": "Productivity",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": "Inspect my authorized HostDeck device and show its current status.",
+        "logo": "./assets/hostdeck.svg",
+        "composerIcon": "./assets/hostdeck.svg"
+      }
+    }
+  }
+}

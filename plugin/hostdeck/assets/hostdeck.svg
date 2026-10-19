@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="HostDeck">
+  <rect x="8" y="14" width="112" height="100" rx="18" fill="#172735"/>
+  <path d="M30 38v52h13V69h23v21h13V38H66v19H43V38z" fill="#f1f6fa"/>
+  <path d="M91 43h12v42H91z" fill="#39b8a6"/>
+  <circle cx="97" cy="95" r="6" fill="#39b8a6"/>
+</svg>

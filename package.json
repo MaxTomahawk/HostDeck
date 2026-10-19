@@ -1,33 +1,34 @@
 {
-  "name": "@wonderwhy-er/desktop-commander",
+  "name": "@maxtomahawk/hostdeck",
   "version": "0.3.0",
-  "description": "MCP server for terminal operations and file editing",
-  "mcpName": "io.github.wonderwhy-er/desktop-commander",
+  "description": "HostDeck Windows computer control with MCP, durable jobs and session-bound desktop automation",
+  "mcpName": "io.github.maxtomahawk/hostdeck",
   "license": "MIT",
   "author": "Eduards Ruzga",
-  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "homepage": "https://github.com/MaxTomahawk/HostDeck",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+    "url": "git+https://github.com/MaxTomahawk/HostDeck.git"
   },
-  "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
+  "bugs": {
+    "url": "https://github.com/MaxTomahawk/HostDeck/issues"
+  },
   "type": "module",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.14.1"
   },
   "bin": {
-    "desktop-commander": "dist/index.js",
-    "setup": "dist/setup-claude-server.js",
-    "remove": "dist/uninstall-claude-server.js"
+    "hostdeck": "dist/hostdeck/main.js"
   },
   "files": [
     "dist",
-    "logo.png",
-    "testemonials",
+    "ui/newtree",
+    "plugin/hostdeck",
+    "windows/install",
+    "LICENSE",
     "vendor/telemetry-contract"
   ],
   "scripts": {
-    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
     "open-chat": "open -n /Applications/Claude.app",
     "device:install": "cd src/remote-device && npm install",
     "device:start": "tsx src/remote-device/device.ts",
@@ -38,8 +39,8 @@
     "bump:major": "node scripts/sync-version.js --bump --major",
     "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/ && shx mkdir -p dist/remote-device/scripts && shx cp src/remote-device/scripts/blocking-offline-update.js dist/remote-device/scripts/ && node scripts/build-ui-runtime.cjs",
     "watch": "tsc --watch",
-    "start": "node dist/index.js",
-    "start:debug": "node --inspect-brk=9229 dist/index.js",
+    "start": "node dist/hostdeck/main.js",
+    "start:debug": "node --inspect-brk=127.0.0.1:9229 dist/hostdeck/main.js",
     "setup": "npm install --include=dev && npm run build && node setup-claude-server.js",
     "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
     "remove": "npm install && npm run build && node uninstall-claude-server.js",
@@ -67,7 +68,9 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "build:hostdeck": "tsc --diagnostics false --extendedDiagnostics false --listEmittedFiles false && node scripts/build-hostdeck-ui.mjs",
+    "test:hostdeck:integration": "node --import tsx --test test/hostdeck-gateway.test.ts test/hostdeck-integration.test.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -93,7 +96,10 @@
   ],
   "dependencies": {
     "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
+    "@modelcontextprotocol/core": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@opendocsg/pdf2md": "^0.3.4",
     "@supabase/supabase-js": "^2.89.0",
     "@tiptap/core": "^3.31.4",
@@ -111,12 +117,14 @@
     "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
     "isbinaryfile": "^5.0.4",
+    "jose": "6.1.3",
     "markdown-it": "^14.1.0",
     "md-to-pdf": "^5.2.5",
     "open": "^10.2.0",
     "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
     "proper-lockfile": "^4.1.2",
+    "puppeteer-core": "25.12.0",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

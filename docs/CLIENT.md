@@ -1,0 +1,15 @@
+# HostDeck client package
+
+The source package in `plugin/hostdeck` contains a HostDeck plugin manifest, HTTP MCP connection template, and the `hostdeck-operations` Skill with a tool reference. `ui/newtree` contains the MCP Apps management panel source. The panel uses the installed official ext-apps client and renders actual device, job, file, terminal-job, and screen tool responses; values are supplied by the user and tools remain scoped by the gateway. Results are rendered as text. A device ID is still required because HostDeck exposes no device-discovery tool.
+
+When served directly at the local `/ui` route, the same panel offers standalone connection using a short-lived OAuth access token. It sends the token only in the `Authorization` header to the same-origin `/mcp` endpoint, keeps it in page memory, and clears the field after connecting. It does not persist credentials in a URL, storage, or cookie. The authorized device status response supplies the session choices; the selected session's actual window list supplies screen-capture choices. File changes require an explicit Save action. Terminal commands are submitted as bounded durable jobs and can be inspected or cancelled in Jobs.
+
+## Platform setup required for live ChatGPT use
+
+This repository package does not create a cloud connector or upload/publish a plugin. `plugin/hostdeck/mcp.json` uses `${HOSTDECK_MCP_URL}` as a preparation placeholder with the host's OAuth flow; the URL must be replaced with a verified reachable HTTPS endpoint before connection. HostDeck's current gateway endpoint is loopback-bound unless separately configured. ChatGPT access to a loopback endpoint is not presumed. A supported OAuth registration and approved remote ingress are still required; no token or client secret is stored in the portable package.
+
+The gateway integration must register `ui://hostdeck/management` as `text/html;profile=mcp-app` and associate the resource through MCP Apps tool metadata (`ui/resourceUri`). Bundle `ui/newtree/app.ts` with the repository's installed esbuild before serving it; the host packages the stylesheet and bundle in the resource response. Standalone mode requires the local server's `/ui` and `/mcp` routes on the same origin, the server's configured authentication, and a valid user-issued access token; no client secret or server token belongs in the UI bundle. `ui/newtree/README.md` records the local build boundary. Actual ChatGPT tool discovery, Skill invocation, and panel acceptance remain an integration task and are not claimed by source packaging.
+
+## Browser adapter
+
+`src/hostdeck/browser.ts` requires an explicitly selected absolute Chrome/Edge executable and an owned profile root. Supply a `networkPolicy` callback when allowing private/local network targets; those targets are denied by default. Deployments should wire this callback to the gateway's configured egress policy, which must also account for DNS resolution and redirects. The adapter does not install browsers, access a debugging endpoint, use a personal profile, or download browser runtimes.

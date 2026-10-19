@@ -4,6 +4,16 @@
 
 Complete the HostDeck product described in `MASTERPLAN.md`; a timebox or task status is not acceptance. Work from temporary branches and reviewed PRs. GitHub is the source-review path; use the existing Operator project for readiness, dependencies, valid leases/fences, evidence and review. Stop Linear planning/sync. Do not use GitHub Actions while quota restrictions apply.
 
+## Current implementation checkpoint — 2026-10-19
+
+- Branch `codex/delivery` builds with `npm run build:hostdeck`. PR7 is merged into main; the new delivery files are still local changes.
+- Actual HTTP MCP test passes for signed access tokens, real file writes, strict arguments, denied Origin and current grant revocation. It covers modern 2026-07-28 and legacy 2025-11-25 requests.
+- Actual stdio entrypoint test passes across files, PDF generation/reading, native window enumeration, resources/prompts, durable job completion and owned output artifacts. Command: `node --import tsx --test test/hostdeck-integration.test.ts`.
+- Focused Windows state/desktop, document/file and real Chrome checks passed. These are subsystem evidence, not installed-product acceptance.
+- Latest unfinished changes: native interactive process source needs the private Program dispatch hook and main adapter routing; installed facade configuration needs enrollment-file binding; latest management UI changes need validation.
+- Next: finish those integration points, build the Windows package, inspect exact installer effects, then perform real install/service/session, upgrade/rollback and independent acceptance. Remote OAuth/ingress and actual ChatGPT plugin connection remain required and unaccepted.
+- Operator W1–W4 checkpoints contain these distinctions. W5 has not accepted the product. No task count or passing build is a product-completion percentage.
+
 ## Five implementation packages
 
 1. Runtime foundation: MCP facade, adapters, policy, OAuth and stable contracts.
