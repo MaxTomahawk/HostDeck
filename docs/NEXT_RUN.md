@@ -2,20 +2,20 @@
 
 ## Current checkpoint — 2026-10-20
 
-`codex/delivery` / PR9 contains the integrated runtime and Windows product. Fresh installation and the first package update completed; LocalService runs automatically. Installed enrollment exposed Windows process-handle permission failures. Native fixes are built at `c5addaf`; their next elevated update is awaiting Windows UAC. Installed session/tray/MCP acceptance, reboot and rollback remain open.
+`codex/delivery` / PR9 contains the integrated runtime and Windows product. Fresh installation and subsequent updates completed. Installed native fixes at `c5addaf` pass three independent signed enrollment challenges; LocalService, user tray and session HTTP are running. Local health/UI return 200 and unauthenticated MCP returns 401. Installed MCP discovery, desktop, files, PDF and App checks passed, but the detached-job reconnect returned `uncertain` without a native receipt. Fix that actual runner startup failure before accepting jobs. Reboot and rollback remain open.
 
 The owner selected a **direct outbound Cloudflare Tunnel from Windows to the loopback HostDeck listener**. RatServer is a read-only architecture reference, not an ingress intermediary. Do not add the previous Tailscale backend, RatServer proxy or inbound firewall rule. Existing approval covers implementation; do not ask for it again.
 
 ## Next actions
 
-1. Finish the pending native update, then use the installed enrollment/session/tray and one installed MCP/job reconnect scenario. Reuse existing passing subsystem evidence.
-2. Use a dedicated Windows `cloudflared` tunnel, fixed hostname, loopback origin and final 404 rule. The official binary digest and real CLI ingress validation are checked. The helper protects executable and per-tunnel credentials; no live tunnel, DNS record or service has been provisioned yet.
-3. Complete the optional Cloudflare Access authentication profile and focused signed-assertion checks before using Managed OAuth. Preserve owner/device/executor/session grants; do not assume a Cloudflare assertion satisfies the native OAuth profile.
-4. Configure the actual Cloudflare application/policy before publishing its route using the existing account. Only real login/MFA/consent or OS UAC that the agent cannot perform belongs in Operator; no generic Operator-action registration or premature SSO task.
+1. Diagnose the original uncertain job without replaying it; reproduce with a separate harmless native request, fix the startup fault and rerun only the installed reconnect path. Reuse passing native/session evidence.
+2. Finish the dedicated Windows `cloudflared` deployment. The tunnel now exists with its own credential; official binary digest and real ingress validation pass. The protected helper routes only the selected hostname to loopback and ends with 404. Service and DNS publication remain pending.
+3. The optional Cloudflare Access profile and signed-assertion checks are implemented. The actual Access application now uses the existing owner-only policy, 15-minute application/access tokens, a 24-hour OAuth grant and ChatGPT-only redirects. Activate the installed profile with exact verified owner subject/device/executor/session grants before publishing ingress.
+4. Bundle the next fixed package upgrade with the required protected configuration. Preserve today's working package as the rollback baseline: the older installed previous package predates the broker fix. Only concrete unavoidable OS/MFA/consent actions belong in Operator.
 5. Verify the protected endpoint and real ChatGPT connection, upgrade/rollback and reboot recovery, then complete release review from tested main. Historical upstream credential findings still require release disposition.
 
 ## Exit boundary
 
-W1, W2 and W5 run as agent work. W3/W4 source criteria are accepted; full product acceptance remains W5. The obsolete human proposal and two premature plan steps were removed without marking them Done. W5 integrates alongside W1/W2 fixes; final evidence is a completion requirement, not a circular prerequisite to start producing it.
+W1/W3/W4 source criteria are accepted; W2/W5 continue actual integration. Obsolete human work was removed without invented completion. Cloudflare sign-in and concrete certificate consent are observed complete; technical setup remains agent work. Final evidence is a completion requirement, not a circular prerequisite to start producing it. On-demand upstream comparison is available; the latest incoming PDF lifecycle fix is incorporated without merging inactive inherited preview code. Automatic monitoring stays off.
 
 Release still requires installed service/session, remote authorization, actual ChatGPT, reboot/recovery, upgrade/rollback and source/artifact checks. Keep one short plan, the existing Operator project and GitHub; no Linear or GitHub Actions. Use smaller existing workers and focused checks, keep private evidence outside tracked source and automatic monitoring off. A five-hour wake-up resumes this chat when usage/tools allow.

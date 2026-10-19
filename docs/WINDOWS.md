@@ -125,9 +125,10 @@ runs `windows/install/Register-HostDeckUser.ps1` unelevated with
 `-InstallRoot`; it verifies the enrolled SID and sets only that user's HKCU Run entry.
 `windows/install/Rollback-HostDeck.ps1 -InstallRoot <path>` restores the
 previous package. A real fresh installation and package update completed;
-installed enrollment revealed Windows process-query permission failures.
-Built fixes require the pending elevated update before session acceptance.
-Reboot recovery and final upgrade/rollback acceptance remain pending; see
+installed enrollment initially revealed Windows process-query permission failures.
+The subsequent update passes repeated signed enrollment challenges, enrolled-user
+tray startup and loopback HTTP checks. Installed detached-job reconnect still
+requires its startup fix. Reboot recovery and final upgrade/rollback acceptance remain pending; see
 [NEXT_RUN.md](NEXT_RUN.md) for the current checkpoint.
 
 ## Direct Cloudflare Tunnel
