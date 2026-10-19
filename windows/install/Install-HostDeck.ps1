@@ -153,6 +153,11 @@ if (Test-Path -LiteralPath $root) {
         -not (Test-Path -LiteralPath (Join-Path $root 'config/facade.json') -PathType Leaf) -or
         -not $registered -or -not $registered.PathName.StartsWith(('"' + $expectedServicePath + '" '), [StringComparison]::OrdinalIgnoreCase) -or
         $registered.StartName -ne 'NT AUTHORITY\LocalService') { throw 'Existing install root is not a trusted HostDeck release.' }
+    $trayExe = Join-Path $root 'current/tray/HostDeck.Tray.exe'
+    $nodeExe = Join-Path $root 'current/agent/node.exe'
+    foreach ($process in Get-CimInstance -ClassName Win32_Process -Filter "Name='HostDeck.Tray.exe' OR Name='node.exe'") {
+        if ($process.ExecutablePath -in @($trayExe, $nodeExe)) { throw 'Stop the HostDeck user tray and agent before updating.' }
+    }
 }
 New-Item -ItemType Directory -Force -Path $parent | Out-Null
 New-Item -ItemType Directory -Force -Path $root | Out-Null

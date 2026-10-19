@@ -80,9 +80,11 @@ internal sealed class InteractiveProcesses
         var action = Optional(args, "action") ?? "terminate";
         if (action is not ("interrupt" or "terminate")) throw new WorkerError("INVALID_ARGUMENTS");
         if (!record.Closed && !JobNative.TerminateJobObject(record.Job, 1)) throw new WorkerError("DESKTOP_UNAVAILABLE");
-        JobNative.WaitForSingleObject(record.Process, 5000);
+        var deadline = Environment.TickCount64 + 5000;
+        while (!record.Closed && Environment.TickCount64 < deadline) { record.RefreshExit(); if (!record.Closed) Thread.Sleep(25); }
         record.RefreshExit();
-        return new { process_id = record.Id, state = record.Closed ? "exited" : "running", terminated = record.Closed, descendants_contained = true };
+        var contained = record.HasNoActiveProcesses();
+        return new { process_id = record.Id, state = record.Closed ? "exited" : "running", terminated = record.Closed && contained, descendants_contained = contained };
     }
 
     private ProcessRecord Get(JsonElement args)
@@ -93,10 +95,12 @@ internal sealed class InteractiveProcesses
 
     private static async Task Observe(ProcessRecord record, int timeoutMs)
     {
-        if (timeoutMs <= 0 || record.Closed) return;
-        using var deadline = new CancellationTokenSource(Math.Clamp(timeoutMs, 0, 300_000));
-        try { await record.ClosedSignal.Task.WaitAsync(deadline.Token); }
-        catch (OperationCanceledException) { }
+        var deadline = Environment.TickCount64 + Math.Clamp(timeoutMs, 0, 300_000);
+        do {
+            record.RefreshExit();
+            if (record.Closed || Environment.TickCount64 >= deadline) return;
+            await Task.Delay(25);
+        } while (true);
     }
 
     private static object Snapshot(ProcessRecord record, int offset, int limit)
@@ -127,7 +131,7 @@ internal sealed class InteractiveProcesses
             if (!InteractiveNative.CreatePipe(out childStdin, out parentStdin, ref security, 0)
                 || !InteractiveNative.CreatePipe(out parentStdout, out childStdout, ref security, 0)
                 || !InteractiveNative.CreatePipe(out parentStderr, out childStderr, ref security, 0)) throw new WorkerError("DESKTOP_UNAVAILABLE");
-            InteractiveNative.SetHandleInformation(parentStdin, 1, 0); InteractiveNative.SetHandleInformation(parentStdout, 1, 0); InteractiveNative.SetHandleInformation(parentStderr, 1, 0);
+            if (!InteractiveNative.SetHandleInformation(parentStdin, 1, 0) || !InteractiveNative.SetHandleInformation(parentStdout, 1, 0) || !InteractiveNative.SetHandleInformation(parentStderr, 1, 0)) throw new WorkerError("DESKTOP_UNAVAILABLE");
             var startup = new JobNative.STARTUPINFO { cb = Marshal.SizeOf<JobNative.STARTUPINFO>(), dwFlags = 0x00000100, hStdInput = childStdin, hStdOutput = childStdout, hStdError = childStderr };
             var line = CommandLine(shell, executable, command);
             if (!JobNative.CreateProcess(executable, line, 0, 0, true, 0x00000004 | 0x08000000 | 0x00000400, 0, cwd, ref startup, out process)) throw new WorkerError("DESKTOP_UNAVAILABLE");
@@ -169,10 +173,18 @@ internal sealed class InteractiveProcesses
     {
         internal string Id { get; } = id; internal nint Job { get; } = job; internal nint Process { get; } = process;
         internal FileStream Input { get; } = input; internal SemaphoreSlim InputLock { get; } = new(1, 1);
-        internal StringBuilder Output { get; } = new(); internal object OutputLock { get; } = new(); internal bool Truncated; internal bool Closed; internal int ExitCode; internal TaskCompletionSource ClosedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal StringBuilder Output { get; } = new(); internal object OutputLock { get; } = new(); internal bool Truncated; internal bool Closed; internal bool RootExited; internal int PumpsClosed; internal int ExitCode; internal TaskCompletionSource ClosedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void StartPumps() { _ = Pump(stdout); _ = Pump(stderr); }
-        private async Task Pump(Stream stream) { var buffer = new byte[8192]; try { while (true) { var count = await stream.ReadAsync(buffer); if (count == 0) break; lock (OutputLock) { var room = OutputLimit - Encoding.UTF8.GetByteCount(Output.ToString()); if (room <= 0) { Truncated = true; continue; } var take = Math.Min(room, count); if (take < count) Truncated = true; Output.Append(Encoding.UTF8.GetString(buffer, 0, take)); } } } catch (IOException) { } finally { try { await stream.DisposeAsync(); } catch { } RefreshExit(); } }
-        internal void RefreshExit() { if (Closed) return; if (JobNative.WaitForSingleObject(Process, 0) == 0) { if (JobNative.GetExitCodeProcess(Process, out var code)) ExitCode = unchecked((int)code); Closed = true; ClosedSignal.TrySetResult(); try { Input.Dispose(); } catch { } } }
+        private async Task Pump(Stream stream) { var buffer = new byte[8192]; try { while (true) { var count = await stream.ReadAsync(buffer); if (count == 0) break; lock (OutputLock) { var room = OutputLimit - Encoding.UTF8.GetByteCount(Output.ToString()); if (room <= 0) { Truncated = true; continue; } var take = Math.Min(room, count); if (take < count) Truncated = true; Output.Append(Encoding.UTF8.GetString(buffer, 0, take)); } } } catch (IOException) { } finally { try { await stream.DisposeAsync(); } catch { } Interlocked.Increment(ref PumpsClosed); RefreshExit(); } }
+        internal bool HasNoActiveProcesses() => JobNative.QueryInformationJobObject(Job, 1, out var info, Marshal.SizeOf<JobNative.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), 0) && info.ActiveProcesses == 0;
+        internal void RefreshExit() {
+            if (Closed) return;
+            if (!RootExited && JobNative.WaitForSingleObject(Process, 0) == 0) {
+                if (JobNative.GetExitCodeProcess(Process, out var code)) ExitCode = unchecked((int)code);
+                RootExited = true; try { Input.Dispose(); } catch { }
+            }
+            if (RootExited && HasNoActiveProcesses() && Volatile.Read(ref PumpsClosed) == 2) { Closed = true; ClosedSignal.TrySetResult(); }
+        }
         public void Dispose() { try { JobNative.CloseHandle(Job); } catch { } try { JobNative.CloseHandle(Process); } catch { } try { Input.Dispose(); } catch { } }
     }
 }

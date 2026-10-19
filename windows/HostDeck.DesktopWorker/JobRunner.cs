@@ -19,15 +19,16 @@ internal static class JobRunner
         Validate(request);
         var status = "failed";
         uint? exitCode = null;
+        var descendantsContained = false;
         var started = DateTimeOffset.UtcNow;
         try {
-            (status, exitCode) = await Execute(request);
+            (status, exitCode, descendantsContained) = await Execute(request);
         } catch (Exception) {
             status = "failed";
         } finally {
             var receipt = new {
                 status, exitCode, startedAt = started, endedAt = DateTimeOffset.UtcNow,
-                descendantsContained = true
+                descendantsContained
             };
             var temp = request.ReceiptPath + ".tmp-" + Guid.NewGuid().ToString("N");
             await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(receipt));
@@ -52,7 +53,7 @@ internal static class JobRunner
             throw new InvalidDataException("Invalid environment.");
     }
 
-    private static async Task<(string Status, uint? ExitCode)> Execute(JobRequest r)
+    private static async Task<(string Status, uint? ExitCode, bool DescendantsContained)> Execute(JobRequest r)
     {
         var job = JobNative.CreateJobObject(0, null);
         if (job == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -77,7 +78,9 @@ internal static class JobRunner
                 hStdInput = stdin, hStdOutput = stdout, hStdError = stderr
             };
             var commandLine = ShellCommand(r);
-            if (r.Environment is { Count: > 0 }) environment = EnvironmentBlock(r.Environment);
+            // The caller supplies a filtered environment. Never inherit the
+            // runner's full environment, which can contain credentials.
+            environment = EnvironmentBlock(r.Environment ?? new Dictionary<string, string>());
             // CREATE_SUSPENDED, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT.
             if (!JobNative.CreateProcess(r.ShellExecutable, commandLine, 0, 0, true,
                 0x00000004 | 0x08000000 | 0x00000400, environment, r.Cwd, ref startup, out process))
@@ -99,22 +102,22 @@ internal static class JobRunner
             JobNative.CloseHandle(stderr); stderr = 0;
             JobNative.CloseHandle(stdin); stdin = 0;
             var deadline = DateTimeOffset.UtcNow.AddSeconds(r.TimeoutSeconds);
-            while (JobNative.WaitForSingleObject(process.hProcess, 250) == 0x102) {
+            while (true) {
+                var wait = JobNative.WaitForSingleObject(process.hProcess, 250);
+                if (wait == 0) break;
+                if (wait != 0x102) throw new Win32Exception(Marshal.GetLastWin32Error());
                 if (File.Exists(r.CancelPath)) {
-                    JobNative.TerminateJobObject(job, 1);
-                    JobNative.WaitForSingleObject(process.hProcess, 5000);
-                    return ("cancelled", null);
+                    return StopTree(job, process.hProcess, "cancelled");
                 }
                 if (DateTimeOffset.UtcNow >= deadline) {
-                    JobNative.TerminateJobObject(job, 1);
-                    JobNative.WaitForSingleObject(process.hProcess, 5000);
-                    return ("timed_out", null);
+                    return StopTree(job, process.hProcess, "timed_out");
                 }
                 await Task.Yield();
             }
             if (!JobNative.GetExitCodeProcess(process.hProcess, out var exit))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            return (exit == 0 ? "completed" : "failed", exit);
+            var contained = EnsureNoDescendants(job, process.hProcess, 5000);
+            return contained ? (exit == 0 ? "completed" : "failed", exit, true) : ("uncertain", null, false);
         } finally {
             if (process.hThread != 0) JobNative.CloseHandle(process.hThread);
             if (process.hProcess != 0) JobNative.CloseHandle(process.hProcess);
@@ -126,11 +129,26 @@ internal static class JobRunner
         }
     }
 
+    private static (string Status, uint? ExitCode, bool DescendantsContained) StopTree(nint job, nint process, string requestedStatus)
+        => EnsureNoDescendants(job, process, 5000) ? (requestedStatus, null, true) : ("uncertain", null, false);
+
+    private static bool EnsureNoDescendants(nint job, nint process, int timeoutMs)
+    {
+        if (!JobNative.TerminateJobObject(job, 1)) return false;
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true) {
+            var processWait = JobNative.WaitForSingleObject(process, 0);
+            if (processWait != 0 && processWait != 0x102) return false;
+            if (!JobNative.QueryInformationJobObject(job, 1, out var info, Marshal.SizeOf<JobNative.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), 0)) return false;
+            if (info.ActiveProcesses == 0 && processWait == 0) return true;
+            if (Environment.TickCount64 >= deadline) return false;
+            Thread.Sleep(25);
+        }
+    }
+
     private static nint EnvironmentBlock(Dictionary<string, string> additions)
     {
         var map = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (System.Collections.DictionaryEntry item in Environment.GetEnvironmentVariables())
-            if (item.Key is string key && !key.StartsWith('=')) map[key] = item.Value?.ToString() ?? "";
         foreach (var pair in additions) map[pair.Key] = pair.Value;
         return Marshal.StringToHGlobalUni(string.Join('\0', map.Select(pair => pair.Key + "=" + pair.Value)) + "\0\0");
     }
@@ -178,6 +196,10 @@ internal static class JobNative
         internal ulong ReadOperationCount; internal ulong WriteOperationCount; internal ulong OtherOperationCount;
         internal ulong ReadTransferCount; internal ulong WriteTransferCount; internal ulong OtherTransferCount;
     }
+    [StructLayout(LayoutKind.Sequential)] internal struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION {
+        internal long TotalUserTime; internal long TotalKernelTime; internal long ThisPeriodTotalUserTime; internal long ThisPeriodTotalKernelTime;
+        internal uint TotalPageFaults; internal uint TotalProcesses; internal uint ActiveProcesses; internal uint TotalTerminatedProcesses;
+    }
     [StructLayout(LayoutKind.Sequential)] internal struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
         internal JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation; internal IO_COUNTERS IoInfo;
         internal nuint ProcessMemoryLimit; internal nuint JobMemoryLimit; internal nuint PeakProcessMemoryUsed; internal nuint PeakJobMemoryUsed;
@@ -199,6 +221,8 @@ internal static class JobNative
     internal static extern bool GetExitCodeProcess(nint process, out uint code);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool TerminateJobObject(nint job, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool QueryInformationJobObject(nint job, int infoClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info, int length, nint returnLength);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(nint handle);
 }

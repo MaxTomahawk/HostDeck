@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
@@ -65,6 +65,12 @@ test('native Windows runner records timeout and cancel receipts with tree contai
   const result=await state.handle('cancel_job',{job_id:cancelled.job_id},ctx) as {cancelled:boolean;status:string};assert.equal(result.cancelled,true);
   const final=await waitFor(()=>state.handle('read_job',{job_id:cancelled.job_id},ctx) as Promise<{status:string;descendants_contained?:boolean}>,j=>j.status==='cancelled');assert.equal(final.descendants_contained,true);
  }finally{await state.close();await rm(root,{recursive:true,force:true})}
+});
+
+test('native durable runner gives commands only the explicitly supplied environment',async t=>{
+ if(!process.env.SystemRoot)return;const exe=path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');if(!existsSync(exe)){t.skip('Windows native desktop worker build is unavailable');return}
+ const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-state-env-'));const paths={stdoutPath:path.join(root,'out'),stderrPath:path.join(root,'err'),receiptPath:path.join(root,'receipt.json'),cancelPath:path.join(root,'cancel'),statusMarkerPath:path.join(root,'marker')};
+ try{const requestPath=path.join(root,'request.json');await writeFile(requestPath,JSON.stringify({command:'Write-Output $env:HOSTDECK_PARENT_ONLY',cwd:root,shellExecutable:path.join(process.env.SystemRoot!,'System32','WindowsPowerShell','v1.0','powershell.exe'),timeoutSeconds:10,...paths,environment:{SystemRoot:process.env.SystemRoot,windir:process.env.windir,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.PATH}}));await new Promise<void>((resolve,reject)=>execFile(exe,['--run-job',requestPath],{windowsHide:true,timeout:15000,maxBuffer:16_000,env:{...process.env,HOSTDECK_PARENT_ONLY:'must-not-reach-command'}},error=>error?reject(error):resolve()));const receipt=JSON.parse(await readFile(paths.receiptPath,'utf8')) as {status:string;descendantsContained:boolean};assert.equal(receipt.status,'completed');assert.equal(receipt.descendantsContained,true);assert.equal((await readFile(paths.stdoutPath,'utf8')).trim(),'')}finally{await rm(root,{recursive:true,force:true})}
 });
 
 test('native runner dead without receipt is recovered as uncertain after service reopen',async()=>{

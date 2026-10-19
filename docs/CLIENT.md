@@ -1,15 +1,25 @@
-# HostDeck client package
+# HostDeck client setup
 
-The source package in `plugin/hostdeck` contains a HostDeck plugin manifest, HTTP MCP connection template, and the `hostdeck-operations` Skill with a tool reference. `ui/newtree` contains the MCP Apps management panel source. The panel uses the installed official ext-apps client and renders actual device, job, file, terminal-job, and screen tool responses; values are supplied by the user and tools remain scoped by the gateway. Results are rendered as text. A device ID is still required because HostDeck exposes no device-discovery tool.
+HostDeck exposes its management panel through the MCP Apps resource `ui://hostdeck/management` and serves the same panel locally at `/ui`. It uses live tool responses for devices, sessions, windows, jobs, files, terminal jobs, and screenshot artifacts. Results are treated as text or fetched image artifacts; the panel does not grant access by itself. The gateway remains responsible for device, session, job and effect authorization.
 
-When served directly at the local `/ui` route, the same panel offers standalone connection using a short-lived OAuth access token. It sends the token only in the `Authorization` header to the same-origin `/mcp` endpoint, keeps it in page memory, and clears the field after connecting. It does not persist credentials in a URL, storage, or cookie. The authorized device status response supplies the session choices; the selected session's actual window list supplies screen-capture choices. File changes require an explicit Save action. Terminal commands are submitted as bounded durable jobs and can be inspected or cancelled in Jobs.
+## Local use
 
-## Platform setup required for live ChatGPT use
+The installed user agent can open its loopback management page with the HostDeck CLI `--ui --config <absolute-config-path>` command. The authenticated local MCP endpoint is `/mcp` on the configured loopback listener. For remote administration, use only an explicitly configured and approved HTTPS ingress.
 
-This repository package does not create a cloud connector or upload/publish a plugin. `plugin/hostdeck/mcp.json` uses `${HOSTDECK_MCP_URL}` as a preparation placeholder with the host's OAuth flow; the URL must be replaced with a verified reachable HTTPS endpoint before connection. HostDeck's current gateway endpoint is loopback-bound unless separately configured. ChatGPT access to a loopback endpoint is not presumed. A supported OAuth registration and approved remote ingress are still required; no token or client secret is stored in the portable package.
+When OAuth client metadata is configured, the page offers authorization-code login with PKCE (S256). The callback URI is exactly the same origin's `/oauth/callback`; state and verifier are short-lived session state, and access tokens remain in page memory and are sent in the Authorization header. The page does not store tokens in URLs, cookies, or persistent browser storage. Without OAuth metadata, the standalone page may offer a manual short-lived access-token fallback. The CLI status and stop modes use the owner-provisioned absolute configuration path and do not bypass server authorization.
 
-The gateway integration must register `ui://hostdeck/management` as `text/html;profile=mcp-app` and associate the resource through MCP Apps tool metadata (`ui/resourceUri`). Bundle `ui/newtree/app.ts` with the repository's installed esbuild before serving it; the host packages the stylesheet and bundle in the resource response. Standalone mode requires the local server's `/ui` and `/mcp` routes on the same origin, the server's configured authentication, and a valid user-issued access token; no client secret or server token belongs in the UI bundle. `ui/newtree/README.md` records the local build boundary. Actual ChatGPT tool discovery, Skill invocation, and panel acceptance remain an integration task and are not claimed by source packaging.
+## ChatGPT and OAuth setup status
 
-## Browser adapter
+`plugin/hostdeck/` is a portable source package, not an installed or connected ChatGPT plugin. Its endpoint template is preparation only. A reachable, verified HTTPS endpoint and an approved OAuth client registration are required before a ChatGPT connector can be configured. Do not put access tokens or client secrets in the plugin package or UI bundle. Actual SSO, ChatGPT discovery, tool and Skill use, and panel behavior have not yet been accepted.
 
-`src/hostdeck/browser.ts` requires an explicitly selected absolute Chrome/Edge executable and an owned profile root. Supply a `networkPolicy` callback when allowing private/local network targets; those targets are denied by default. Deployments should wire this callback to the gateway's configured egress policy, which must also account for DNS resolution and redirects. The adapter does not install browsers, access a debugging endpoint, use a personal profile, or download browser runtimes.
+The server loads authorization-server metadata only for its configured issuer and validates the returned issuer and HTTPS endpoints. The owner must provision the client ID, resource/audience and least-privilege scopes through the approved identity-provider process. A successful metadata fetch or local UI login alone is not end-to-end acceptance.
+
+## Management panel
+
+The local panel and MCP Apps resource share the same client application. The host registers `ui://hostdeck/management` as an MCP App resource and associates it with supported tools using the MCP Apps metadata. Local UI uses the same-origin `/mcp` route. Device/session selection comes from authorized server responses; files require explicit save, terminal activity is submitted as bounded jobs, and screenshot previews are retrieved as owned artifacts.
+
+The managed browser requires an explicitly configured Chrome or Edge executable and an owned temporary profile. It does not install browsers or attach to personal profiles or debugging endpoints. Private/local egress is denied unless an explicit network-policy integration allows it; the current adapter's hostname check is not a complete DNS-rebinding-resistant network boundary.
+
+## Acceptance status
+
+The local UI, CLI modes and PKCE client flow are prepared. A Windows installation is in progress. Real provider login, approved remote ingress, actual ChatGPT connection and MCP Apps use, reboot recovery, and upgrade/rollback remain pending acceptance. See [NEXT_RUN.md](NEXT_RUN.md) for the live execution sequence.

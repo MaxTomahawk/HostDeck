@@ -77,7 +77,7 @@ internal sealed class TrayContext : ApplicationContext
         try {
             using var pipe = new NamedPipeClientStream(".", "HostDeck.Service", PipeDirection.InOut);
             pipe.Connect(1000);
-            if (!Native.IsTrustedService(pipe.SafePipeHandle)) throw new IOException("Untrusted service pipe.");
+            if (!Native.IsTrustedService(pipe.SafePipeHandle, config)) throw new IOException("Untrusted service pipe.");
             using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
             using var reader = new StreamReader(pipe, leaveOpen: true);
             writer.WriteLine("{\"operation\":\"register\"}");
@@ -131,22 +131,59 @@ internal static class Native
     private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint processId);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint OpenSCManager(string? machine, string? database, uint access);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint OpenService(nint manager, string name, uint access);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool OpenProcessToken(nint process, uint access, out nint token);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
-    internal static bool IsTrustedService(Microsoft.Win32.SafeHandles.SafePipeHandle pipe)
+    private static extern bool QueryServiceStatusEx(nint service, int infoLevel, out ServiceStatusProcess status, int bufferSize, out int needed);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryServiceConfig(nint service, nint buffer, int bufferSize, out int needed);
+    [DllImport("advapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseServiceHandle(nint handle);
+    [StructLayout(LayoutKind.Sequential)] private struct ServiceStatusProcess
+    {
+        public uint ServiceType, CurrentState, ControlsAccepted, Win32ExitCode, ServiceSpecificExitCode;
+        public uint CheckPoint, WaitHint, ProcessId, ServiceFlags;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct ServiceConfig
+    {
+        public uint ServiceType, StartType, ErrorControl;
+        public nint BinaryPathName, LoadOrderGroup;
+        public uint TagId;
+        public nint Dependencies, ServiceStartName, DisplayName;
+    }
+    internal static bool IsTrustedService(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, string configPath)
     {
         if (!GetNamedPipeServerProcessId(pipe, out var pid) || !ProcessIdToSessionId(pid, out var session) || session != 0)
             return false;
-        var process = OpenProcess(0x1000, false, pid);
-        if (process == 0) return false;
+        var configFile = Path.GetFullPath(configPath);
+        var configDirectory = Path.GetDirectoryName(configFile);
+        if (configDirectory is null || !Path.GetFileName(configFile).Equals("facade.json", StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFileName(configDirectory).Equals("config", StringComparison.OrdinalIgnoreCase)) return false;
+        var root = Directory.GetParent(configDirectory)?.FullName;
+        if (root is null) return false;
+        var serviceExe = Path.Combine(root, "current", "service", "HostDeck.Lifecycle.exe");
+        var serviceConfig = Path.Combine(root, "service-config.json");
+        var expectedCommand = $"\"{serviceExe}\" --service \"{serviceConfig}\"";
+        var manager = OpenSCManager(null, null, 0x0001);
+        if (manager == 0) return false;
         try {
-            if (!OpenProcessToken(process, 0x0008, out var token)) return false;
+            var service = OpenService(manager, "HostDeck", 0x0005);
+            if (service == 0) return false;
             try {
-                using var identity = new WindowsIdentity(token);
-                return identity.User?.Value == "S-1-5-19";
-            } finally { CloseHandle(token); }
-        } finally { CloseHandle(process); }
+                if (!QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<ServiceStatusProcess>(), out _)
+                    || status.CurrentState != 4 || status.ProcessId != pid) return false;
+                _ = QueryServiceConfig(service, 0, 0, out var needed);
+                if (needed <= 0 || needed > 32768) return false;
+                var buffer = Marshal.AllocHGlobal(needed);
+                try {
+                    if (!QueryServiceConfig(service, buffer, needed, out _)) return false;
+                    var settings = Marshal.PtrToStructure<ServiceConfig>(buffer);
+                    var command = Marshal.PtrToStringUni(settings.BinaryPathName);
+                    var startName = Marshal.PtrToStringUni(settings.ServiceStartName);
+                    if (!string.Equals(command, expectedCommand, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(startName)) return false;
+                    return ((SecurityIdentifier)new NTAccount(startName).Translate(typeof(SecurityIdentifier))).Value == "S-1-5-19";
+                } finally { Marshal.FreeHGlobal(buffer); }
+            } finally { CloseServiceHandle(service); }
+        } catch (IdentityNotMappedException) { return false; }
+        finally { CloseServiceHandle(manager); }
     }
 }

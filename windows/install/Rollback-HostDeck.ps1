@@ -47,6 +47,11 @@ function Verify-Release([string] $source) {
 
 if (-not (Test-Path -LiteralPath $current -PathType Container) -or
     -not (Test-Path -LiteralPath $previous -PathType Container)) { throw 'Current and previous releases required.' }
+$trayExe = Join-Path $current 'tray/HostDeck.Tray.exe'
+$nodeExe = Join-Path $current 'agent/node.exe'
+foreach ($process in Get-CimInstance -ClassName Win32_Process -Filter "Name='HostDeck.Tray.exe' OR Name='node.exe'") {
+    if ($process.ExecutablePath -in @($trayExe, $nodeExe)) { throw 'Stop the HostDeck user tray and agent before rollback.' }
+}
 Verify-Release $current
 Verify-Release $previous
 $failed = Join-Path $root ('rolled-back-' + [guid]::NewGuid().ToString('N'))

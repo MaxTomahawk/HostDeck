@@ -30,6 +30,63 @@ foreach ($component in @('HostDeck.DesktopWorker', 'HostDeck.Lifecycle', 'HostDe
     & dotnet publish $project -c Release -r win-x64 --self-contained true -p:DebugType=None -p:DebugSymbols=false -o (Join-Path $package $directory) -v:q
     if ($LASTEXITCODE -ne 0) { throw "Publish failed: $component" }
 }
+# Read the exact framework versions emitted by self-contained publish; never guess
+# a runtime version from the installed SDK or copy notices from a mismatched pack.
+$frameworkVersions = @{}
+foreach ($directory in @('desktop', 'service', 'tray')) {
+    $runtimeConfigs = @(Get-ChildItem -LiteralPath (Join-Path $package $directory) -Filter '*.runtimeconfig.json' -File)
+    if ($runtimeConfigs.Count -ne 1) { throw "Expected one self-contained runtime config in $directory." }
+    $runtimeOptions = (Get-Content -LiteralPath $runtimeConfigs[0].FullName -Raw | ConvertFrom-Json).runtimeOptions
+    $included = @($runtimeOptions.includedFrameworks)
+    if (-not $included.Count) { throw "Publish output in $directory does not identify its included runtime frameworks." }
+    $current = @{}
+    foreach ($framework in $included) {
+        if ($framework.name -notin @('Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App') -or $framework.version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Unexpected included runtime framework metadata in $directory."
+        }
+        if ($current.ContainsKey($framework.name)) { throw "Duplicate runtime framework metadata in $directory." }
+        $current[$framework.name] = $framework.version
+    }
+    if (-not $current.ContainsKey('Microsoft.NETCore.App')) { throw "Expected Microsoft.NETCore.App in $directory." }
+    $needsDesktop = $directory -in @('desktop', 'tray')
+    if ($needsDesktop -ne $current.ContainsKey('Microsoft.WindowsDesktop.App')) {
+        throw "Unexpected Microsoft.WindowsDesktop.App inclusion in $directory."
+    }
+    foreach ($frameworkName in $current.Keys) {
+        if ($frameworkVersions.ContainsKey($frameworkName) -and $frameworkVersions[$frameworkName] -ne $current[$frameworkName]) {
+            throw "Published $frameworkName runtime versions differ between packaged executables."
+        }
+        $frameworkVersions[$frameworkName] = $current[$frameworkName]
+    }
+}
+$nugetCacheLine = (& dotnet nuget locals global-packages --list)
+if ($LASTEXITCODE -ne 0 -or $nugetCacheLine -notmatch '^global-packages:\s*(.+)$') { throw 'Cannot locate the installed NuGet package cache.' }
+$nugetCache = [IO.Path]::GetFullPath($Matches[1].Trim())
+$dotnetLicenseDirectory = Join-Path $package 'licenses/dotnet'
+New-Item -ItemType Directory -Path $dotnetLicenseDirectory -Force | Out-Null
+$dotnetPackages = @(
+    @{ id = 'Microsoft.NETCore.App.Runtime.win-x64'; version = $frameworkVersions['Microsoft.NETCore.App']; license = 'LICENSE.TXT'; destination = 'Microsoft.NETCore.App.LICENSE.TXT'; notices = 'THIRD-PARTY-NOTICES.TXT' },
+    @{ id = 'Microsoft.WindowsDesktop.App.Runtime.win-x64'; version = $frameworkVersions['Microsoft.WindowsDesktop.App']; license = 'LICENSE'; destination = 'Microsoft.WindowsDesktop.App.LICENSE'; notices = $null }
+)
+$dotnetProvenance = @()
+foreach ($entry in $dotnetPackages) {
+    $packageCache = Join-Path $nugetCache (Join-Path $entry.id.ToLowerInvariant() $entry.version)
+    $nuspecFile = Join-Path $packageCache ($entry.id.ToLowerInvariant() + '.nuspec')
+    $hashFile = Join-Path $packageCache ($entry.id.ToLowerInvariant() + '.' + $entry.version + '.nupkg.sha512')
+    foreach ($requiredFile in @($nuspecFile, $hashFile, (Join-Path $packageCache $entry.license)) + $(if ($entry.notices) { @(Join-Path $packageCache $entry.notices) } else { @() })) {
+        if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) { throw "Missing official .NET license source file for $($entry.id) $($entry.version)." }
+    }
+    [xml]$nuspec = Get-Content -LiteralPath $nuspecFile -Raw
+    $metadata = $nuspec.package.metadata
+    if ($metadata.id -ne $entry.id -or $metadata.version -ne $entry.version -or $metadata.license.type -ne 'expression' -or $metadata.license.'#text' -ne 'MIT' -or
+        $metadata.repository.url -ne 'https://github.com/dotnet/dotnet' -or $metadata.repository.commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Unrecognized .NET license package provenance for $($entry.id) $($entry.version)."
+    }
+    Copy-Item -LiteralPath (Join-Path $packageCache $entry.license) -Destination (Join-Path $dotnetLicenseDirectory $entry.destination)
+    if ($entry.notices) { Copy-Item -LiteralPath (Join-Path $packageCache $entry.notices) -Destination (Join-Path $dotnetLicenseDirectory 'THIRD-PARTY-NOTICES.TXT') }
+    $dotnetProvenance += @{ package = $entry.id; version = $entry.version; license = 'MIT'; repository = $metadata.repository.url; commit = $metadata.repository.commit; nupkgSha512 = (Get-Content -LiteralPath $hashFile -Raw).Trim() }
+}
+@{ schema = 1; frameworks = $frameworkVersions; packages = $dotnetProvenance } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $dotnetLicenseDirectory 'provenance.json') -Encoding utf8
 New-Item -ItemType Directory -Path (Join-Path $package 'agent/dist') -Force | Out-Null
 Copy-Item -Path (Join-Path $runtime 'dist/*') -Destination (Join-Path $package 'agent/dist') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $runtime 'package.json') -Destination (Join-Path $package 'agent/package.json')
@@ -66,7 +123,7 @@ New-Item -ItemType Directory -Path (Join-Path $package 'agent/ui/newtree') -Forc
 Copy-Item -Path (Join-Path $ui '*') -Destination (Join-Path $package 'agent/ui/newtree') -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $package 'installer') | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot '*.ps1') -Destination (Join-Path $package 'installer')
-New-Item -ItemType Directory -Path (Join-Path $package 'licenses') | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $package 'licenses') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'vendor/LICENSE') -Destination (Join-Path $package 'licenses/WindowsCommander.LICENSE')
 Copy-Item -LiteralPath (Join-Path $runtime 'LICENSE') -Destination (Join-Path $package 'licenses/DesktopCommander.LICENSE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'licenses/Node.LICENSE') -Destination (Join-Path $package 'licenses/Node.LICENSE')

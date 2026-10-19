@@ -18,6 +18,7 @@ internal sealed class LifecycleService : ServiceBase
     private readonly CancellationTokenSource stop = new();
     private Task? server;
     private NamedPipeServerStream? pipe;
+    private PipeSecurity? pipeAcl;
     private Enrollment? enrollment;
     private DateTimeOffset lastAgentSeen;
     private int lastSession;
@@ -46,6 +47,7 @@ internal sealed class LifecycleService : ServiceBase
             PipeAccessRights.ReadWrite, AccessControlType.Allow));
         acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalServiceSid, null),
             PipeAccessRights.FullControl, AccessControlType.Allow));
+        pipeAcl = acl;
         pipe = Native.CreateProtectedPipe(acl);
         server = Task.Run(Serve);
     }
@@ -54,7 +56,8 @@ internal sealed class LifecycleService : ServiceBase
     {
         while (!stop.IsCancellationRequested) {
             try {
-                var current = pipe ?? throw new IOException("Pipe unavailable.");
+                var current = pipe ?? Native.CreateProtectedPipe(pipeAcl ?? throw new IOException("Pipe ACL unavailable."));
+                pipe = current;
                 await current.WaitForConnectionAsync(stop.Token);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(3));
@@ -98,9 +101,11 @@ internal sealed class LifecycleService : ServiceBase
             catch (JsonException) { }
             catch (Exception) { }
             finally {
-                try { if (pipe?.IsConnected == true) pipe.Disconnect(); }
-                catch (IOException) { }
-                catch (ObjectDisposedException) { }
+                // A pipe that observed EOF may report IsConnected=false while
+                // its single server instance still occupies the name. Dispose
+                // it unconditionally and create a fresh first instance.
+                pipe?.Dispose();
+                pipe = null;
             }
         }
     }

@@ -124,9 +124,10 @@ rule or change a tunnel, DNS or production identity. An enrolled user then
 runs `windows/install/Register-HostDeckUser.ps1` unelevated with
 `-InstallRoot`; it verifies the enrolled SID and sets only that user's HKCU Run entry.
 `windows/install/Rollback-HostDeck.ps1 -InstallRoot <path>` restores the
-previous package. User-session startup and real update/rollback behavior
-remain subject to Windows acceptance; these scripts have not been run on a
-live HostDeck installation by this implementation package.
+previous package. A live Windows installation transaction is in progress. It
+is not accepted until service and enrolled-user session behavior are
+independently verified. Reboot recovery and real upgrade/rollback acceptance
+remain pending; see [NEXT_RUN.md](NEXT_RUN.md) for the current checkpoint.
 
 The LocalService named pipe `HostDeck.Service` accepts only short
 `{"operation":"register"}` messages or status queries. The service checks
