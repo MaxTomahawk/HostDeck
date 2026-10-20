@@ -101,10 +101,10 @@ and likewise `HostDeck.Lifecycle` and `HostDeck.Tray`. Packaging requires a
 reviewed, built Node facade, Node executable and a new output directory:
 
 ```powershell
-windows/install/New-HostDeckPackage.ps1 -AgentRuntimeDirectory <repository> -NodeExecutable <node.exe> -PackageDirectory <new-package-directory>
+pwsh -NoProfile -File windows/install/New-HostDeckPackage.ps1 -AgentRuntimeDirectory <repository> -NodeExecutable <node.exe> -PackageDirectory <new-package-directory>
 ```
 
-Packaging publishes self-contained win-x64 .NET binaries, copies the facade
+The package builder requires PowerShell 7; parsing it in Windows PowerShell 5.1 does not establish runtime compatibility. Packaging publishes self-contained win-x64 .NET binaries, copies the facade
 distribution and management UI under `agent/ui/newtree`, installs Node production dependencies with
 `npm ci --omit=dev --ignore-scripts`, copies Node, and hashes every packaged
 file into `manifest.json`. Review the resulting public-source and dependency
@@ -121,7 +121,9 @@ prepared config and grants are copied under the
 protected install root; only Administrators/SYSTEM can alter them, and the
 enrolled user can read them. The new state directory grants only that user
 Modify and Administrators/SYSTEM Full. Upgrades preserve config, grants and
-state. The installer verifies the manifest, stages exact files, stops the service,
+state. Choose an explicit machine-data directory outside the install root and any packaged application's profile cache. A packaged host can redirect a visible user-profile path to a different physical directory, leaving SYSTEM unable to find the visible path. Verify the chosen location from both the enrolled user and SYSTEM. Any migration must preserve the original data, rebase active artifact storage references, and check the existing job/artifact identities and bytes before switching the protected configuration.
+
+The installer verifies the manifest, stages exact files, stops the service,
 switches `current`/`previous`, registers LocalService with a service SID,
 starts it and restores the old release on failure. It does not add a firewall
 rule or change a tunnel, DNS or production identity. An enrolled user then
