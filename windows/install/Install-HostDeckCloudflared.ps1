@@ -79,7 +79,7 @@ function Write-Atomic([string] $Path, [byte[]] $Bytes, [switch] $Executable) {
     try {
         [IO.File]::WriteAllBytes($temporary, $Bytes)
         Set-PrivateAcl $temporary $false -Executable:$Executable
-        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, $null) }
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [System.Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temporary, $Path) }
         Set-PrivateAcl $Path $false -Executable:$Executable
     } finally {

@@ -50,7 +50,7 @@ function Write-JsonNew([string]$Path,$Object) {
 function Write-JsonAtomic([string]$Path,$Object) {
   $tmp=$Path+'.tmp-'+[guid]::NewGuid().ToString('N')
   Write-JsonNew $tmp $Object
-  if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp,$Path,$null) }
+  if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp,$Path,[System.Management.Automation.Language.NullString]::Value) }
   else { [IO.File]::Move($tmp,$Path) }
 }
 function Get-CertHash([Security.Cryptography.X509Certificates.X509Certificate2]$Cert) {

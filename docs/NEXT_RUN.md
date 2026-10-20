@@ -2,7 +2,7 @@
 
 ## Current checkpoint — 2026-10-20
 
-`codex/delivery` / PR9 contains the integrated runtime and Windows product. The installed HostDeck LocalService, user tray, session HTTP, and MCP durable-job reconnect acceptance were verified earlier, including an artifact after client/agent disconnect. Separately, the frozen direct-Codex administration bundle is prepared: its native runner, actual PowerShell 5.1 parsing and 16 focused protocol/security tests pass; two nonexportable client keys were generated for the actual Windows SID. Windows canceled the first permanent-broker elevation before process startup: no setup stage, broker root or launch receipt exists. The request is terminal, not live. Broker installation and unelevated signed-client acceptance remain unproved. Private receipts remain outside tracked source.
+`codex/delivery` / PR9 contains the integrated runtime and Windows product. The installed HostDeck LocalService, user tray, session HTTP, and MCP durable-job reconnect acceptance were verified earlier, including an artifact after client/agent disconnect. The permanent signed administration broker was actually installed after the owner confirmed Windows consent. An unelevated direct-Codex request produced independently checked SYSTEM/session-0 proof, while owner-key signing was denied to the ordinary client. A source-built HostDeck adapter also passed actual submission, exact status/ownership and signed-verification checks against that broker. Invalid signatures were rejected before runner startup. These adapter checks do not yet prove the new installed HostDeck package. Private receipts remain outside tracked source.
 
 The package builder now includes the broker's pinned scripts, self-contained runner, licenses and provenance under `installer/privilege`. A separate candidate was built without changing the installed product or registering the SYSTEM task. Broker registration remains a separate explicit first installation; shipping its files does not prove installation or execution.
 
@@ -12,12 +12,12 @@ The owner selected a **direct outbound Cloudflare Tunnel from Windows to the loo
 
 ## Next actions
 
-1. Await owner readiness for the first permanent-broker OS consent, then launch the already frozen setup once. Inspect actual processes and protected receipts before any retry. After actual installation run the prepared direct-Codex signed-client probe and negative checks. Do not infer success from a prompt or resume the expired temporary controller.
-2. Once direct-Codex acceptance is recorded, complete the full HostDeck integration and its signed-client end-to-end checks. Then finish rollback/reupgrade, Cloudflare service and Access configuration, remote endpoint plus real ChatGPT connection, and reboot job/artifact recovery.
+1. Reuse the installed signed broker, not UAC or the expired temporary controller. Its PowerShell 5.1 atomic-replacement defect was reproduced and repaired through a signed maintenance request, preserving backups and identities. Verify protected boot/replay evidence and current helper hashes; global Codex instructions now preserve discovery and request-recovery rules across chats. No first-install retry is needed.
+2. Install the fixed HostDeck candidate with broker configuration and exact local grants, and verify the installed adapter. Then finish rollback/reupgrade, Cloudflare service and Access configuration, remote endpoint plus real ChatGPT connection, and reboot job/artifact recovery.
 3. Complete source/artifact screening and release review from tested `main`; historical upstream credential findings still require release disposition.
 
 ## Exit boundary
 
-Focused source checks and packaging are evidence only. Direct-Codex SYSTEM installation, signed-client acceptance, full HostDeck integration, lifecycle, remote ingress, ChatGPT and reboot recovery remain open. No UAC request is currently live. An earlier temporary controller expired and must not be resumed. On-demand upstream comparison is available; automatic monitoring stays off.
+Direct-Codex installation and signed execution have actual evidence; boot recovery and protected replay inspection remain separate checks. Full installed HostDeck integration, lifecycle, remote ingress, ChatGPT and reboot recovery remain open. No UAC request is currently live or needed for the completed first installation. An earlier temporary controller expired and must not be resumed. On-demand upstream comparison is available; automatic monitoring stays off.
 
 Release still requires direct-Codex broker acceptance, full HostDeck integration, rollback/reupgrade, remote authorization, actual ChatGPT, reboot/recovery and source/artifact checks. Keep one short plan, the existing Operator project and GitHub; no Linear or GitHub Actions. Keep private evidence outside tracked source and automatic monitoring off.

@@ -23,11 +23,11 @@
     },
     {
       "name": "Bridge.Common.ps1",
-      "sha256": "783ed8748605a15af42003f01ee9c60dc6239e318f5d32d916922f1e740ca803"
+      "sha256": "976d0b93cb68a6af36834ec40000bfdcf4e3bf465df02791e1828bb29fbb8723"
     },
     {
       "name": "Broker.Tick.ps1",
-      "sha256": "12a7a8500634a518681bfaa695279c4b0c6a88fe69688a40da65f9c20faaf81b"
+      "sha256": "1d10bf11e6dee995e8acf407e7e9555a9b88753fc81b11ed280734aad7498bee"
     },
     {
       "name": "Broker.Verify.ps1",

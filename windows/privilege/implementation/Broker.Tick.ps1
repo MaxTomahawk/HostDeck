@@ -48,7 +48,12 @@ try {
       Write-Output ('RECOVERY_REQUIRED: unresolved intent '+$base); return
     }
   }
-  $queued=@(Get-ChildItem -LiteralPath (Join-Path $script:BridgeRoot 'inbox') -Filter '*.request.json' -File -Recurse | Sort-Object CreationTimeUtc)
+  $queued=@(Get-ChildItem -LiteralPath (Join-Path $script:BridgeRoot 'inbox') -Filter '*.request.json' -File -Recurse |
+    Where-Object {
+      $candidateId=$_.Name.Substring(0,$_.Name.Length-'.request.json'.Length)
+      (Test-IsUuid $candidateId) -and
+        (-not [IO.File]::Exists((Join-Path $script:BridgeRoot ('audit\'+$candidateId+'.intent.json'))))
+    } | Sort-Object CreationTimeUtc)
   foreach($file in ($queued | Select-Object -First 10)) {
     $identifier=$file.Name.Substring(0,$file.Name.Length-'.request.json'.Length)
     if(-not (Test-IsUuid $identifier)) {continue}
