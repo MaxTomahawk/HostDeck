@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "files": [
+    {
+      "name": "Admin-Reconcile.ps1",
+      "sha256": "1c00803a7bc1971f8380fe55ab017c8457e29c3c891aae0bdae6659c0290d169"
+    },
+    {
+      "name": "Admin-Revoke.ps1",
+      "sha256": "ebd34f96b3e50f76f73cf45df7a06e807cd7bb49df6ee44438eb45c05af59665"
+    },
+    {
+      "name": "Admin-RevokeClient.ps1",
+      "sha256": "27582d5db234f4578630adaf7b8ebb03bca553541874abdc2fade5a2b6f443d0"
+    },
+    {
+      "name": "Admin-Unregister.ps1",
+      "sha256": "24bd0b35b11685cf67760146e114d6fa4174f4286f628f595eb9a0d160c0673c"
+    },
+    {
+      "name": "Approve-Goal.ps1",
+      "sha256": "0dc19e8c178c5498e0c2948b479e3f76a1f2abc0abf4847e67c1fdb83df307e5"
+    },
+    {
+      "name": "Bridge.Common.ps1",
+      "sha256": "783ed8748605a15af42003f01ee9c60dc6239e318f5d32d916922f1e740ca803"
+    },
+    {
+      "name": "Broker.Tick.ps1",
+      "sha256": "12a7a8500634a518681bfaa695279c4b0c6a88fe69688a40da65f9c20faaf81b"
+    },
+    {
+      "name": "Broker.Verify.ps1",
+      "sha256": "17811fe662687dc23745c1f35e4af4397f86663ed2accf102645dd558771ab24"
+    },
+    {
+      "name": "Build-Runner.ps1",
+      "sha256": "64930ea083b8bfbdc5bdf08921ceb2d73b6df28d2300604968e9d9e0e56de340"
+    },
+    {
+      "name": "Inspect-Windows.ps1",
+      "sha256": "01297673fa1f1edb09c7b6edcd8342e6ba3b5ea146ac6914a72880608f95b703"
+    },
+    {
+      "name": "Install-Broker.ps1",
+      "sha256": "f806eb44d8533dc9d8e8aaa69e7f568e8df040889fdd647f13a8f4a91d9c5a94"
+    },
+    {
+      "name": "New-ClientIdentity.ps1",
+      "sha256": "a6dba49728aa95592ee5e9a67951819f7a1b14458e166196adfca52ae5a676d8"
+    },
+    {
+      "name": "New-OwnerIdentity.ps1",
+      "sha256": "b161ff6c31ffdc6141fef3b9992c49656d417b082d958ad7271ea70ac9a51285"
+    },
+    {
+      "name": "Read-Audit.ps1",
+      "sha256": "a3c641eea7077bfdfa10c1f4002d6417c39318b3615758054eb77110a98407e3"
+    },
+    {
+      "name": "Read-ClientReceipts.ps1",
+      "sha256": "fcaee607fbf46d23249240a1194d9ed72d4e94b21d0946cbde64ff362b3c65bd"
+    },
+    {
+      "name": "Submit-AdminRequest.ps1",
+      "sha256": "1f3012ac38b2f1309c3039e4e8d3f45d3fd3fe9a508688d1d9272cd5a6b2191a"
+    },
+    {
+      "name": "Submit-Verification.ps1",
+      "sha256": "49b8b457bcc27e1bbe21d114438a92dc0e965c4b09f81ba29e09ebf063fd0090"
+    },
+    {
+      "name": "Test-Windows.ps1",
+      "sha256": "47693b832a1ec0edc9484e93ca0af2ff9bca66b6d0576f2fbb5e4227206527a4"
+    }
+  ]
+}

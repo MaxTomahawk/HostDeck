@@ -19,12 +19,14 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   const issuer='https://issuer.example',resource='https://hostdeck.example/mcp';
   const authority=new TokenAuthority({issuer,audience:resource,jwks:createLocalJWKSet({keys:[{...await exportJWK(publicKey),kid:'fixture'}]})});
   const now=Math.floor(Date.now()/1000);
-  const token=await new SignJWT({sub:'fixture',client_id:'client',scope:'files:read files:write'}).setProtectedHeader({alg:'RS256',typ:'at+jwt',kid:'fixture'}).setIssuer(issuer).setAudience(resource).setIssuedAt(now).setExpirationTime(now+300).sign(privateKey);
-  let grants:Grant[]=[{issuer,subject:'fixture',clientId:'client',deviceId:'device',executorId:'executor',scopes:['files:read','files:write'],expiresAt:now+300,revision:'1',broadUserAuthority:true,sessionIds:[1]}];
+  const token=await new SignJWT({sub:'fixture',client_id:'client',scope:'files:read files:write devices:read host:manage'}).setProtectedHeader({alg:'RS256',typ:'at+jwt',kid:'fixture'}).setIssuer(issuer).setAudience(resource).setIssuedAt(now).setExpirationTime(now+300).sign(privateKey);
+  let grants:Grant[]=[{issuer,subject:'fixture',clientId:'client',deviceId:'device',executorId:'executor',scopes:['files:read','files:write','devices:read','host:manage'],expiresAt:now+300,revision:'1',broadUserAuthority:true,sessionIds:[1]}];
   const gate=new PolicyGate(authority,audit,async()=>grants);
   let facade:HostDeckFacade;
   runtime=await UserRuntime.create({workspace:directory,deviceId:'device',environment:{},shells:{},authorize:async(name,args)=>{await facade.reauthorize(name,args);return true;}});
-  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)}]});
+  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)},
+    {implementedTools:new Set(['hostdeck_device_status']),handle:async()=>({status:'ready'})},
+    {implementedTools:new Set(['hostdeck_privileged_requests']),handle:async()=>({requests:[]})}]});
   const allowedHosts:string[]=[];
   const boundary=createHttpBoundary(facade,authority,{issuer,resource,allowedHosts,allowedOrigins:[]});
   // Use a real socket; the request boundary sees the exact configured Host header.
@@ -34,6 +36,7 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   t.after(async()=>{await boundary.close();await new Promise<void>(resolve=>server.close(()=>resolve()));});
   const port=(server.address() as {port:number}).port;
   allowedHosts.push(`127.0.0.1:${port}`);
+  const health=await fetch(`http://127.0.0.1:${port}/health`);assert.equal(health.status,200);
   let id=0;
   const rpc=async(method:string,params:unknown={},headers:Record<string,string>={})=>{
     if(headers['mcp-protocol-version']==='2026-07-28') params={...(params as object),_meta:{'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientCapabilities':{}}};
@@ -46,6 +49,12 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   assert.equal(listed.status,200);
   assert.ok(listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_write_file'));
   assert.ok(!listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_start_process'));
+  assert.ok(listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_device_status'));
+  assert.ok(!listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_privileged_requests'));
+  const device=await rpc('tools/call',{name:'hostdeck_device_status',arguments:{device_id:'device'}});
+  assert.equal(device.data.result.isError,undefined);
+  const management=await rpc('tools/call',{name:'hostdeck_privileged_requests',arguments:{device_id:'device',session_id:1}});
+  assert.equal(management.data.result.isError,true);
   const modern=await rpc('tools/list',{}, {'mcp-protocol-version':'2026-07-28','mcp-method':'tools/list'});
   assert.equal(modern.status,200);
   assert.ok(modern.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_read_file'));

@@ -14,7 +14,8 @@ export interface Grant {
   issuer: string; subject: string; clientId: string; deviceId: string; executorId: string;
   scopes: string[]; expiresAt: number; revision: string; broadUserAuthority: boolean; sessionIds: number[];
 }
-export interface ExecutionContext { ownerId: string; deviceId: string; executorId: string; sessionId?: number; sessionIds: readonly number[]; revision: string }
+export interface ExecutionContext { ownerId: string; deviceId: string; executorId: string; sessionId?: number; sessionIds: readonly number[]; revision: string; auditId?:string }
+const privilegedToolNames = new Set(['hostdeck_submit_privileged_script','hostdeck_privileged_status','hostdeck_privileged_requests','hostdeck_submit_privileged_verification']);
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -56,7 +57,7 @@ export class AuditLog {
   count(): number { return Number(this.db.prepare('SELECT COUNT(*) AS count FROM audit').get()!.count); }
   records() { return this.db.prepare('SELECT seq, body, mac FROM audit ORDER BY seq').all(); }
 
-  append(operation: string, actor: unknown, device: string, args: unknown, decision: string, revision: string): void {
+  append(operation: string, actor: unknown, device: string, args: unknown, decision: string, revision: string): string {
     if (this.closed || this.poisoned) throw new RuntimeError('AUDIT_UNAVAILABLE');
     try {
       this.db.exec('BEGIN IMMEDIATE');
@@ -66,8 +67,10 @@ export class AuditLog {
       const safeOperation = /^hostdeck_[a-z_]+$/.test(operation) ? operation : 'unknown_operation';
       const body = canonical({ seq, previous: last?.mac ?? '', time: new Date().toISOString(), operation: safeOperation,
         actor: this.identity(actor), device: this.identity(device), arguments: this.identity(args), decision, revision });
-      this.db.prepare('INSERT INTO audit(seq,body,mac) VALUES(?,?,?)').run(seq, body, this.digest(body));
+      const mac=this.digest(body);
+      this.db.prepare('INSERT INTO audit(seq,body,mac) VALUES(?,?,?)').run(seq, body, mac);
       this.db.exec('COMMIT');
+      return mac;
     } catch {
       try { this.db.exec('ROLLBACK'); } catch { /* original admission already failed */ }
       this.poisoned = true;
@@ -131,9 +134,15 @@ export class TokenAuthority {
     return principal;
   }
   valid(principal: Principal): boolean { return this.verified.has(principal) && principal.expiresAt > Date.now() / 1000; }
+  withoutScopes(principal:Principal,denied:readonly string[]):Principal {
+    if(!this.valid(principal))throw new RuntimeError('UNAUTHENTICATED');
+    const blocked=new Set(denied);
+    return this.mint({...principal,scopes:principal.scopes.filter(scope=>!blocked.has(scope))});
+  }
 }
 
 export class PolicyGate {
+  private readonly contextProofs = new WeakMap<object,{principal:Principal;name:string;args:Readonly<Record<string,unknown>>}>();
   constructor(private readonly authority: TokenAuthority, private readonly audit: AuditLog,
     private readonly grants: () => Promise<Grant[]>) {}
 
@@ -141,7 +150,7 @@ export class PolicyGate {
     if (!this.authority.valid(principal)) return new Set();
     const grants = (await this.grants()).filter(g => this.matches(principal, g, deviceId) && g.executorId === executorId);
     if (!this.authority.valid(principal)) return new Set();
-    return new Set(listToolContracts().filter(c => c.domain !== 'management'
+    return new Set(listToolContracts().filter(c => (c.domain !== 'management' || privilegedToolNames.has(c.name))
       && c.requiredScopes.every(s => principal.scopes.includes(s))
       && grants.some(g => c.requiredScopes.every(s => g.scopes.includes(s)))).map(c => c.name));
   }
@@ -160,24 +169,36 @@ export class PolicyGate {
         && contract.requiredScopes.every(scope => g.scopes.includes(scope))
         && (args.session_id === undefined || g.sessionIds.includes(args.session_id as number)));
       if (!grant || !this.authority.valid(principal)) throw new Error('grant');
-      // Privileged host management needs a separately registered action transaction, not an ordinary grant.
-      if (contract.domain === 'management') throw new Error('management');
-      return { ownerId: this.audit.identity([principal.issuer,principal.subject,principal.clientId]),
+      if (contract.domain === 'management' && !privilegedToolNames.has(contract.name)) throw new Error('management');
+      if (contract.domain === 'management' && !grant.scopes.includes('host:manage')) throw new Error('management-scope');
+      const context:ExecutionContext = Object.freeze({ ownerId: this.audit.identity([principal.issuer,principal.subject,principal.clientId]),
         deviceId: grant.deviceId, executorId: grant.executorId, sessionId: args.session_id as number | undefined,
-        sessionIds: [...grant.sessionIds], revision: grant.revision };
+        sessionIds: Object.freeze([...grant.sessionIds]), revision: grant.revision });
+      this.contextProofs.set(context,{principal,name,args});
+      return context;
     } catch {
       this.audit.append(name, principal, String(args.device_id ?? ''), args, 'denied', 'none');
       throw new RuntimeError('DENIED');
     }
   }
 
+  assertAuthorizedContext(context:ExecutionContext,name:string,args:Readonly<Record<string,unknown>>):void {
+    const proof=this.contextProofs.get(context as object);
+    if(!proof||proof.name!==name||proof.args!==args||!context.auditId||!this.authority.valid(proof.principal))throw new RuntimeError('DENIED');
+    const contract=getToolContract(name);
+    if(contract.domain!=='management'||!privilegedToolNames.has(name)||!contract.requiredScopes.every(scope=>proof.principal.scopes.includes(scope)))throw new RuntimeError('DENIED');
+  }
+
   async execute<T>(principal: Principal, name: string, args: Record<string, unknown>, effect: (context: ExecutionContext) => Promise<T>): Promise<T> {
     const context = await this.authorize(principal, name, args);
-    this.audit.append(name, context.ownerId, context.deviceId, args, 'admitted', context.revision);
+    const auditId=this.audit.append(name, context.ownerId, context.deviceId, args, 'admitted', context.revision);
     const current = await this.authorize(principal, name, args);
     if (current.revision !== context.revision || current.executorId !== context.executorId) throw new RuntimeError('DENIED');
+    const bound=Object.freeze({...current,auditId});
+    const proof=this.contextProofs.get(current);
+    if(proof)this.contextProofs.set(bound,proof);
     let result: T;
-    try { result = await effect(current); }
+    try { result = await effect(bound); }
     catch (error) { this.audit.append(name, context.ownerId, context.deviceId, args, 'failed_or_uncertain', context.revision); throw error; }
     try { this.audit.append(name, context.ownerId, context.deviceId, {}, 'completed', context.revision); }
     catch { throw new RuntimeError('AUDIT_OUTCOME_UNCERTAIN'); }

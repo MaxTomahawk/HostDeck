@@ -154,3 +154,30 @@ The LocalService named pipe `HostDeck.Service` accepts only short
 the caller's pipe-impersonated OS SID and kernel-reported process session
 against protected enrollment before returning health and last user-agent
 presence. The pipe conveys no public MCP data or command execution.
+
+## Direct Codex signed SYSTEM broker
+
+The separate Codex administration bundle is intended to install a persistent
+SYSTEM task that runs scripts signed by the enrolled client key. This is broad,
+standing delegation, not a command catalog: any script authorized by that
+client can execute as SYSTEM. The prepared enrollment contains two
+nonexportable client keys bound to the same Windows SID. Requests and results
+must retain their signature verification, request/goal context, and protected
+audit receipts. The user SID is the local authorization boundary; optional
+remote-host management must stay opt-in and use exact grants.
+
+The owner signing identity is a nonexportable RSA key in the LocalMachine
+Microsoft Software KSP, created and ACL-checked by an administrator. Its key
+ACL is administrator-controlled; it does not form a security boundary against SYSTEM.
+The Windows CNG ACL mechanism uses `NCryptSetProperty` with
+`NCRYPT_SECURITY_DESCR_PROPERTY` ([Microsoft API reference](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptsetproperty)).
+Store timestamps in UTC; presentation may convert them to Amsterdam local time.
+Bundle preparation and focused checks do not prove that an initial UAC
+bootstrap installed the SYSTEM task. Require protected install receipts and an
+unelevated signed-client probe before recording acceptance.
+
+Any process that can run code as an enrolled signing account may use that
+account's key. This includes terminal execution under that account: a
+`host:manage` tool grant is not an independent OS boundary against such code.
+Account/key isolation must be assessed before granting less-trusted remote
+principals process execution or enabling a remote management bridge.

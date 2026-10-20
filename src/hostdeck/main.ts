@@ -24,6 +24,7 @@ import {SafeCommitter} from './commit.js';
 import {RuntimeError} from './runtime-error.js';
 import {loadOAuthMetadata} from './oauth-metadata.js';
 import {loadBackendTls} from './tls.js';
+import {PrivilegeAdapter} from './privilege.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -33,11 +34,15 @@ const configuration=z.object({
   version:z.literal(1),device_id:identifier,executor_id:identifier,expected_user_sid:z.string().regex(/^S-1-5-[0-9-]+$/),
   workspace:absolute,state_directory:absolute,desktop_worker:absolute,browser_executable:absolute.optional(),grants_file:absolute,
   installed:z.boolean().default(false),enrollment_file:absolute.optional(),
+  privilege_broker:z.object({enabled:z.boolean(),allow_remote:z.boolean().default(false),powershell_executable:absolute,
+    submit_script:absolute,submit_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),receipt_script:absolute,receipt_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),
+    verification_script:absolute,verification_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),signer_thumbprint:z.string().regex(/^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/),
+    client_id:z.literal('hostdeck-local')}).strict().optional(),
   remote_tls:z.object({host:z.string().refine(value=>/^100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/.test(value)&&value.split('.').every(part=>Number(part)<=255)),port:z.number().int().min(1024).max(65535),pfx_file:absolute}).strict().optional(),
   http:z.object({port:z.number().int().min(1024).max(65535),resource:https,issuer:https,jwks_uri:https,
     access_token_profile:z.enum(['rfc9068','keycloak']).default('rfc9068'),oauth_client_id:z.string().min(1).max(256).optional(),
     auth_mode:z.enum(['native-oauth','cloudflare-access']).default('native-oauth'),
-    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read'])).min(1).max(10)}).strict().optional(),
+    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage'])).min(1).max(11)}).strict().optional(),
     allowed_origins:z.array(z.string().url()).max(20).default([]),proxy_hosts:z.array(z.string().regex(/^[A-Za-z0-9.:[\]-]{1,255}$/)).max(10).default([])}).strict().optional(),
 }).strict();
 const grantSchema=z.array(z.object({issuer:z.string().min(1).max(2048),subject:z.string().min(1).max(256),clientId:z.string().min(1).max(256),
@@ -64,6 +69,9 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   if(config.remote_tls&&(!config.installed||!(config.http?.auth_mode==='cloudflare-access'||config.http?.oauth_client_id)))throw new RuntimeError('REMOTE_NOT_ENROLLED');
   if(config.http?.auth_mode==='cloudflare-access'&&!config.http.cloudflare_access)throw new RuntimeError('CLOUDFLARE_AUTH_CONFIGURATION_REQUIRED');
   if(config.http?.auth_mode!=='cloudflare-access'&&config.http?.cloudflare_access)throw new RuntimeError('CLOUDFLARE_AUTH_CONFIGURATION_INVALID');
+  if(config.privilege_broker?.allow_remote&&!config.privilege_broker.enabled)throw new RuntimeError('PRIVILEGE_CONFIGURATION_INVALID');
+  if(config.http?.auth_mode==='cloudflare-access'&&config.http.cloudflare_access?.capability_ceiling.includes('host:manage')
+    &&(!config.privilege_broker?.enabled||!config.privilege_broker.allow_remote))throw new RuntimeError('REMOTE_PRIVILEGE_OPT_IN_REQUIRED');
   const workspace=await fs.realpath(config.workspace);
   // The file adapter must not reach its own grant store, audit keys or executable configuration.
   for(const protectedPath of [configPath,config.state_directory,config.grants_file,config.desktop_worker]) {
@@ -96,6 +104,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const systemRoot=process.env.SystemRoot;
   if(!systemRoot||!path.isAbsolute(systemRoot))throw new RuntimeError('EXECUTOR_UNAVAILABLE');
   const shell=path.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
+  if(config.privilege_broker&&path.resolve(config.privilege_broker.powershell_executable).toLowerCase()!==path.resolve(shell).toLowerCase())throw new RuntimeError('PRIVILEGE_CONFIGURATION_INVALID');
   environment.PATH=[path.join(systemRoot,'System32'),systemRoot,path.dirname(shell),path.dirname(process.execPath)].join(path.delimiter);
   const state=StateServices.create({root:path.join(config.state_directory,'state'),deviceId:config.device_id,workspace,shellExecutable:shell,
     environment,desktopWorkerExecutable:config.desktop_worker});
@@ -139,6 +148,13 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     if(name==='hostdeck_device_status')return {...result as object,sessions:[{session_id:identity.session_id,eligible:identity.eligible}],executor_id:config.executor_id};
     return result;
   }};
+  const privilegeOptions=config.privilege_broker;
+  const privilege=privilegeOptions?.enabled?await PrivilegeAdapter.create({powershellExecutable:privilegeOptions.powershell_executable,
+    submitScript:privilegeOptions.submit_script,submitSha256:privilegeOptions.submit_sha256,receiptScript:privilegeOptions.receipt_script,
+    receiptSha256:privilegeOptions.receipt_sha256,verificationScript:privilegeOptions.verification_script,verificationSha256:privilegeOptions.verification_sha256,
+    signerThumbprint:privilegeOptions.signer_thumbprint,clientId:privilegeOptions.client_id,stateDirectory:config.state_directory,
+    reauthorize,assertAuthorized:(context,name,args)=>gate.assertAuthorizedContext(context,name,args),
+    artifactBytes:async(context,id)=>{const result=await state.artifactBytes(context,id);return result?{bytes:result.bytes,mimeType:result.mimeType}:null;}}):undefined;
   const browser=config.browser_executable?await BrowserAdapter.create({executable:config.browser_executable,profileRoot:path.join(config.state_directory,'browsers')}):undefined;
   const appRoot=fileURLToPath(new URL('../../ui/newtree/',import.meta.url));
   let appHtml:string|undefined;
@@ -153,7 +169,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     }
   }catch{throw new RuntimeError('APP_ASSETS_MISSING');}
   facade=new HostDeckFacade({deviceId:config.device_id,executorId:config.executor_id,gate,appHtml,checkExecutor,
-    adapters:[runtimeAdapter,processAdapter,files,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[])]});
+    adapters:[runtimeAdapter,processAdapter,files,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
   let stopTransport:()=>Promise<void>;
   if(transport==='stdio'){
     // Re-mint only from the still-running native identity bootstrap; every tool rechecks current grants.
@@ -169,6 +185,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     const resource=new URL(settings.resource);
     if(resource.pathname!=='/mcp'||resource.search||resource.hash)throw new RuntimeError('INVALID_RESOURCE');
     const boundary=createHttpBoundary(facade,authority,{issuer:settings.issuer,resource:settings.resource,
+      managementEnabled:privilegeOptions?.enabled===true&&privilegeOptions.allow_remote,
       oauthOrigin:settings.auth_mode==='native-oauth'&&settings.oauth_client_id?new URL(settings.issuer).origin:undefined,
       cloudflareAccess:settings.auth_mode==='cloudflare-access'?{audience:settings.cloudflare_access!.audience,
         scopes:settings.cloudflare_access!.capability_ceiling,clientId:cloudflareClientId!}:undefined,
@@ -186,7 +203,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   let closed=false,stopTimer:ReturnType<typeof setInterval>|undefined;
   const generation=randomUUID(),controlPath=path.join(config.state_directory,'agent-control.json'),stopPath=path.join(config.state_directory,'agent-stop.json');
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
-    await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
+    await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
     await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}
   };

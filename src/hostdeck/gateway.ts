@@ -116,6 +116,7 @@ export interface HttpBoundaryOptions {
   allowedHosts: readonly string[]; allowedOrigins: readonly string[];
   resource: string; issuer: string;
   oauthOrigin?: string;
+  managementEnabled?:boolean;
   cloudflareAccess?: { audience: string; scopes: readonly string[]; clientId: string };
 }
 export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAuthority, options: HttpBoundaryOptions) {
@@ -145,7 +146,8 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
       if (url.pathname === '/health' && request.method === 'GET') return Response.json({product:'HostDeck',status:'ready'});
       if (['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(url.pathname) && request.method === 'GET') {
         if (options.cloudflareAccess) return new Response('NOT_FOUND',{status:404});
-        return Response.json({ resource:options.resource,authorization_servers:[options.issuer],bearer_methods_supported:['header'],scopes_supported:['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read'] });
+        return Response.json({ resource:options.resource,authorization_servers:[options.issuer],bearer_methods_supported:['header'],scopes_supported:[
+          'files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read',...(options.managementEnabled?['host:manage']:[])] });
       }
       if (url.pathname !== '/mcp') return new Response('NOT_FOUND',{status:404});
       if (pending >= 32) return new Response('BUSY',{status:429});
@@ -163,6 +165,7 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
         }
       } catch { return options.cloudflareAccess ? new Response('UNAUTHENTICATED',{status:403})
         : new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}}); }
+      if(!options.managementEnabled)principal=authority.withoutScopes(principal,['host:manage']);
       pending++;
       try { return await principals.run(principal, () => handler.fetch(request)); }
       catch { return new Response('REQUEST_FAILED',{status:400}); }
