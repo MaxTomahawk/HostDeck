@@ -151,8 +151,15 @@ internal static class JobRunner
             }
             if (!JobNative.GetExitCodeProcess(process.hProcess, out var exit))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            var contained = EnsureNoDescendants(job, process.hProcess, 5000);
-            return contained ? (exit == 0 ? "completed" : "failed", exit, true) : ("uncertain", null, false);
+            if (!TryGetActiveProcessCount(job, out var remaining)) {
+                var contained = EnsureNoDescendants(job, process.hProcess, 5000);
+                return ("uncertain", exit, contained);
+            }
+            if (remaining > 0) {
+                var contained = EnsureNoDescendants(job, process.hProcess, 5000);
+                return contained ? ("interrupted", exit, true) : ("uncertain", exit, false);
+            }
+            return (exit == 0 ? "completed" : "failed", exit, true);
         } finally {
             if (process.hThread != 0) JobNative.CloseHandle(process.hThread);
             if (process.hProcess != 0) JobNative.CloseHandle(process.hProcess);
@@ -174,11 +181,21 @@ internal static class JobRunner
         while (true) {
             var processWait = JobNative.WaitForSingleObject(process, 0);
             if (processWait != 0 && processWait != 0x102) return false;
-            if (!JobNative.QueryInformationJobObject(job, 1, out var info, Marshal.SizeOf<JobNative.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), 0)) return false;
-            if (info.ActiveProcesses == 0 && processWait == 0) return true;
+            if (!TryGetActiveProcessCount(job, out var activeProcesses)) return false;
+            if (activeProcesses == 0 && processWait == 0) return true;
             if (Environment.TickCount64 >= deadline) return false;
             Thread.Sleep(25);
         }
+    }
+
+    private static bool TryGetActiveProcessCount(nint job, out uint activeProcesses)
+    {
+        activeProcesses = 0;
+        if (!JobNative.QueryInformationJobObject(job, 1, out var info,
+                Marshal.SizeOf<JobNative.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), 0))
+            return false;
+        activeProcesses = info.ActiveProcesses;
+        return true;
     }
 
     private static nint EnvironmentBlock(Dictionary<string, string> additions)
