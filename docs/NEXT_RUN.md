@@ -8,7 +8,7 @@ The owner selected a **direct outbound Cloudflare Tunnel from Windows to the loo
 
 ## Next actions
 
-1. Diagnose the original uncertain job without replaying it; reproduce with a separate harmless native request, fix the startup fault and rerun only the installed reconnect path. Reuse passing native/session evidence.
+1. The native job fixes are built at `c00fd4e`: detached launch, bounded startup-failure receipts and truthful interruption when remaining child work is terminated. Focused real Windows regressions pass. The frozen next candidate is awaiting its elevated upgrade; do not rebuild or replay the original uncertain jobs. After the update, rerun only the installed reconnect path.
 2. Finish the dedicated Windows `cloudflared` deployment. The tunnel now exists with its own credential; official binary digest and real ingress validation pass. The protected helper routes only the selected hostname to loopback and ends with 404. Service and DNS publication remain pending.
 3. The optional Cloudflare Access profile and signed-assertion checks are implemented. The actual Access application now uses the existing owner-only policy, 15-minute application/access tokens, a 24-hour OAuth grant and ChatGPT-only redirects. Activate the installed profile with exact verified owner subject/device/executor/session grants before publishing ingress.
 4. Bundle the next fixed package upgrade with the required protected configuration. Preserve today's working package as the rollback baseline: the older installed previous package predates the broker fix. Only concrete unavoidable OS/MFA/consent actions belong in Operator.
