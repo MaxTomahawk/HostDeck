@@ -234,7 +234,11 @@ $wasRunning = $service -and $service.State -eq 'Running'
 $createdService = $false
 $filesChanged = -not ($oldConfig -and [Convert]::ToBase64String($oldConfig) -ceq [Convert]::ToBase64String($configBytes)) -or
     -not ($oldCredential -and [Convert]::ToBase64String($oldCredential) -ceq [Convert]::ToBase64String($credentialBytes))
-$oldBinaryHash = if ($oldBinary) { [BitConverter]::ToString([Security.Cryptography.SHA256]::HashData($oldBinary)).Replace('-', '') } else { $null }
+$oldBinaryHash = $null
+if ($oldBinary) {
+    $oldBinarySha = [Security.Cryptography.SHA256]::Create()
+    try { $oldBinaryHash = [BitConverter]::ToString($oldBinarySha.ComputeHash($oldBinary)).Replace('-', '') } finally { $oldBinarySha.Dispose() }
+}
 $binaryChanged = -not $oldBinary -or $oldBinaryHash -ine $script:CloudflaredHash
 $filesChanged = $filesChanged -or $binaryChanged
 $serviceChanged = -not $service -or $service.PathName -cne $expectedImagePath -or $service.StartName -ne 'NT AUTHORITY\LocalService'

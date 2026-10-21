@@ -125,6 +125,7 @@ internal static class Program
             var winRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             var envEntries = new [] {
                 "ComSpec=" + Path.Combine(winRoot, "System32", "cmd.exe"),
+                "PATHEXT=.COM;.EXE;.BAT;.CMD",
                 "Path=" + Path.Combine(winRoot, "System32") + ";" + winRoot,
                 "ProgramData=" + Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "SystemDrive=" + Path.GetPathRoot(winRoot)!.TrimEnd('\\'),
