@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { jwtVerify, errors, type JWTVerifyGetKey } from 'jose';
 import { getToolContract, listToolContracts } from './contracts.js';
 import { RuntimeError } from './runtime-error.js';
 
@@ -80,6 +80,22 @@ export class AuditLog {
   close(): void { if (!this.closed) { this.closed = true; this.db.close(); } }
 }
 
+export type AuthenticationReason = 'TOKEN_INPUT'|'JWT_FORMAT'|'JWT_ALGORITHM'|'JWT_SIGNATURE'|'JWKS_KEY'|'JWKS_TIMEOUT'|'JWT_EXPIRED'|'JWT_ISSUER'|'JWT_AUDIENCE'|'JWT_CLAIM'|'JWT_VERIFICATION'|'HEADER_TYPE'|'APP_TYPE'|'CLAIM_TIME'|'SUBJECT';
+export class AuthenticationError extends RuntimeError {
+  constructor(readonly reason:AuthenticationReason){super('UNAUTHENTICATED');}
+}
+function authenticationReason(error:unknown):AuthenticationReason {
+  if(error instanceof AuthenticationError)return error.reason;
+  if(error instanceof errors.JWTExpired)return 'JWT_EXPIRED';
+  if(error instanceof errors.JWTClaimValidationFailed)return error.claim==='iss'?'JWT_ISSUER':error.claim==='aud'?'JWT_AUDIENCE':'JWT_CLAIM';
+  if(error instanceof errors.JWSSignatureVerificationFailed)return 'JWT_SIGNATURE';
+  if(error instanceof errors.JOSEAlgNotAllowed)return 'JWT_ALGORITHM';
+  if(error instanceof errors.JWKSNoMatchingKey || error instanceof errors.JWKSMultipleMatchingKeys)return 'JWKS_KEY';
+  if(error instanceof errors.JWKSTimeout)return 'JWKS_TIMEOUT';
+  if(error instanceof errors.JWSInvalid || error instanceof errors.JWTInvalid)return 'JWT_FORMAT';
+  return 'JWT_VERIFICATION';
+}
+
 export class TokenAuthority {
   private readonly verified = new WeakSet<object>();
   constructor(private readonly options: { issuer: string; audience: string; jwks: JWTVerifyGetKey; accessTokenProfile?: 'rfc9068'|'keycloak' }) {}
@@ -109,19 +125,23 @@ export class TokenAuthority {
   /** Cloudflare Access assertion path. Never accepts the opaque Managed OAuth bearer token. */
   async verifyCloudflareAssertion(token: string, audience: string, scopes: readonly string[], clientId: string): Promise<Principal> {
     try {
-      if (!token || token.length > 16_384 || !audience || !clientId) throw new Error('token');
+      if (!token || token.length > 16_384 || !audience || !clientId) throw new AuthenticationError('TOKEN_INPUT');
       const { payload, protectedHeader } = await jwtVerify(token, this.options.jwks, {
         issuer: this.options.issuer, audience, algorithms: ['RS256'],
         requiredClaims: ['iss','sub','aud','exp','iat'], clockTolerance: 30,
       });
       const now = Date.now() / 1000;
       // Cloudflare's signed app assertions can omit JOSE typ; enforce its app claim instead.
-      if ((protectedHeader.typ !== undefined && protectedHeader.typ !== 'JWT') || payload.type !== 'app'
-        || !Number.isSafeInteger(payload.exp) || !Number.isSafeInteger(payload.iat)
-        || payload.exp! <= now || payload.iat! > now + 30 || payload.exp! <= payload.iat! || payload.exp! - payload.iat! > 900
-        || typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 256) throw new Error('claims');
+      if (protectedHeader.typ !== undefined && protectedHeader.typ !== 'JWT') throw new AuthenticationError('HEADER_TYPE');
+      if (payload.type !== 'app') throw new AuthenticationError('APP_TYPE');
+      if (!Number.isSafeInteger(payload.exp) || !Number.isSafeInteger(payload.iat)
+        || payload.exp! <= now || payload.iat! > now + 30 || payload.exp! <= payload.iat!) throw new AuthenticationError('CLAIM_TIME');
+      // Access owns assertion lifetime. Enforce its signed expiry above, not a guessed
+      // exp-iat ceiling: Managed OAuth assertions can exceed the CLI session duration.
+      // HostDeck grants retain their independent expiry and are checked on every call.
+      if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 256) throw new AuthenticationError('SUBJECT');
       return this.mint({issuer:payload.iss!,subject:payload.sub,clientId,scopes,expiresAt:payload.exp!});
-    } catch { throw new RuntimeError('UNAUTHENTICATED'); }
+    } catch (error) { throw new AuthenticationError(authenticationReason(error)); }
   }
 
   /** Called only by the private OS-verified bootstrap; never from MCP arguments or HTTP claims. */
