@@ -42,7 +42,13 @@ test('Cloudflare Access assertion is app/audience bound and still requires expli
   assert.equal((await call('')).status,403);
   assert.equal((await call(await assertion('wrong-audience'))).status,403);
   assert.equal((await call(await assertion(audience,now-1))).status,403);
-  assert.equal((await call(await assertion(audience,now+1000))).status,403);
+  // Managed OAuth assertions can exceed a locally guessed session-duration ceiling.
+  const longLived=await assertion(audience,now+7*86_400);
+  assert.equal((await call(longLived)).status,200);
+  assert.equal((await call(await assertion(audience,now+1000))).status,200);
+  assert.equal((await call(await assertion(audience,now+180,now+60))).status,403);
+  const tampered=longLived.split('.');tampered[2]=(tampered[2][0]==='A'?'B':'A')+tampered[2].slice(1);
+  assert.equal((await call(tampered.join('.'))).status,403);
   assert.equal((await call(await assertion(audience,now+120,now,'user'))).status,403);
   assert.equal((await call(await assertion(audience,now+120,now,'app','at+jwt'))).status,403);
   assert.equal((await call('', 'Bearer opaque-oauth-token')).status,403);
@@ -52,7 +58,12 @@ test('Cloudflare Access assertion is app/audience bound and still requires expli
   assert.equal(await fs.readFile(path.join(directory,'cf-write.txt'),'utf8'),'authorized');
   const forwardedOpaque=await call(await assertion(audience),'Bearer opaque-oauth-token');assert.equal(forwardedOpaque.status,200);
   assert.equal(forwardedOpaque.data.result.isError,undefined);
+  // A longer provider assertion never extends a HostDeck grant or its device binding.
+  await fs.writeFile(path.join(directory,'cf-write.txt'),'grant-expired');
+  grants=grants.map(grant=>({...grant,expiresAt:now-1}));
+  const expiredGrant=await call(longLived);assert.equal(expiredGrant.status,200);assert.equal(expiredGrant.data.result.isError,true);
+  assert.equal(await fs.readFile(path.join(directory,'cf-write.txt'),'utf8'),'grant-expired');
   grants=[];
   const denied=await call(await assertion(audience));assert.equal(denied.status,200);assert.equal(denied.data.result.isError,true);
-  assert.equal(await fs.readFile(path.join(directory,'cf-write.txt'),'utf8'),'authorized');
+  assert.equal(await fs.readFile(path.join(directory,'cf-write.txt'),'utf8'),'grant-expired');
 });

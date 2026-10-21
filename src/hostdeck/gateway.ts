@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { Server, createMcpHandler } from '@modelcontextprotocol/server';
 import { discoverTools, parseToolArguments, listResourceTemplates, resolveResource, listPrompts, renderPrompt, ContractError } from './contracts.js';
-import { PolicyGate, TokenAuthority, type Principal, type ExecutionContext } from './security.js';
+import { PolicyGate, TokenAuthority, AuthenticationError, type AuthenticationReason, type Principal, type ExecutionContext } from './security.js';
 import { RuntimeError } from './runtime-error.js';
 
 export interface Adapter {
@@ -13,6 +13,7 @@ export interface ConnectionDiagnostic {
   stage:'discovery'|'origin-rejected'|'authentication-rejected'|'mcp-response'|'mcp-error';
   status?:number;toolCount?:number;method?:string;protocol?:string;
   assertionPresent?:boolean;bearerPresent?:boolean;origin?:'absent'|'allowed'|'chatgpt'|'other';
+  authenticationReason?:AuthenticationReason;
 }
 function diagnose(callback:((event:ConnectionDiagnostic)=>void)|undefined,event:ConnectionDiagnostic):void {
   try{callback?.(event);}catch{/* Connection diagnostics never change authorization or execution. */}
@@ -146,9 +147,9 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       const origin = request.headers.get('origin');
-      const trace=(stage:ConnectionDiagnostic['stage'],status:number)=>{
+      const trace=(stage:ConnectionDiagnostic['stage'],status:number,authenticationReason?:AuthenticationReason)=>{
         const protocol=request.headers.get('mcp-protocol-version');
-        diagnose(options.diagnostic,{stage,status,method:['GET','POST','DELETE','OPTIONS'].includes(request.method)?request.method:'OTHER',
+        diagnose(options.diagnostic,{stage,status,...(authenticationReason?{authenticationReason}:{}),method:['GET','POST','DELETE','OPTIONS'].includes(request.method)?request.method:'OTHER',
           ...(protocol&&/^\d{4}-\d{2}-\d{2}$/.test(protocol)?{protocol}:{}),
           assertionPresent:request.headers.has('cf-access-jwt-assertion'),bearerPresent:request.headers.get('authorization')?.startsWith('Bearer ')??false,
           origin:origin===null?'absent':options.allowedOrigins.includes(origin)?'allowed':origin==='https://chatgpt.com'?'chatgpt':'other'});
@@ -186,8 +187,8 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
           if (!authorization?.startsWith('Bearer ') || authorization.length > 16_400) throw new RuntimeError('UNAUTHENTICATED');
           principal = await authority.verify(authorization.slice(7));
         }
-      } catch {
-        trace('authentication-rejected',options.cloudflareAccess?403:401);
+      } catch (error) {
+        trace('authentication-rejected',options.cloudflareAccess?403:401,error instanceof AuthenticationError?error.reason:undefined);
         return options.cloudflareAccess ? new Response('UNAUTHENTICATED',{status:403})
           : new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}});
       }
