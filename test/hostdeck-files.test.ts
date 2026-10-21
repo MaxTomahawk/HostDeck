@@ -84,3 +84,17 @@ test('file adapter confines paths, pages owner-bound searches, and never silentl
     assert.equal(calls.length, process.platform === 'win32' ? 6 : 4);
   } finally { await rm(workspace, { recursive: true, force: true }); }
 });
+
+test('permanent nonrecursive deletion removes an empty directory and preserves a populated one',async()=>{
+ const workspace=await mkdtemp(path.join(os.tmpdir(),'hostdeck-delete-empty-'));
+ try{
+  await mkdir(path.join(workspace,'empty'));await mkdir(path.join(workspace,'populated'));
+  await writeFile(path.join(workspace,'populated','keep.txt'),'keep');
+  const adapter=await FileAdapter.create({workspace,reauthorize:async()=>{}});
+  const args={device_id:context.deviceId,recursive:false,recycle:false};
+  await assert.rejects(adapter.handle('hostdeck_delete_path',{...args,path:'populated'},context),/FILES_DIRECTORY_NOT_EMPTY/);
+  assert.equal(await readFile(path.join(workspace,'populated','keep.txt'),'utf8'),'keep');
+  await adapter.handle('hostdeck_delete_path',{...args,path:'empty'},context);
+  await assert.rejects(stat(path.join(workspace,'empty')),{code:'ENOENT'});
+ }finally{await rm(workspace,{recursive:true,force:true});}
+});

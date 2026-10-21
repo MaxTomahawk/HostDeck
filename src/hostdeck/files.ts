@@ -227,7 +227,8 @@ export class FileAdapter {
       await this.runPowerShell(script, 'FILES_RECYCLE_FAILED');
       return { deleted: true, permanent: false, recycled: true, entries: count };
     }
-    await fs.rm(target.absolute, { recursive: args.recursive === true, force: false });
+    if(target.stat.isDirectory()&&args.recursive!==true)await fs.rmdir(target.absolute);
+    else await fs.rm(target.absolute, { recursive: args.recursive === true, force: false });
     return { deleted: true, permanent: true, entries: count };
   }
 
@@ -339,8 +340,10 @@ export class FileAdapter {
     if (process.platform !== 'win32') throw new Error('PROCESS_LIST_UNAVAILABLE_PLATFORM');
     const limit = args.limit as number;
     const script = [
-      "$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
-      "$rows=Get-CimInstance Win32_Process | ForEach-Object { try { $owner=$_.GetOwner(); if ($owner.ReturnValue -eq 0 -and (([string]$owner.Domain+'\\'+[string]$owner.User) -ieq $current)) { [pscustomobject]@{name=[string]$_.Name;session_id=[int]$_.SessionId;memory_bytes=[int64]$_.WorkingSetSize} } } catch {} }",
+      "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
+      `Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Security.Principal; public static class HostDeckProcessOwner { [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access,bool inherit,int id); [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token); [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle); public static bool Matches(int id,string sid) { IntPtr process=OpenProcess(0x1000,false,id),token=IntPtr.Zero; if(process==IntPtr.Zero)return false; try { if(!OpenProcessToken(process,8,out token))return false; using(var identity=new WindowsIdentity(token))return identity.User.Value==sid; } finally { if(token!=IntPtr.Zero)CloseHandle(token); CloseHandle(process); } } }'`,
+      "$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+      "$rows=Get-Process | ForEach-Object { try { if ([HostDeckProcessOwner]::Matches($_.Id,$current)) { [pscustomobject]@{name=([string]$_.ProcessName+'.exe');session_id=[int]$_.SessionId;memory_bytes=[int64]$_.WorkingSet64} } } catch {} }",
       `$rows | Select-Object -First ${Math.min(limit + 1, 1001)} | ConvertTo-Json -Compress`,
     ].join('; ');
     let output: string;

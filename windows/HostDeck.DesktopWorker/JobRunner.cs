@@ -209,8 +209,8 @@ internal static class JobRunner
     {
         var filename = Path.GetFileName(r.ShellExecutable).ToLowerInvariant();
         var argument = filename switch {
-            "powershell.exe" or "pwsh.exe" => "-NoLogo -NoProfile -NonInteractive -EncodedCommand "
-                + Convert.ToBase64String(Encoding.Unicode.GetBytes(r.Command)),
+            "powershell.exe" or "pwsh.exe" => "-NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "
+                + Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false);\n" + r.Command)),
             "cmd.exe" => "/d /s /c " + Quote(r.Command),
             _ => throw new InvalidDataException("Unsupported shell executable.")
         };

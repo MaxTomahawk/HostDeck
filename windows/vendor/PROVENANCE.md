@@ -7,3 +7,7 @@ MIT-licensed; its unmodified license is retained in `LICENSE`. HostDeck's
 private adapter calls only the desktop services it needs. HostDeck bounds UIA
 enumeration to 500 returned elements in `UiAutomationService.cs`. This copy is not
 the public MCP server and does not expose upstream operations directly.
+
+HostDeck also preserves explicit pointer coordinates instead of replacing them
+with the window centre, and starts a drag at the previously selected origin.
+Window/session bounds remain checked by HostDeck before invoking the service.

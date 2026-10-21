@@ -131,7 +131,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const reauthorize=(name:string,args:Readonly<Record<string,unknown>>)=>facade.reauthorize(name,args);
   const committer=await SafeCommitter.create({workspace,reauthorize});
   const files=await FileAdapter.create({workspace,reauthorize});
-  const documents=await DocumentAdapter.create({workspace});
+  const documents=await DocumentAdapter.create({workspace,browserExecutable:config.browser_executable});
   const desktop=await DesktopAdapter.create({executable:config.desktop_worker,expectedSid:config.expected_user_sid,identity,
     reauthorize,storeArtifact:(context,bytes,name,mime)=>state.storeArtifact(context,Buffer.from(bytes),name,mime),
     artifactBytes:async(context,id)=>{const result=await state.artifactBytes(context,id);if(!result)throw new RuntimeError('DENIED');return result;}});

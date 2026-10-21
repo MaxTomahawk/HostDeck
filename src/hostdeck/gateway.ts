@@ -121,8 +121,13 @@ export class HostDeckFacade {
 function resourceOperation(name: string): string {
   return ({hostdeck_device:'hostdeck_device_status',hostdeck_job:'hostdeck_read_job',hostdeck_artifact:'hostdeck_read_artifact',hostdeck_events:'hostdeck_read_events'} as Record<string,string>)[name] ?? '';
 }
+const publicAdapterErrors=new Set(['STALE_WINDOW','STALE_ELEMENT','STALE_MONITOR','WINDOW_NOT_FOREGROUND','OUTSIDE_WINDOW',
+  'EFFECT_OUTCOME_UNCERTAIN','EDIT_CONFLICT','BROWSER_PRIVATE_EGRESS_DENIED','BROWSER_EGRESS_DENIED','BROWSER_PROTOCOL_DENIED',
+  'BROWSER_SESSION_NOT_OWNED','BROWSER_STALE_ELEMENT','BROWSER_START_FAILED','BROWSER_PAGE_FAILED','BROWSER_NAVIGATION_FAILED',
+  'PDF_UNICODE_RENDERER_REQUIRED','PROCESS_LIST_UNAVAILABLE']);
 export function publicError(error: unknown): string {
   if ((error instanceof RuntimeError || error instanceof ContractError) && /^[A-Z][A-Z_]{1,64}$/.test(error.code)) return error.code;
+  if(error instanceof Error&&publicAdapterErrors.has(error.message))return error.message;
   return 'IO_ERROR';
 }
 
