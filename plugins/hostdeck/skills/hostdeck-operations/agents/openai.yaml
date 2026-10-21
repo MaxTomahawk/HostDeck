@@ -1,0 +1,3 @@
+interface:
+  display_name: "HostDeck Operations"
+  short_description: "Operate an authorized Windows device using registered HostDeck MCP tools"
