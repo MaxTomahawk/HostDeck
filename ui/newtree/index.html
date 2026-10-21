@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HostDeck</title><link rel="stylesheet" href="./styles.css"></head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">HOSTDECK · LOCAL DEVICE</p><h1>Management</h1></div><button id="refresh">Refresh</button></header>
+    <label>Authorized device ID <input id="device" autocomplete="off" placeholder="Device ID from HostDeck"></label>
+    <section id="connection" class="connection" hidden aria-label="Standalone connection">
+      <label>Short-lived OAuth access token <input id="token" type="password" autocomplete="off" spellcheck="false"></label>
+      <button id="connect" type="button">Connect locally</button>
+      <button id="disconnect" type="button">Disconnect</button>
+      <p>Token is held in memory for this page and sent only to this origin’s authenticated MCP endpoint.</p>
+    </section>
+    <nav aria-label="Management areas"><button data-view="overview">Overview</button><button data-view="files">Files</button><button data-view="jobs">Jobs</button><button data-view="terminal">Terminal</button><button data-view="screen">Screen</button></nav>
+    <section id="content" aria-live="polite"><p>Connect to HostDeck to load authorized device data.</p></section>
+    <p id="status" role="status">Waiting for HostDeck MCP App connection.</p>
+  </main><script type="module" src="./app.js"></script>
+</body></html>

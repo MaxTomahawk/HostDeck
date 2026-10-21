@@ -1,0 +1,6 @@
+# Keep the exact upstream runtime license, including its original indentation.
+windows/licenses/Node.LICENSE -whitespace
+
+# Broker source hashes must survive Windows checkouts without newline conversion.
+windows/privilege/implementation/*.ps1 text eol=lf
+windows/privilege/implementation/source-sha256.json text eol=lf

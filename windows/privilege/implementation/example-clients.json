@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "clients": [
+    {
+      "client_id": "codex-local",
+      "windows_sid": "REPLACE_WITH_OBSERVED_CODEX_WINDOWS_SID",
+      "surface": "Codex Desktop sandbox",
+      "public_certificate": "REPLACE_WITH_ABSOLUTE_PATH_TO_CODEX_PUBLIC_CER"
+    }
+  ]
+}

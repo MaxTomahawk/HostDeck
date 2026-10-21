@@ -1,0 +1,3 @@
+# HostDeck MCP App management panel
+
+`index.html`, the bundled `app.js`, and `styles.css` are served as the `ui://hostdeck/management` MCP App and by the standalone same-origin `/ui` route. Rebuild `app.js` from `app.ts` with `npx esbuild ui/newtree/app.ts --bundle --format=esm --platform=browser --outfile=ui/newtree/app.js` after changing the source. MCP Apps use the official `@modelcontextprotocol/ext-apps` `App` and `PostMessageTransport`; standalone mode uses the official MCP SDK Streamable HTTP client and an in-memory short-lived bearer token. Both paths show actual server responses, require an authorized device ID, and keep untrusted tool output in text nodes.

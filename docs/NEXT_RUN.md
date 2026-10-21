@@ -1,34 +1,19 @@
-# HostDeck next execution run
+# HostDeck next run
 
-## Outcome
+## Checkpoint — 2026-10-21
 
-Complete the HostDeck product described in `MASTERPLAN.md`; a timebox or task status is not acceptance. Work from temporary branches and reviewed PRs. GitHub is the source-review path; use the existing Operator project for readiness, dependencies, valid leases/fences, evidence and review. Stop Linear planning/sync. Do not use GitHub Actions while quota restrictions apply.
+The Windows service, enrolled tray, local HTTP UI, MCP authorization, and durable job/artifact recovery have real installed evidence. The signed administration broker is installed; direct Codex and the **installed** HostDeck stdio adapter each submitted a bounded request that ran under SYSTEM in session 0. The installed adapter passed five checks with a local `host:manage` grant and remote privilege disabled. An ordinary unpackaged desktop process also verified both enrolled signing keys, the startup entry, public helpers, and canonical machine-data state before reboot. Private receipts remain outside tracked source.
 
-## Five implementation packages
+The fixed candidate completed an actual upgrade, rollback, and reupgrade, all with exit code 0. Separate installed checks passed three enrollment proofs, local health/UI, and unauthenticated MCP rejection. These are lifecycle and local acceptance results, not remote or reboot acceptance.
 
-1. Runtime foundation: MCP facade, adapters, policy, OAuth and stable contracts.
-2. Windows lifecycle: service, per-session GUI worker, browser/tray, installer, update and rollback.
-3. Durable execution: jobs, artifacts, devices, routing, events and recovery.
-4. Client experience: ChatGPT plugin/Skills/resources/Apps and justified local UI.
-5. Integration and acceptance: secure remote ingress, actual Windows install, real ChatGPT discovery/use, upgrade/rollback, release hygiene, documentation and manual upstream reconciliation.
+The dedicated direct Cloudflare tunnel runs as an automatic LocalService. Current actual signed HTTPS MCP checks now pass initialize, 49-tool discovery and device status; local stdio exposes 53 tools. Wrong-device and remote administrator calls are denied, as is a modified token signature. The cause of the earlier external failure was a mandatory JOSE `typ` header check: genuine Cloudflare app assertions omit that optional header. The installed bounded repair accepts absent/JWT `typ` while preserving signature, issuer, audience, app-claim, expiry and grants. Current signed requests through direct Codex and the installed HostDeck adapter each completed a harmless SYSTEM/session-0 assertion without UAC.
 
-Parallelize packages only against stable contracts. Only the integration package accepts cross-package results. Root owns shared package files and commits; avoid worktrees unless conflicts require isolation. Preserve copied upstream branches until their unique work and licensing are reviewed; reuse old archive material only after provenance, license, compatibility and security checks. Automatic upstream monitoring stays backlog until acceptance and explicit owner permission.
+The HostDeck service also lacked SCM failure actions. Its installer now registers restart delays of 20/60/120 seconds; the live policy and a controlled service restart were checked. Protected configuration, grants, enrollment and canonical state were preserved. This was a two-file signed repair of the accepted package, with an updated manifest and protected rollback journal, not a new stable release. Actual crash-trigger, logoff, Windows reboot, network-outage and ordinary-ChatGPT hosted-App acceptance remain open. A fresh 12-second passive sample after repair measured roughly 227 MiB working set across lifecycle/tray/agent/tunnel, no measurable CPU increment and zero process-I/O delta. This is a short sample, not proof of whole-machine idle or peak usage. Pre-repair active probes also had low resident CPU; transient broker/probe peaks and process-attributed network bytes were not established. A read-only state check after repair retained the accepted job and matching artifact bytes; two other jobs remain uncertain and must not be replayed.
 
-## Run shape (five hours, target only)
+## Next actions
 
-- 0–15 min: freeze interfaces, inspect current state and assign bounded packages.
-- 15–165 min: up to three workers plus root on independent packages.
-- 165–240 min: root integrates and resolves contract breaks.
-- 240–300 min: real acceptance, focused fixes and evidence capture.
+1. Use the owner's actual marketplace: `MaxTomahawk/HostDeck`, branch `chatgpt-marketplace`, merged PR #10, plugin 0.3.2. Its `.app.json` references the owner's existing registered OAuth App; the earlier change in the infrastructure repository was not the marketplace in use. Do not create another plugin/App/marketplace or replace that binding. Refresh the existing App's tools in ordinary ChatGPT and independently test real tool and hosted-App interactions. Server-side discovery is now verified; the previous zero-tool ChatGPT catalog has not yet been rechecked from that host. A complete standalone evaluation prompt and current private evidence are available outside tracked source. Check finite grant expiry before later runs; do not broaden grants to make discovery pass.
+2. Capture a fresh canonical-state baseline after final configuration, then perform an actual reboot and verify automatic service/user startup, broker task health, retained job/artifact bytes, and signed request recovery. Keep automatic upstream monitoring off.
+3. Review and merge the tested product through PR review to `main`, then run public-source and artifact screening for release. The candidate history contains 27 credential findings; a full private backup has been verified, and the owner's disposition is pending. Do not rewrite history by default or release while this remains unresolved.
 
-Timebox is not a completion guarantee. Do not claim unverified work as done. Use at most three concurrent workers plus root: `gpt-6-luna` medium for bounded ordinary work; `gpt-6-sol` medium only for complex security/native work. Root handles integration and one focused final risk review. Give workers short self-contained assignments and disjoint files, without full chat history. Reuse workers; do not spawn new implementer/reviewer pairs for each small change.
-
-Resume from this file and the five live Operator packages, not the full old chat or every historical plan. Read earlier evidence only for the module being changed; keep tool output compact. Use installed dependencies and prior passing evidence unless a changed dependency or failure justifies reinstall/retesting. Prefer adapting the already qualified source over writing another replacement engine.
-
-## Verification and release boundaries
-
-Use one meaningful targeted check per changed subsystem, batch build/integration once, and rerun only changed or failing paths. Existing 14+11 passing checks remain prior evidence. The inherited 164/174 result with ten failures is triage context; investigate relevance and do not erase real failures. Report skipped, mocked and unavailable checks accurately.
-
-Completion still requires actual Windows install and service/session behavior, authenticated client and real ChatGPT tool discovery/use, durable job/restart behavior, secure remote authorization and deny cases, upgrade/rollback, and independent acceptance evidence. Keep credentials, protected input, personal paths, private topology and unsanitized diagnostics out of tracked/public artifacts. Inspect inherited-code side effects; use `npm ci --ignore-scripts` and run only reviewed required build/native steps. No production identity, DNS, tunnel, firewall or remote infrastructure changes without the controlling approval process and bounded registered Operator action.
-
-Before commits, stage exact files and run the public-source scanner with trusted Gitleaks; before release also scan history. Scanner findings or failures block publication pending review. Release only from reviewed, tested `main`; preserve required upstream notices. No task or plan status substitutes for code and acceptance evidence.
+The installed broker still needs an action-local native-command environment preamble, documented in the global discovery guide; the corrected native runner has been built for future packaging. The installed signed route is the durable local administrative path; no further UAC is needed for the current work. Preserve the original installer, service/session, desktop, jobs/artifacts, remote ingress, ChatGPT, and rollback scope. Use the existing Operator project and GitHub as the work/evidence authorities; do not create Linear plans or run GitHub Actions. No automatic upstream monitoring until full acceptance and explicit owner permission.

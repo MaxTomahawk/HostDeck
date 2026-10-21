@@ -122,6 +122,20 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('device_status', 'Read health and eligible session metadata for the granted device.', {}, ['devices:read'], 'service', 'read'),
   tool('diagnostics', 'Create a sanitized owner-scoped diagnostic artifact.', { include_jobs: z.boolean().default(false) }, ['devices:read', 'jobs:read'], 'service', 'read'),
   tool('manage_host', 'Request only a registered bounded management action; protected approval remains separate.', { action_id: z.string().min(1).max(256), intent_id: id }, ['host:manage'], 'management', 'manage'),
+  tool('submit_privileged_script', 'Submit an arbitrary PowerShell script to the enrolled signed administrator broker under an explicit host:manage grant.', {
+    ...desktop, goal_id: z.string().uuid(), goal: z.string().min(8).max(2000), mandate_evidence: z.string().min(8).max(900),
+    action_summary: z.string().min(8).max(1000), expected_change: z.string().min(8).max(1000),
+    script: z.string().min(1).max(131072), risk: z.enum(['standard','elevated-risk','critical']),
+    owner_approval_artifact_id: id.optional(), retry_of: z.string().uuid().optional(), project_id: z.string().max(128).optional(),
+    chat_id: z.string().max(128).optional(), timeout_seconds: positive.min(10).max(900).default(180),
+  }, ['host:manage'], 'management', 'manage'),
+  tool('privileged_status', 'Read the exact signed-broker receipt for a request submitted by this HostDeck principal.', { ...desktop, request_id: z.string().uuid() }, ['host:manage'], 'management', 'read'),
+  tool('privileged_requests', 'List this principal session’s recent signed-broker request identifiers for reconnect and receipt recovery.', { ...desktop, limit: positive.max(100).default(50) }, ['host:manage'], 'management', 'read'),
+  tool('submit_privileged_verification', 'Submit a signed client observation for an owned privileged request; this is not independent OS verification.', {
+    ...desktop, request_id: z.string().uuid(), goal_id: z.string().uuid(), observed_change: z.string().min(8).max(2000),
+    verification_method: z.string().min(8).max(400), effect_verified: z.boolean(), evidence_sha256: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+    project_id: z.string().max(128).optional(), chat_id: z.string().max(128).optional(),
+  }, ['host:manage'], 'management', 'manage'),
 ]);
 
 const byName = new Map(contracts.map(contract => [contract.name, contract]));
