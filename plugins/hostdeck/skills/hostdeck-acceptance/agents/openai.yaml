@@ -1,0 +1,3 @@
+interface:
+  display_name: "HostDeck Acceptance"
+  short_description: "Independently test HostDeck MCP tools and feature coverage"
