@@ -12,7 +12,7 @@ import {createRemoteJWKSet} from 'jose';
 import {toNodeHandler} from '@modelcontextprotocol/node';
 import {serveStdio} from '@modelcontextprotocol/server/stdio';
 import {AuditLog,TokenAuthority,PolicyGate,type Grant} from './security.js';
-import {HostDeckFacade,createHttpBoundary,publicError,type Adapter} from './gateway.js';
+import {HostDeckFacade,createHttpBoundary,publicError,type Adapter,type ConnectionDiagnostic} from './gateway.js';
 import {UserRuntime} from './user-runtime.js';
 import {ProcessAdapter} from './processes.js';
 import {DocumentAdapter} from './documents.js';
@@ -99,6 +99,25 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     jwks:settings?createRemoteJWKSet(new URL(settings.jwks_uri),{timeoutDuration:5000,cooldownDuration:30000,cacheMaxAge:300000}):async()=>{throw new RuntimeError('UNAUTHENTICATED');}});
   const loadGrants=async():Promise<Grant[]>=>grantSchema.parse(await jsonFile(config.grants_file));
   const gate=new PolicyGate(authority,audit,loadGrants);
+  // Bounded connection metadata only: never tokens, claims, arguments, paths or tool output.
+  const diagnosticEvents:Array<ConnectionDiagnostic&{time:string}>=[];
+  const diagnosticGeneration=randomUUID(),diagnosticPath=path.join(config.state_directory,`connection-diagnostics-${transport}.json`);
+  let diagnosticDirty=false,diagnosticTask:Promise<void>|undefined;
+  const diagnostic=(event:ConnectionDiagnostic)=>{
+    diagnosticEvents.push({...event,time:new Date().toISOString()});
+    if(diagnosticEvents.length>128)diagnosticEvents.shift();
+    diagnosticDirty=true;
+    if(!diagnosticTask)diagnosticTask=(async()=>{
+      while(diagnosticDirty){
+        diagnosticDirty=false;
+        const snapshot=JSON.stringify({generation:diagnosticGeneration,transport,events:diagnosticEvents});
+        const temporary=diagnosticPath+'.'+randomUUID()+'.tmp';
+        try{await fs.writeFile(temporary,snapshot,{flag:'wx',mode:0o600});await fs.rename(temporary,diagnosticPath);}
+        catch{/* Non-authoritative diagnostic storage cannot change request admission. */}
+        finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
+      }
+    })().finally(()=>{diagnosticTask=undefined;});
+  };
   const environment:Record<string,string>={};
   for(const key of ['SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA']) if(process.env[key])environment[key]=process.env[key]!;
   const systemRoot=process.env.SystemRoot;
@@ -168,7 +187,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
       appHtml=appHtml.replace('</head>',()=>`<script>window.__HOSTDECK_OAUTH__=${JSON.stringify(oauth).replace(/</g,'\\u003c')};</script></head>`);
     }
   }catch{throw new RuntimeError('APP_ASSETS_MISSING');}
-  facade=new HostDeckFacade({deviceId:config.device_id,executorId:config.executor_id,gate,appHtml,checkExecutor,
+  facade=new HostDeckFacade({deviceId:config.device_id,executorId:config.executor_id,gate,appHtml,checkExecutor,diagnostic,
     adapters:[runtimeAdapter,processAdapter,files,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
   let stopTransport:()=>Promise<void>;
   if(transport==='stdio'){
@@ -184,7 +203,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     if(config.remote_tls&&!(await loadGrants()).some(g=>g.issuer===settings.issuer&&g.clientId===(cloudflareClientId??settings.oauth_client_id)&&g.deviceId===config.device_id&&g.executorId===config.executor_id&&g.expiresAt>Date.now()/1000))throw new RuntimeError('REMOTE_GRANT_REQUIRED');
     const resource=new URL(settings.resource);
     if(resource.pathname!=='/mcp'||resource.search||resource.hash)throw new RuntimeError('INVALID_RESOURCE');
-    const boundary=createHttpBoundary(facade,authority,{issuer:settings.issuer,resource:settings.resource,
+    const boundary=createHttpBoundary(facade,authority,{issuer:settings.issuer,resource:settings.resource,diagnostic,
       managementEnabled:privilegeOptions?.enabled===true&&privilegeOptions.allow_remote,
       oauthOrigin:settings.auth_mode==='native-oauth'&&settings.oauth_client_id?new URL(settings.issuer).origin:undefined,
       cloudflareAccess:settings.auth_mode==='cloudflare-access'?{audience:settings.cloudflare_access!.audience,
@@ -203,6 +222,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   let closed=false,stopTimer:ReturnType<typeof setInterval>|undefined;
   const generation=randomUUID(),controlPath=path.join(config.state_directory,'agent-control.json'),stopPath=path.join(config.state_directory,'agent-stop.json');
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
+    await diagnosticTask;
     await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
     await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}

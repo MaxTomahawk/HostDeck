@@ -9,11 +9,20 @@ export interface Adapter {
   readonly implementedTools: ReadonlySet<string>;
   handle(name: string, args: Record<string, unknown>, context: ExecutionContext): Promise<unknown>;
 }
+export interface ConnectionDiagnostic {
+  stage:'discovery'|'origin-rejected'|'authentication-rejected'|'mcp-response'|'mcp-error';
+  status?:number;toolCount?:number;method?:string;protocol?:string;
+  assertionPresent?:boolean;bearerPresent?:boolean;origin?:'absent'|'allowed'|'chatgpt'|'other';
+}
+function diagnose(callback:((event:ConnectionDiagnostic)=>void)|undefined,event:ConnectionDiagnostic):void {
+  try{callback?.(event);}catch{/* Connection diagnostics never change authorization or execution. */}
+}
 export interface FacadeOptions {
   deviceId: string; executorId: string; gate: PolicyGate;
   adapters: readonly Adapter[];
   appHtml?: string;
   checkExecutor?: () => Promise<void>;
+  diagnostic?: (event:ConnectionDiagnostic)=>void;
 }
 
 /** One policy boundary for tools, resource reads and interactive App calls. */
@@ -60,8 +69,12 @@ export class HostDeckFacade {
   server(principalInput: Principal | (() => Principal)): Server {
     const principal = () => typeof principalInput === 'function' ? principalInput() : principalInput;
     const server = new Server({ name: 'HostDeck', version: '0.3.0' }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
-    server.setRequestHandler('tools/list', async () => ({ tools: discoverTools(await this.visible(principal())).map(tool => ({ ...tool, inputSchema:{...tool.inputSchema,type:'object' as const},
-      ...(this.options.appHtml ? { _meta: { ui: {resourceUri: 'ui://hostdeck/management'}, 'openai/outputTemplate': 'ui://hostdeck/management' } } : {}) })) }));
+    server.setRequestHandler('tools/list', async () => {
+      const tools=discoverTools(await this.visible(principal())).map(tool => ({ ...tool, inputSchema:{...tool.inputSchema,type:'object' as const},
+        ...(this.options.appHtml ? { _meta: { ui: {resourceUri: 'ui://hostdeck/management'}, 'openai/outputTemplate': 'ui://hostdeck/management' } } : {}) }));
+      diagnose(this.options.diagnostic,{stage:'discovery',toolCount:tools.length});
+      return {tools};
+    });
     server.setRequestHandler('tools/call', async request => {
       try {
         const result = await this.call(principal(), request.params.name, request.params.arguments ?? {});
@@ -118,6 +131,7 @@ export interface HttpBoundaryOptions {
   oauthOrigin?: string;
   managementEnabled?:boolean;
   cloudflareAccess?: { audience: string; scopes: readonly string[]; clientId: string };
+  diagnostic?: (event:ConnectionDiagnostic)=>void;
 }
 export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAuthority, options: HttpBoundaryOptions) {
   const principals = new AsyncLocalStorage<Principal>();
@@ -132,7 +146,16 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       const origin = request.headers.get('origin');
-      if (!options.allowedHosts.includes(url.host) || (origin !== null && !options.allowedOrigins.includes(origin))) return new Response('FORBIDDEN',{status:403});
+      const trace=(stage:ConnectionDiagnostic['stage'],status:number)=>{
+        const protocol=request.headers.get('mcp-protocol-version');
+        diagnose(options.diagnostic,{stage,status,method:['GET','POST','DELETE','OPTIONS'].includes(request.method)?request.method:'OTHER',
+          ...(protocol&&/^\d{4}-\d{2}-\d{2}$/.test(protocol)?{protocol}:{}),
+          assertionPresent:request.headers.has('cf-access-jwt-assertion'),bearerPresent:request.headers.get('authorization')?.startsWith('Bearer ')??false,
+          origin:origin===null?'absent':options.allowedOrigins.includes(origin)?'allowed':origin==='https://chatgpt.com'?'chatgpt':'other'});
+      };
+      if (!options.allowedHosts.includes(url.host) || (origin !== null && !options.allowedOrigins.includes(origin))) {
+        trace('origin-rejected',403);return new Response('FORBIDDEN',{status:403});
+      }
       if ((url.pathname === '/ui'||url.pathname === '/oauth/callback') && request.method === 'GET') {
         const html = facade.localUi();
         if (!html) return new Response('NOT_FOUND',{status:404});
@@ -163,12 +186,15 @@ export function createHttpBoundary(facade: HostDeckFacade, authority: TokenAutho
           if (!authorization?.startsWith('Bearer ') || authorization.length > 16_400) throw new RuntimeError('UNAUTHENTICATED');
           principal = await authority.verify(authorization.slice(7));
         }
-      } catch { return options.cloudflareAccess ? new Response('UNAUTHENTICATED',{status:403})
-        : new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}}); }
+      } catch {
+        trace('authentication-rejected',options.cloudflareAccess?403:401);
+        return options.cloudflareAccess ? new Response('UNAUTHENTICATED',{status:403})
+          : new Response('UNAUTHENTICATED',{status:401,headers:{'WWW-Authenticate':`Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp',options.resource).href}"`}});
+      }
       if(!options.managementEnabled)principal=authority.withoutScopes(principal,['host:manage']);
       pending++;
-      try { return await principals.run(principal, () => handler.fetch(request)); }
-      catch { return new Response('REQUEST_FAILED',{status:400}); }
+      try { const response=await principals.run(principal, () => handler.fetch(request));trace('mcp-response',response.status);return response; }
+      catch { trace('mcp-error',400);return new Response('REQUEST_FAILED',{status:400}); }
       finally { pending--; }
     },
   };

@@ -22,13 +22,15 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   const token=await new SignJWT({sub:'fixture',client_id:'client',scope:'files:read files:write devices:read host:manage'}).setProtectedHeader({alg:'RS256',typ:'at+jwt',kid:'fixture'}).setIssuer(issuer).setAudience(resource).setIssuedAt(now).setExpirationTime(now+300).sign(privateKey);
   let grants:Grant[]=[{issuer,subject:'fixture',clientId:'client',deviceId:'device',executorId:'executor',scopes:['files:read','files:write','devices:read','host:manage'],expiresAt:now+300,revision:'1',broadUserAuthority:true,sessionIds:[1]}];
   const gate=new PolicyGate(authority,audit,async()=>grants);
+  const diagnostics:Array<{stage:string;status?:number;toolCount?:number}>=[];
+  const diagnostic=(event:{stage:string;status?:number;toolCount?:number})=>{diagnostics.push(event);};
   let facade:HostDeckFacade;
   runtime=await UserRuntime.create({workspace:directory,deviceId:'device',environment:{},shells:{},authorize:async(name,args)=>{await facade.reauthorize(name,args);return true;}});
-  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)},
+  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,diagnostic,adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)},
     {implementedTools:new Set(['hostdeck_device_status']),handle:async()=>({status:'ready'})},
     {implementedTools:new Set(['hostdeck_privileged_requests']),handle:async()=>({requests:[]})}]});
   const allowedHosts:string[]=[];
-  const boundary=createHttpBoundary(facade,authority,{issuer,resource,allowedHosts,allowedOrigins:[]});
+  const boundary=createHttpBoundary(facade,authority,{issuer,resource,allowedHosts,allowedOrigins:[],diagnostic});
   // Use a real socket; the request boundary sees the exact configured Host header.
   const nodeHandler=toNodeHandler(boundary);
   const server=http.createServer((req,res)=>void nodeHandler(req,res));
@@ -47,6 +49,7 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   };
   const listed=await rpc('tools/list');
   assert.equal(listed.status,200);
+  assert.ok(diagnostics.some(event=>event.stage==='discovery'&&event.toolCount!>0));
   assert.ok(listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_write_file'));
   assert.ok(!listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_start_process'));
   assert.ok(listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_device_status'));
@@ -68,6 +71,9 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   assert.equal(denied.status,401);
   const rebinding=await fetch(`http://127.0.0.1:${port}/mcp`,{method:'POST',headers:{origin:'https://evil.example'}});
   assert.equal(rebinding.status,403);
+  assert.ok(diagnostics.some(event=>event.stage==='origin-rejected'&&event.status===403));
+  assert.ok(diagnostics.some(event=>event.stage==='authentication-rejected'&&event.status===401));
+  assert.ok(!JSON.stringify(diagnostics).includes(token));
   grants=[];
   const revoked=await rpc('tools/call',{name:'hostdeck_write_file',arguments:{device_id:'device',path:'actual.txt',content:'unauthorized'}});
   assert.equal(revoked.data.result.isError,true);
