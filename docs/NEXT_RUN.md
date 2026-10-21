@@ -10,7 +10,7 @@ The dedicated direct Cloudflare tunnel now runs as an automatic LocalService. A 
 
 ## Next actions
 
-1. Complete edge OAuth metadata checks, save/connect the private ChatGPT plugin, and verify actual authorized tool and App interactions. Reconcile existing installation or authentication outcomes before any retry.
+1. Edge OAuth metadata checks passed. The first private archive plugin declared MCP servers and was unsuitable for ordinary ChatGPT web/mobile (Desktop only). The existing GitHub workspace marketplace now carries web-compatible HostDeck skills and an independent acceptance method, preserving the private plugin identity. Marketplace sync/install and the separate HostDeck OAuth App registration/binding remain unverified; obtain the actual App ID before declaring a required `.app.json` dependency. Do not invent an ID or recreate the plugin. Then verify actual authorized tool and App interactions in ordinary ChatGPT.
 2. Capture a fresh canonical-state baseline after final configuration, then perform an actual reboot and verify automatic service/user startup, broker task health, retained job/artifact bytes, and signed request recovery. Keep automatic upstream monitoring off.
 3. Review and merge the tested product through PR review to `main`, then run public-source and artifact screening for release. The candidate history contains 27 credential findings; a full private backup has been verified, and the owner's disposition is pending. Do not rewrite history by default or release while this remains unresolved.
 
