@@ -288,6 +288,10 @@ try {
         & sc.exe sidtype HostDeck unrestricted | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Service SID registration failed.' }
     }
+    & sc.exe failure HostDeck reset= 86400 actions= restart/20000/restart/60000/restart/120000 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Service recovery registration failed.' }
+    & sc.exe failureflag HostDeck 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Service failure recovery flag registration failed.' }
     Start-Service -Name HostDeck -ErrorAction Stop
     (Get-Service -Name HostDeck).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
     if (Test-Path -LiteralPath $recoveryMarker) { Remove-Item -LiteralPath $recoveryMarker -Force }
