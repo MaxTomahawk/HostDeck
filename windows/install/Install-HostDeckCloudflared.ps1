@@ -137,6 +137,70 @@ function Set-And-Verify-ServiceSidType {
     if ($LASTEXITCODE -ne 0 -or ($queryOutput -join "`n") -notmatch '(?i)SERVICE_SID_TYPE:\s*UNRESTRICTED') { throw 'Cloudflared service SID type did not verify as unrestricted.' }
 }
 
+function Test-CloudflaredEventSource([Microsoft.Win32.RegistryKey] $Key) {
+    try {
+        return $Key.GetValueKind('CustomSource') -eq [Microsoft.Win32.RegistryValueKind]::DWord -and
+            $Key.GetValue('CustomSource', $null) -eq 1 -and
+            $Key.GetValueKind('EventMessageFile') -eq [Microsoft.Win32.RegistryValueKind]::ExpandString -and
+            $Key.GetValue('EventMessageFile', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) -ceq '%SystemRoot%\System32\EventCreate.exe' -and
+            $Key.GetValueKind('TypesSupported') -eq [Microsoft.Win32.RegistryValueKind]::DWord -and
+            $Key.GetValue('TypesSupported', $null) -eq 7
+    } catch { return $false }
+}
+
+function Register-CloudflaredEventSource {
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Default)
+    try {
+        $application = $base.OpenSubKey('SYSTEM\CurrentControlSet\Services\EventLog\Application', $true)
+        if (-not $application) { throw 'Windows Application event log registry key is unavailable.' }
+        try {
+            $existing = $application.OpenSubKey('Cloudflared', $false)
+            if ($existing) {
+                try {
+                    if (-not (Test-CloudflaredEventSource $existing)) { throw 'An incompatible Cloudflared event source already exists; refusing to change it.' }
+                } finally { $existing.Dispose() }
+                return $false
+            }
+
+            $created = $application.CreateSubKey('Cloudflared')
+            if (-not $created) { throw 'Could not register the Cloudflared event source.' }
+            try {
+                $created.SetValue('CustomSource', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                $created.SetValue('EventMessageFile', '%SystemRoot%\System32\EventCreate.exe', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                $created.SetValue('TypesSupported', 7, [Microsoft.Win32.RegistryValueKind]::DWord)
+                if (-not (Test-CloudflaredEventSource $created)) { throw 'Cloudflared event source registration did not verify.' }
+            } catch {
+                $created.Dispose()
+                $application.DeleteSubKey('Cloudflared', $false)
+                throw
+            }
+            $created.Dispose()
+            return $true
+        } finally { $application.Dispose() }
+    } finally { $base.Dispose() }
+}
+
+function Remove-CreatedCloudflaredEventSource {
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Default)
+    try {
+        $application = $base.OpenSubKey('SYSTEM\CurrentControlSet\Services\EventLog\Application', $true)
+        if (-not $application) { return }
+        try {
+            $source = $application.OpenSubKey('Cloudflared', $false)
+            if (-not $source) { return }
+            try { if (-not (Test-CloudflaredEventSource $source)) { return } } finally { $source.Dispose() }
+            $application.DeleteSubKey('Cloudflared', $false)
+        } finally { $application.Dispose() }
+    } finally { $base.Dispose() }
+}
+
+function Set-And-Verify-ServiceRecovery {
+    $set = @(& sc.exe failure $serviceName 'reset=' '86400' 'actions=' 'restart/20000' 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not configure Cloudflared service recovery.' }
+    $enable = @(& sc.exe failureflag $serviceName '1' 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enable Cloudflared recovery for non-crash failures.' }
+}
+
 function Invoke-ValidateOnly {
     if ($TunnelId -notmatch '^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { throw 'Invalid tunnel ID.' }
     if ($Hostname.Length -gt 253 -or $Hostname -notmatch '^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$') { throw 'Invalid public hostname.' }
@@ -232,6 +296,7 @@ $oldDescription = Get-ServiceDescription
 $oldStartName = if ($service) { $service.StartName } else { $null }
 $wasRunning = $service -and $service.State -eq 'Running'
 $createdService = $false
+$createdEventSource = $false
 $filesChanged = -not ($oldConfig -and [Convert]::ToBase64String($oldConfig) -ceq [Convert]::ToBase64String($configBytes)) -or
     -not ($oldCredential -and [Convert]::ToBase64String($oldCredential) -ceq [Convert]::ToBase64String($credentialBytes))
 $oldBinaryHash = $null
@@ -253,17 +318,19 @@ try {
     Write-Atomic $credentialPath $credentialBytes
     Write-Atomic $configPath $configBytes
     if (-not $service) {
-        $serviceOutput = @(& $protectedExecutable service install 2>&1)
-        if ($LASTEXITCODE -ne 0) { throw 'cloudflared could not install its Windows service.' }
+        # cloudflared service install starts immediately as LocalSystem. Create it stopped so HostDeck can set and verify LocalService first.
+        New-Service -Name $serviceName -BinaryPathName $expectedImagePath -DisplayName 'Cloudflared' -StartupType Automatic -Description $serviceDescription -ErrorAction Stop | Out-Null
         $createdService = $true
         $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue
         if (-not $service) { throw 'cloudflared did not register its Windows service.' }
     }
+    $createdEventSource = Register-CloudflaredEventSource
     Set-ServiceRegistryValue 'ImagePath' $expectedImagePath ([Microsoft.Win32.RegistryValueKind]::ExpandString)
     Set-ServiceRegistryValue 'Description' $serviceDescription ([Microsoft.Win32.RegistryValueKind]::String)
-    $scOutput = @(& sc.exe config $serviceName 'obj=' 'NT AUTHORITY\LocalService' 'password=' '' 'start=' 'auto' 2>&1)
+    $scOutput = @(& sc.exe config $serviceName 'obj=' 'NT AUTHORITY\LocalService' 'start=' 'auto' 2>&1)
     if ($LASTEXITCODE -ne 0) { throw 'Could not configure the least-privilege tunnel service account.' }
     Set-And-Verify-ServiceSidType
+    if ($createdService) { Set-And-Verify-ServiceRecovery }
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='cloudflared'"
     if ($service.PathName -cne $expectedImagePath -or $service.StartName -ne 'NT AUTHORITY\LocalService') { throw 'Cloudflared service configuration did not verify.' }
     if ($service.State -ne 'Running') {
@@ -280,7 +347,7 @@ try {
     } elseif ($ownedService) {
         if ($oldImagePath) { Set-ServiceRegistryValue 'ImagePath' $oldImagePath ([Microsoft.Win32.RegistryValueKind]::ExpandString) }
         if ($oldDescription) { Set-ServiceRegistryValue 'Description' $oldDescription ([Microsoft.Win32.RegistryValueKind]::String) }
-        if ($oldStartName -eq 'NT AUTHORITY\LocalService') { & sc.exe config $serviceName 'obj=' 'NT AUTHORITY\LocalService' 'password=' '' *> $null }
+        if ($oldStartName -eq 'NT AUTHORITY\LocalService') { & sc.exe config $serviceName 'obj=' 'NT AUTHORITY\LocalService' *> $null }
         if ($oldStartName -eq 'LocalSystem') { & sc.exe config $serviceName 'obj=' 'LocalSystem' *> $null }
         if ($oldConfig) { Write-Atomic $configPath $oldConfig }
         if ($oldCredential) { Write-Atomic $credentialPath $oldCredential }
@@ -288,6 +355,7 @@ try {
         elseif ([IO.File]::Exists($protectedExecutable)) { [IO.File]::Delete($protectedExecutable) }
         if ($wasRunning) { Start-Service -Name $serviceName -ErrorAction SilentlyContinue }
     }
+    if ($createdEventSource) { Remove-CreatedCloudflaredEventSource }
     throw 'HostDeck Cloudflared setup failed; prior owned service state was restored where possible.'
 }
 
