@@ -115,7 +115,8 @@ export class TokenAuthority {
         requiredClaims: ['iss','sub','aud','exp','iat'], clockTolerance: 30,
       });
       const now = Date.now() / 1000;
-      if (protectedHeader.typ !== 'JWT' || payload.type !== 'app'
+      // Cloudflare's signed app assertions can omit JOSE typ; enforce its app claim instead.
+      if ((protectedHeader.typ !== undefined && protectedHeader.typ !== 'JWT') || payload.type !== 'app'
         || !Number.isSafeInteger(payload.exp) || !Number.isSafeInteger(payload.iat)
         || payload.exp! <= now || payload.iat! > now + 30 || payload.exp! <= payload.iat! || payload.exp! - payload.iat! > 900
         || typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 256) throw new Error('claims');

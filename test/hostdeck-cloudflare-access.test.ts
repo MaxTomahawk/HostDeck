@@ -19,8 +19,8 @@ test('Cloudflare Access assertion is app/audience bound and still requires expli
   const issuer='https://fixture.cloudflareaccess.com',audience='app-aud-fixture',clientId=`cloudflare-access:${audience}`;
   const authority=new TokenAuthority({issuer,audience:'unused-native-resource',jwks:createLocalJWKSet({keys:[{...await exportJWK(publicKey),kid:'cf-fixture'}]})});
   const now=Math.floor(Date.now()/1000);
-  const assertion=async(aud:string,exp=now+120,iat=now,type='app')=>new SignJWT({sub:'owner-subject',type})
-    .setProtectedHeader({alg:'RS256',typ:'JWT',kid:'cf-fixture'}).setIssuer(issuer).setAudience(aud).setIssuedAt(iat).setExpirationTime(exp).sign(privateKey);
+  const assertion=async(aud:string,exp=now+120,iat=now,type='app',headerType:string|null='JWT')=>new SignJWT({sub:'owner-subject',type})
+    .setProtectedHeader({alg:'RS256',...(headerType===null?{}:{typ:headerType}),kid:'cf-fixture'}).setIssuer(issuer).setAudience(aud).setIssuedAt(iat).setExpirationTime(exp).sign(privateKey);
   let grants:Grant[]=[{issuer,subject:'owner-subject',clientId,deviceId:'device',executorId:'executor',scopes:['files:read','files:write'],expiresAt:now+300,revision:'1',broadUserAuthority:true,sessionIds:[]}];
   const gate=new PolicyGate(authority,audit,async()=>grants);
   let facade:HostDeckFacade;
@@ -44,7 +44,10 @@ test('Cloudflare Access assertion is app/audience bound and still requires expli
   assert.equal((await call(await assertion(audience,now-1))).status,403);
   assert.equal((await call(await assertion(audience,now+1000))).status,403);
   assert.equal((await call(await assertion(audience,now+120,now,'user'))).status,403);
+  assert.equal((await call(await assertion(audience,now+120,now,'app','at+jwt'))).status,403);
   assert.equal((await call('', 'Bearer opaque-oauth-token')).status,403);
+  // Real Cloudflare Access application assertions omit the optional JOSE typ header.
+  assert.equal((await call(await assertion(audience,now+120,now,'app',null))).status,200);
   const valid=await call(await assertion(audience));assert.equal(valid.status,200);assert.equal(valid.data.result.isError,undefined);
   assert.equal(await fs.readFile(path.join(directory,'cf-write.txt'),'utf8'),'authorized');
   const forwardedOpaque=await call(await assertion(audience),'Bearer opaque-oauth-token');assert.equal(forwardedOpaque.status,200);
