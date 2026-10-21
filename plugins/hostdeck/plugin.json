@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hostdeck",
+  "version": "0.3.2",
+  "description": "HostDeck MCP workflows and independent acceptance for authorized Windows devices.",
+  "author": {
+    "name": "HostDeck contributors"
+  },
+  "homepage": "https://github.com/MaxTomahawk/HostDeck",
+  "repository": "https://github.com/MaxTomahawk/HostDeck",
+  "license": "MIT",
+  "keywords": [
+    "windows",
+    "mcp",
+    "device-management",
+    "desktop",
+    "jobs"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "HostDeck",
+        "shortDescription": "Windows device operations",
+        "longDescription": "Authorized HostDeck device control and independent acceptance. Use the registered HostDeck MCP App for scoped files, documents, processes, desktop, browser, jobs, evidence, diagnostics and management; runtime capabilities depend on actual granted tools.",
+        "developerName": "HostDeck contributors",
+        "category": "Productivity",
+        "capabilities": [
+          "Interactive"
+        ],
+        "defaultPrompt": "Check my authorized HostDeck device status and list the capabilities actually available to me.",
+        "logo": "./assets/hostdeck.svg",
+        "composerIcon": "./assets/hostdeck.svg"
+      },
+      "apps": "./.app.json"
+    }
+  }
+}
