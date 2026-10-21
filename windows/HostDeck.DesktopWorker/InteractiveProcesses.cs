@@ -157,7 +157,7 @@ internal sealed class InteractiveProcesses
     {
         var file = Path.GetFileName(executable).ToLowerInvariant();
         var args = file switch {
-            "powershell.exe" or "pwsh.exe" when shell == "powershell" => "-NoLogo -NoProfile -OutputFormat Text -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false);\n" + command)),
+            "powershell.exe" or "pwsh.exe" when shell == "powershell" => "-NoLogo -NoProfile -OutputFormat Text -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false);\n" + command)),
             "cmd.exe" when shell == "cmd" => "/d /q /c " + Quote(command),
             _ => throw new WorkerError("INVALID_ARGUMENTS")
         };
@@ -175,7 +175,26 @@ internal sealed class InteractiveProcesses
         internal FileStream Input { get; } = input; internal SemaphoreSlim InputLock { get; } = new(1, 1);
         internal StringBuilder Output { get; } = new(); internal object OutputLock { get; } = new(); internal bool Truncated; internal bool Closed; internal bool RootExited; internal int PumpsClosed; internal int ExitCode; internal TaskCompletionSource ClosedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void StartPumps() { _ = Pump(stdout); _ = Pump(stderr); }
-        private async Task Pump(Stream stream) { var buffer = new byte[8192]; try { while (true) { var count = await stream.ReadAsync(buffer); if (count == 0) break; lock (OutputLock) { var room = OutputLimit - Encoding.UTF8.GetByteCount(Output.ToString()); if (room <= 0) { Truncated = true; continue; } var take = Math.Min(room, count); if (take < count) Truncated = true; Output.Append(Encoding.UTF8.GetString(buffer, 0, take)); } } } catch (IOException) { } finally { try { await stream.DisposeAsync(); } catch { } Interlocked.Increment(ref PumpsClosed); RefreshExit(); } }
+        private async Task Pump(Stream stream)
+        {
+            using var reader = new StreamReader(stream, new UTF8Encoding(false), false, 8192);
+            var buffer = new char[4096];
+            try {
+                while (true) {
+                    var count = await reader.ReadAsync(buffer, 0, buffer.Length);
+                    if (count == 0) break;
+                    lock (OutputLock) {
+                        var room = OutputLimit - Encoding.UTF8.GetByteCount(Output.ToString());
+                        if (room <= 0) { Truncated = true; continue; }
+                        var take = count;
+                        while (take > 0 && Encoding.UTF8.GetByteCount(buffer, 0, take) > room) take--;
+                        if (take < count) { Truncated = true; if (take > 0 && char.IsHighSurrogate(buffer[take - 1])) take--; }
+                        Output.Append(buffer, 0, take);
+                    }
+                }
+            } catch (IOException) { }
+            finally { Interlocked.Increment(ref PumpsClosed); RefreshExit(); }
+        }
         internal bool HasNoActiveProcesses() => JobNative.QueryInformationJobObject(Job, 1, out var info, Marshal.SizeOf<JobNative.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), 0) && info.ActiveProcesses == 0;
         internal void RefreshExit() {
             if (Closed) return;

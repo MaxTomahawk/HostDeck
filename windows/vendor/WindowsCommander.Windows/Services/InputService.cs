@@ -19,7 +19,8 @@ public sealed class InputService : IInputService
     public InputActionResult MouseAction(string action, string? button, int? x, int? y, long? targetWindowHandle)
     {
         var (targetX, targetY) = ResolvePoint(x, y, targetWindowHandle);
-        NativeMethods.SetCursorPos(targetX, targetY);
+        if (!action.Equals("drag", StringComparison.OrdinalIgnoreCase))
+            NativeMethods.SetCursorPos(targetX, targetY);
 
         switch (action.ToLowerInvariant())
         {
@@ -311,6 +312,7 @@ public sealed class InputService : IInputService
 
     private static (int X, int Y) ResolvePoint(int? x, int? y, long? targetWindowHandle)
     {
+        if (x is not null && y is not null) return (x.Value, y.Value);
         if (targetWindowHandle is not null)
         {
             if (!NativeMethods.GetWindowRect(new IntPtr(targetWindowHandle.Value), out var rect))

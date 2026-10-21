@@ -1,5 +1,12 @@
 # Windows lifecycle and desktop adapter
 
+The native JSON-lines channel and PowerShell command output use UTF-8. HostDeck
+suppresses PowerShell progress records; interactive output keeps decoder state
+across pipe chunks. Unicode PDF creation/insertion uses the configured Chromium
+executable with a fresh owned profile, escaped text, JavaScript disabled and all
+network requests blocked. Glyph coverage depends on installed fonts. Without
+that renderer, unsupported text fails explicitly instead of being replaced by `?`.
+
 HostDeck uses three Windows executables in `windows/`: `HostDeck.Lifecycle`
 (LocalService), `HostDeck.Tray` (unelevated enrolled user), and
 `HostDeck.DesktopWorker` (unelevated user child). The service owns a narrow

@@ -69,16 +69,27 @@ export class BrowserAdapter {
       const sessionId = args.session_id;
       if (typeof sessionId !== 'number') throw new Error('BROWSER_INVALID_SESSION');
       if (context.sessionIds ? !context.sessionIds.includes(sessionId) : context.sessionId !== sessionId) throw new Error('BROWSER_SESSION_NOT_OWNED');
+      if(typeof args.url==='string')await this.authorizeUrl(args.url);
       const id = `b_${randomBytes(18).toString('base64url')}`;
       const profile = await mkdtemp(path.join(this.profileRoot, 'hostdeck-'));
+      let browser:Browser|undefined;
+      let stage:'start'|'page'|'navigate'='start';
       try {
-        const browser = await puppeteer.launch({ executablePath: this.executable, headless: true, userDataDir: profile, args: ['--disable-background-networking', '--disable-component-update', '--no-first-run', '--no-default-browser-check'], timeout: 15_000 });
+        browser = await puppeteer.launch({ executablePath: this.executable, headless: true, userDataDir: profile, args: ['--disable-background-networking', '--disable-component-update', '--no-first-run', '--no-default-browser-check'], timeout: 15_000 });
+        stage='page';
         const page = await browser.newPage();
         const record: Session = { browser, page, profile, context: { ...copyContext(context), sessionIds: context.sessionIds ? [...context.sessionIds] : undefined, sessionId }, generation: 0, elements: new Map() };
         this.sessions.set(id, record);
+        stage='navigate';
         if (typeof args.url === 'string') await this.navigate(record, args.url);
         return { browser_id: id, generation: record.generation, ...(page.url() !== 'about:blank' ? { url: page.url() } : {}) };
-      } catch (error) { await rm(profile, { recursive: true, force: true }); throw error; }
+      } catch (error) {
+        this.sessions.delete(id);
+        await browser?.close().catch(()=>{});
+        if(path.dirname(profile)===this.profileRoot)await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});
+        if(error instanceof Error&&/^BROWSER_[A-Z_]+$/.test(error.message))throw error;
+        throw new Error(stage==='start'?'BROWSER_START_FAILED':stage==='page'?'BROWSER_PAGE_FAILED':'BROWSER_NAVIGATION_FAILED');
+      }
     }
     const id = args.browser_id;
     if (typeof id !== 'string') throw new Error('BROWSER_INVALID_ID');

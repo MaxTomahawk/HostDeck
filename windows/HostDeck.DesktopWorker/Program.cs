@@ -16,6 +16,8 @@ internal static class Program
     [STAThread]
     private static async Task Main(string[] args)
     {
+        Console.InputEncoding = new UTF8Encoding(false);
+        Console.OutputEncoding = new UTF8Encoding(false);
         // The launching user executor owns both pipe ends. No TCP listener or
         // service-side desktop injection is available in this process.
         if (args.Length == 2 && args[0] == "--job-status") {

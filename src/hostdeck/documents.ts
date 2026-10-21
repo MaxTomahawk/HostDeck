@@ -92,8 +92,35 @@ function safePdfOptions(value: unknown): { page_size: 'A4' | 'Letter' | 'Legal';
   return { page_size: (options.page_size ?? 'A4') as 'A4' | 'Letter' | 'Legal', landscape: options.landscape === true };
 }
 
-async function createMarkdownPdf(markdown: string, value: unknown): Promise<Uint8Array> {
+async function renderUnicodePdf(markdown:string,options:ReturnType<typeof safePdfOptions>,executable:string):Promise<Uint8Array>{
+  const {default:puppeteer}=await import('puppeteer-core');
+  const root=await fs.realpath(os.tmpdir());
+  const profile=await fs.mkdtemp(path.join(root,'hostdeck-pdf-'));
+  let browser:import('puppeteer-core').Browser|undefined;
+  try{
+    browser=await puppeteer.launch({executablePath:executable,headless:true,userDataDir:profile,
+      args:['--disable-background-networking','--disable-component-update','--no-first-run','--no-default-browser-check'],timeout:15_000});
+    const page=await browser.newPage();
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request',request=>{void request.abort('blockedbyclient').catch(()=>{});});
+    const rows=markdown.split(/\r?\n/).map(raw=>{
+      const heading=/^(#{1,6})\s+(.*)$/.exec(raw);
+      const text=escapeXmlText(heading?heading[2]:raw.replace(/^\s*[-*+]\s+/,'• '));
+      return heading?`<h2>${text}</h2>`:`<p>${text||'<br>'}</p>`;
+    }).join('');
+    await page.setContent(`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>body{font:11pt 'Arial Unicode MS',Arial,sans-serif}p,h2{white-space:pre-wrap;overflow-wrap:anywhere}p{margin:0 0 5pt}h2{font-size:18pt}</style>${rows}`,{waitUntil:'load',timeout:15_000});
+    return await page.pdf({format:options.page_size,landscape:options.landscape,margin:{top:48,bottom:48,left:48,right:48},timeout:20_000});
+  }finally{
+    await browser?.close().catch(()=>{});
+    if(path.dirname(profile)!==root)throw new Error('PDF_PROFILE_PATH_INVALID');
+    await fs.rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});
+  }
+}
+
+async function createMarkdownPdf(markdown: string, value: unknown,browserExecutable?:string): Promise<Uint8Array> {
   const options = safePdfOptions(value);
+  if(browserExecutable&&/[^\x09\x0a\x0d\x20-\x7e]/.test(markdown))return renderUnicodePdf(markdown,options,browserExecutable);
   const { PDFDocument, StandardFonts } = pdfLibrary();
   const document = await PDFDocument.create();
   const regular = await document.embedFont(StandardFonts.Helvetica);
@@ -101,7 +128,7 @@ async function createMarkdownPdf(markdown: string, value: unknown): Promise<Uint
   let size: [number, number] = options.page_size === 'Letter' ? [612, 792] : options.page_size === 'Legal' ? [612, 1008] : [595.28, 841.89];
   if (options.landscape) size = [size[1], size[0]];
   const margin = 48;
-  const clean = (text: string) => text.normalize('NFKD').replace(/[^\x09\x0a\x0d\x20-\xff]/g, '?');
+  const clean = (text: string) => text.normalize('NFC');
   const rows = markdown.split(/\r?\n/).map(raw => {
     const match = /^(#{1,6})\s+(.*)$/.exec(raw);
     return { text: clean(match ? match[2] : raw.replace(/^\s*[-*+]\s+/, '• ')), heading: !!match };
@@ -111,6 +138,7 @@ async function createMarkdownPdf(markdown: string, value: unknown): Promise<Uint
   for (const row of rows) {
     const fontSize = row.heading ? 18 : 11;
     const font = row.heading ? bold : regular;
+    try{font.encodeText(row.text);}catch{throw new Error('PDF_UNICODE_RENDERER_REQUIRED');}
     const available = size[0] - margin * 2;
     const words = row.text.split(/\s+/);
     let line = '';
@@ -134,12 +162,13 @@ async function createMarkdownPdf(markdown: string, value: unknown): Promise<Uint
 
 export class DocumentAdapter {
   readonly implementedTools = new Set<string>(toolNames);
-  private constructor(private readonly workspace: string) {}
+  private constructor(private readonly workspace: string,private readonly browserExecutable?:string) {}
 
-  static async create(options: { workspace: string }): Promise<DocumentAdapter> {
+  static async create(options: { workspace: string;browserExecutable?:string }): Promise<DocumentAdapter> {
     if (!path.isAbsolute(options.workspace)) throw new Error('DOCUMENT_WORKSPACE_MUST_BE_ABSOLUTE');
+    if(options.browserExecutable&&!path.isAbsolute(options.browserExecutable))throw new Error('PDF_BROWSER_PATH_INVALID');
     await fs.mkdir(options.workspace, { recursive: true });
-    return new DocumentAdapter(await fs.realpath(options.workspace));
+    return new DocumentAdapter(await fs.realpath(options.workspace),options.browserExecutable);
   }
 
   private resolveInputPath(value: unknown): string {
@@ -314,41 +343,14 @@ export class DocumentAdapter {
   }
 
   private async markdownPages(markdown: string, optionsValue: unknown): Promise<any> {
-    const { PDFDocument, StandardFonts } = pdfLibrary();
-    const options = safePdfOptions(optionsValue);
-    const output = await PDFDocument.create();
-    const regular = await output.embedFont(StandardFonts.Helvetica);
-    const bold = await output.embedFont(StandardFonts.HelveticaBold);
-    let size: [number, number] = options.page_size === 'Letter' ? [612, 792] : options.page_size === 'Legal' ? [612, 1008] : [595.28, 841.89];
-    if (options.landscape) size = [size[1], size[0]];
-    const clean = (text: string) => text.normalize('NFKD').replace(/[^\x09\x0a\x0d\x20-\xff]/g, '?');
-    let page = output.addPage(size); let y = size[1] - 48;
-    for (const raw of markdown.split(/\r?\n/)) {
-      const heading = /^(#{1,6})\s+(.*)$/.exec(raw);
-      const text = clean(heading ? heading[2] : raw.replace(/^\s*[-*+]\s+/, '• '));
-      const font = heading ? bold : regular; const fontSize = heading ? 18 : 11;
-      const lines: string[] = []; let line = '';
-      for (const word of text.split(/\s+/)) {
-        const candidate = line ? `${line} ${word}` : word;
-        if (line && font.widthOfTextAtSize(candidate, fontSize) > size[0] - 96) { lines.push(line); line = word; } else line = candidate;
-      }
-      if (line) lines.push(line);
-      if (!lines.length) lines.push('');
-      for (const lineText of lines) {
-        if (y < 60) { page = output.addPage(size); y = size[1] - 48; }
-        if (lineText) page.drawText(lineText, { x: 48, y, size: fontSize, font });
-        y -= fontSize + 5;
-      }
-      y -= heading ? 6 : 2;
-    }
-    return output;
+    const {PDFDocument}=pdfLibrary();
+    return PDFDocument.load(await createMarkdownPdf(markdown,optionsValue,this.browserExecutable),{updateMetadata:false});
   }
-
   private async writePdf(args: Record<string, unknown>): Promise<StagedDocumentWrite> {
     const destination = await this.output(args.path, false);
     if (path.extname(destination).toLowerCase() !== '.pdf') throw new Error('PDF_DESTINATION_REQUIRED');
     if (typeof args.markdown !== 'string' || Buffer.byteLength(args.markdown) > 100_000) throw new Error('PDF_MARKDOWN_LIMIT');
-    const bytes = await createMarkdownPdf(args.markdown, args.options);
+    const bytes = await createMarkdownPdf(args.markdown, args.options,this.browserExecutable);
     if (bytes.length > MAX_FILE_BYTES) throw new Error('DOCUMENT_OUTPUT_LIMIT');
     return { destination, bytes, mimeType: 'application/pdf' };
   }
