@@ -31,6 +31,9 @@ const desktop = { session_id: positive.max(0xffffffff) };
 const window = { ...desktop, window_id: id };
 const process = { process_id: id };
 const browser = { browser_id: id };
+// JSON Schema has no RegExp flags. Character classes preserve scheme casing
+// and avoid escaped slash delimiters in connector-side pattern validators.
+const browserUrl = z.string().url().regex(/^[Hh][Tt][Tt][Pp][Ss]?:[/][/]/).max(8192);
 const point = { x: z.number().int().min(-1_000_000).max(1_000_000), y: z.number().int().min(-1_000_000).max(1_000_000) };
 const rectangle = z.object({ ...point, width: positive.max(32768), height: positive.max(32768) }).strict();
 const cell = z.union([z.string().max(32767), z.number().finite(), z.boolean(), z.null()]);
@@ -107,8 +110,8 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('read_clipboard', 'Read authorized session clipboard data with private artifact delivery for binary formats.', { ...desktop, format: z.enum(['text', 'html', 'image', 'files']).default('text') }, ['desktop:observe'], 'desktop', 'read'),
   tool('write_clipboard', 'Write text to the authorized session clipboard.', { ...desktop, text }, ['desktop:control'], 'desktop', 'control'),
   tool('write_clipboard_artifact', 'Write an owned rich-format artifact to the authorized session clipboard.', { ...desktop, artifact_id: id, format: z.enum(['html', 'image', 'files']) }, ['desktop:control', 'artifacts:read'], 'desktop', 'control'),
-  tool('browser_open', 'Create a session in an owned managed browser profile.', { session_id: positive.max(0xffffffff), url: z.string().url().regex(/^https?:\/\//i).max(8192).optional() }, ['browser:control'], 'browser', 'control'),
-  tool('browser_navigate', 'Navigate an owned browser; the adapter separately enforces network policy.', { ...browser, url: z.string().url().regex(/^https?:\/\//i).max(8192) }, ['browser:control'], 'browser', 'control'),
+  tool('browser_open', 'Create a session in an owned managed browser profile.', { session_id: positive.max(0xffffffff), url: browserUrl.optional() }, ['browser:control'], 'browser', 'control'),
+  tool('browser_navigate', 'Navigate an owned browser; the adapter separately enforces network policy.', { ...browser, url: browserUrl }, ['browser:control'], 'browser', 'control'),
   tool('browser_snapshot', 'Read the current DOM/accessibility state of an owned browser.', browser, ['browser:control'], 'browser', 'read'),
   tool('browser_interact', 'Interact with a current browser element reference.', { ...browser, element_ref: id, action: browserAction }, ['browser:control'], 'browser', 'control'),
   tool('browser_evaluate', 'Evaluate user-authorized page JavaScript inside the owned browser profile.', { ...browser, expression: text.min(1) }, ['browser:control'], 'browser', 'execute'),

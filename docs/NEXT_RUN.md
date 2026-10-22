@@ -1,5 +1,17 @@
 # HostDeck next run
 
+## Checkpoint — 2026-10-22
+
+The owner's independent ordinary-ChatGPT retest accepts the installed Unicode PDF/insert, UIA value readback, interactive output, owned process inventory, durable Unicode job/artifact integrity, stale-element and edit-conflict results, and exact empty-directory cleanup. This is targeted evidence, not full product acceptance. Do not rerun those unchanged paths or replay completed jobs.
+
+The remaining browser failure is reproduced through the actual connected HostDeck tool: a valid HTTPS URL is rejected by the connector's cached escaped-slash schema before reaching the server. The source regex is valid in an ordinary engine; export also demonstrably loses its case-insensitive flag. A shared explicit-case, slash-character-class pattern preserves HTTP(S)-only validation without slash escapes or flags. The populated-directory refusal now exposes the finite safe code `FILES_DIRECTORY_NOT_EMPTY`; deletion policy is unchanged. Seventeen focused contract/file/browser/gateway/error tests pass; the real input fixture remains blocked, not accepted.
+
+A bounded native probe on an owned disposable window reproduces failed foreground activation: attaching to the current foreground thread returns Windows `ERROR_ACCESS_DENIED`, while attaching to the owned target thread succeeds. Explicit queue creation does not resolve it. This identifies a Windows activation boundary but does not prove its underlying cause. No foreground/input guard, elevation, input injection workaround or global setting was changed. Continue input-effect acceptance only after legitimate foreground activation is independently confirmed.
+
+Next: refresh tools on the existing ChatGPT App after the installed schema update, then independently retest public URL navigation and private-egress refusal in ordinary ChatGPT. A locally correct schema or installed stdio result cannot close that connector acceptance. Preserve the existing App and OAuth binding. Clipboard, resources/prompts/hosted UI, broader authorization, broker/lifecycle/reboot/rollback and main release remain open.
+
+The two-module installed update completed through the existing signed broker. Exact target hashes and unchanged configuration, grants, enrollment and previous manifest were independently checked. Four actual installed-MCP checks pass, including public HTTPS navigation and private-egress denial. The connected remote HostDeck tool also returns `FILES_DIRECTORY_NOT_EMPTY`, preserves the owned marker, and successfully cleans up the exact fixture. The remote URL call still names the old cached pattern after installation, so App tool refresh is still required before accepting that path. No native focus change was shipped.
+
 ## Checkpoint — 2026-10-21
 
 Independent ordinary-ChatGPT acceptance now confirms 49 live tools, successful device status and display metrics, and broad file/document/process/job/UIA coverage. The connection objective is achieved; full product acceptance remains open. Branch `codex/acceptance-repairs` reproduces and repairs lossy PDF Unicode, native UTF-8 decoding and PowerShell progress output, broken/slow process-owner enumeration, ignored pointer coordinates, and indistinguishable stale/conflict/browser errors. Browser open without a URL succeeds in the installed runtime; the failing acceptance URL is still needed to distinguish startup from egress/navigation. Private egress remains denied.
@@ -20,7 +32,7 @@ The HostDeck service also lacked SCM failure actions. Its installer now register
 
 ## Next actions
 
-1. Keep the existing marketplace/App binding. Retest the repaired acceptance paths in ordinary ChatGPT and obtain the exact failing browser URL/arguments if it still fails. Independently verify click and focused Ctrl+A effects on an owned fixture; retain the foreground guard and current egress/grant boundaries. The full independent acceptance prompt and current private evidence are available outside tracked source. Check finite grant expiry before later runs; do not broaden grants to make discovery pass.
+1. Keep the existing marketplace/App binding. Refresh its tools after the targeted schema repair and independently verify public URL navigation and private-egress denial in ordinary ChatGPT. Verify click and focused Ctrl+A effects only after independently confirming foreground activation on an owned fixture; retain the foreground guard and current egress/grant boundaries. Reuse accepted results from the owner's 22 October handoff. Check finite grant expiry before later runs; do not broaden grants to make discovery pass.
 2. Capture a fresh canonical-state baseline after final configuration, then perform an actual reboot and verify automatic service/user startup, broker task health, retained job/artifact bytes, and signed request recovery. Keep automatic upstream monitoring off.
 3. Review and merge the tested product through PR review to `main`, then run public-source and artifact screening for release. The candidate history contains 27 credential findings; a full private backup has been verified, and the owner's disposition is pending. Do not rewrite history by default or release while this remains unresolved.
 

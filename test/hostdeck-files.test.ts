@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { FileAdapter } from '../src/hostdeck/files.js';
+import { publicError } from '../src/hostdeck/gateway.js';
 
 const context = { ownerId: 'owner-a', deviceId: 'device-a', executorId: 'executor-a' };
 
@@ -92,7 +93,9 @@ test('permanent nonrecursive deletion removes an empty directory and preserves a
   await writeFile(path.join(workspace,'populated','keep.txt'),'keep');
   const adapter=await FileAdapter.create({workspace,reauthorize:async()=>{}});
   const args={device_id:context.deviceId,recursive:false,recycle:false};
-  await assert.rejects(adapter.handle('hostdeck_delete_path',{...args,path:'populated'},context),/FILES_DIRECTORY_NOT_EMPTY/);
+  await assert.rejects(adapter.handle('hostdeck_delete_path',{...args,path:'populated'},context),error=>{
+   assert.equal(publicError(error),'FILES_DIRECTORY_NOT_EMPTY');return true;
+  });
   assert.equal(await readFile(path.join(workspace,'populated','keep.txt'),'utf8'),'keep');
   await adapter.handle('hostdeck_delete_path',{...args,path:'empty'},context);
   await assert.rejects(stat(path.join(workspace,'empty')),{code:'ENOENT'});
