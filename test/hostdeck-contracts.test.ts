@@ -4,6 +4,22 @@ import {
   discoverTools, getToolContract, parseToolArguments, resolveResource, renderPrompt,
 } from '../src/hostdeck/contracts.js';
 
+test('serialized browser discovery and runtime agree on HTTP scheme casing and reject other schemes', () => {
+  for (const name of ['hostdeck_browser_open', 'hostdeck_browser_navigate']) {
+    const descriptor = JSON.parse(JSON.stringify(discoverTools(new Set([name]))[0]));
+    const pattern = new RegExp(descriptor.inputSchema.properties.url.pattern);
+    const base = name.endsWith('_open') ? {device_id:'device_a',session_id:1} : {device_id:'device_a',browser_id:'browser_a'};
+    for (const url of ['https://example.com/', 'http://127.0.0.1:18763/', 'HTTPS://example.com/', 'hTtP://example.com/']) {
+      assert.equal(parseToolArguments(name, {...base,url}).url, url);
+      assert.equal(pattern.test(url), true, `${name}: serialized schema rejects ${url}`);
+    }
+    for (const url of ['file:///private', 'javascript:alert(1)', 'ftp://example.com/', 'https:/example.com/']) {
+      assert.throws(() => parseToolArguments(name, {...base,url}));
+      assert.equal(pattern.test(url), false);
+    }
+  }
+});
+
 test('discovery exposes only explicitly implemented canonical tools', () => {
   const tools = discoverTools(new Set(['hostdeck_read_file', 'unknown_backend_tool', 'execute_powershell']));
   assert.deepEqual(tools.map(tool => tool.name), ['hostdeck_read_file']);
