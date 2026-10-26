@@ -44,7 +44,16 @@ workspace, home directory, first available drive or Everything's file index.
    `resume` can continue. A scan advances only through a bounded
    `step` call, not background scheduling. A requested cancel/pause may
    complete at the next guarded boundary; already committed documents remain.
-5. Apply installer-local ACLs to the index database **and WAL/SHM sidecars**.
+5. Apply installer-local ACLs to the index database **and WAL/SHM sidecars**
+   **and the persistent `.writerlock.sqlite` companion**. This lock companion
+   remains on disk across close/crash. SQLite in rollback-journal mode holds
+   a live OS-backed `BEGIN EXCLUSIVE` transaction until normal close or
+   process termination. A competing writer must return
+   `FULLTEXT_WRITER_BUSY` **before** opening or mutating the primary index.
+   Never unlink a supposed stale lock, trust PID/TTL, or break a live owner.
+   After an actual process crash, the OS releases the lock; opening a new
+   instance marks the surviving `running` scan `interrupted`, and resume
+   remains explicit.
    This implementation does not encrypt stored document content or authorize
    changes to existing system ACLs. Do not activate it until the state
    directory protection and cross-principal index ownership are verified.
@@ -92,6 +101,26 @@ workspace, home directory, first available drive or Everything's file index.
   accent oracles, denial after ACL/root/config revocation, pause/cancel/
   interrupted recovery, file-size and memory pressure, resource observation
   and exact cleanup. No personal document roots or whole-drive index.
+
+New focused writer and source-race checks:
+- `node --import tsx --test test/hostdeck-fulltext-writer.test.ts`
+  exercises a second instance in the **same process** and two **real child
+  processes**. It snapshots primary `meta`/`runs`/`queue` for a rejected
+  writer, tests normal close, forcefully kills **only a disposable child**,
+  and verifies OS release + truthful interrupted recovery.
+- `node --import tsx --test test/hostdeck-fulltext-reparse.test.ts`
+  changes an owned file/root *after source extraction but before commit*.
+  Metadata/FTS must remain empty and the run paused. A symlink/junction
+  case is conditional on actual test-user rights (report a skip truthfully).
+  Source identities use native `dev`/`ino` and fail closed when unavailable.
+
+**Remaining limits:** one active writer per **canonical file path**; read-only
+multi-session and cross-host/mounted/network filesystem lock semantics are
+NOT QUALIFIED. Do not infer a global distributed mutex or use the companion
+for lockfile takeover. The root/source recheck verifies observed replacements
+and persisted effects, **not an absolute OS-level race proof** for every
+possible transient swap in a path-reopening structured parser. Keep the
+capability disabled until those surface/ACL requirements are qualified.
 
 These are **NOT_RUN** on this source branch until Codex performs controlled
 builds and a separate independent ordinary-ChatGPT acceptance. The local
