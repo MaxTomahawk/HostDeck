@@ -27,11 +27,12 @@ import {loadBackendTls} from './tls.js';
 import {PrivilegeAdapter} from './privilege.js';
 import {ProviderRegistry} from './providers.js';
 import {EverythingClient} from './everything.js';
+import {FullTextAdapter} from './fulltext/adapter.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const https=z.string().url().refine(value=>new URL(value).protocol==='https:'&&!new URL(value).username&&!new URL(value).password);
-const scopes=z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage'])).max(11);
+const scopes=z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage','fulltext:read','fulltext:index'])).max(13);
 const configuration=z.object({
   version:z.literal(1),device_id:identifier,executor_id:identifier,expected_user_sid:z.string().regex(/^S-1-5-[0-9-]+$/),
   workspace:absolute,state_directory:absolute,desktop_worker:absolute,browser_executable:absolute.optional(),grants_file:absolute,
@@ -45,7 +46,7 @@ const configuration=z.object({
   http:z.object({port:z.number().int().min(1024).max(65535),resource:https,issuer:https,jwks_uri:https,
     access_token_profile:z.enum(['rfc9068','keycloak']).default('rfc9068'),oauth_client_id:z.string().min(1).max(256).optional(),
     auth_mode:z.enum(['native-oauth','cloudflare-access']).default('native-oauth'),
-    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage'])).min(1).max(11)}).strict().optional(),
+    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage','fulltext:read','fulltext:index'])).min(1).max(13)}).strict().optional(),
     allowed_origins:z.array(z.string().url()).max(20).default([]),proxy_hosts:z.array(z.string().regex(/^[A-Za-z0-9.:[\]-]{1,255}$/)).max(10).default([])}).strict().optional(),
 }).strict();
 const grantSchema=z.array(z.object({issuer:z.string().min(1).max(2048),subject:z.string().min(1).max(256),clientId:z.string().min(1).max(256),
@@ -138,6 +139,9 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const providers=await ProviderRegistry.open(path.join(config.state_directory,'provider-preferences.sqlite'));
   const everything=config.everything?new EverythingClient({worker:config.desktop_worker,...config.everything,identity}):undefined;
   const files=await FileAdapter.create({workspace,reauthorize,providers,everything});
+  // Always dormant unless an independently approved protected local selection
+  // exists AND both fresh principal/grant scopes permit the requested call.
+  const fulltext=new FullTextAdapter({stateDirectory:config.state_directory,workspace,reauthorize});
   const documents=await DocumentAdapter.create({workspace,browserExecutable:config.browser_executable});
   const desktop=await DesktopAdapter.create({executable:config.desktop_worker,expectedSid:config.expected_user_sid,identity,
     reauthorize,storeArtifact:(context,bytes,name,mime)=>state.storeArtifact(context,Buffer.from(bytes),name,mime),
@@ -195,7 +199,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     }
   }catch{throw new RuntimeError('APP_ASSETS_MISSING');}
   facade=new HostDeckFacade({deviceId:config.device_id,executorId:config.executor_id,gate,appHtml,checkExecutor,diagnostic,
-    adapters:[runtimeAdapter,processAdapter,files,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
+    adapters:[runtimeAdapter,processAdapter,files,fulltext,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
   let stopTransport:()=>Promise<void>;
   if(transport==='stdio'){
     // Re-mint only from the still-running native identity bootstrap; every tool rechecks current grants.
@@ -231,7 +235,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
     await diagnosticTask;
     await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
-    await state.close();audit.close();
+    fulltext.close();await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}
   };
   if(transport==='http'){
