@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { existsSync, createReadStream } from 'node:fs';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -154,6 +154,8 @@ test('real AccessCheck rejects writable user-owned config and approval; does not
     await writeFile(selectionFile,'{"fixture":true}');
     await writeFile(approvalFile,'{"fixture":true}');
     client=await bridge(await identity());
+    const originalSelection = await readFile(selectionFile);
+    const originalApproval = await readFile(approvalFile);
     await assert.rejects(client.verifyProtectedOwnerAcl({
       protectedDirectory:config,selectionFile,approvalFile,indexDirectory:index,
     }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
@@ -162,6 +164,29 @@ test('real AccessCheck rejects writable user-owned config and approval; does not
       protectedDirectory:config,selectionFile,approvalFile,indexDirectory:config,
     }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
     'overlap between protected and writable SQLite trees must fail');
+    assert.deepEqual(await readFile(selectionFile), originalSelection, 'read-only ACL check must not edit selection');
+    assert.deepEqual(await readFile(approvalFile), originalApproval, 'read-only ACL check must not edit approval');
+  } finally {await client?.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('reparse leaf and ancestor are reported from real Windows metadata (only own symlink)', {
+  skip: !available ? 'Actual Windows worker unavailable; reparse fixture NOT_RUN' : false,
+  timeout: 14000,
+}, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(),'hostdeck-ft-native-reparse-'));
+  let client:FullTextNativeBridge|undefined;
+  try {
+    const target = path.join(root,'target');
+    const link = path.join(root,'link');
+    await mkdir(target);
+    await writeFile(path.join(target,'inside.txt'),'fixture-only');
+    try { await symlink(target,link,'junction'); }
+    catch {t.skip('Junction capability unavailable for disposable fixture; reparse NOT_RUN');return;}
+    client=await bridge(await identity());
+    const [leaf,child]=await client.attributes([link,path.join(link,'inside.txt')],async()=>true);
+    assert.equal(leaf.status,'reparse_component');
+    assert.equal(leaf.reparse,true);
+    assert.equal(child.status,'reparse_component','cannot follow reparse ancestor to child');
   } finally {await client?.close();await rm(root,{recursive:true,force:true});}
 });
 
