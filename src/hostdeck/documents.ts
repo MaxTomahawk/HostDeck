@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ExcelFileHandler } from '../utils/files/excel.js';
 import { DocxFileHandler, pizzipPackage } from '../utils/files/docx.js';
+import { RuntimeError } from './runtime-error.js';
 import { replaceVisibleDocxXml, validateOfficeStructure, type OfficePart } from './office-xml.js';
 import { isOpenpyxlCommentLayout, readOpenpyxlCommentWorkbook, editOpenpyxlCommentWorkbook } from './office-xlsx.js';
 
@@ -70,20 +71,28 @@ async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): P
       xmlBytes += Buffer.byteLength(text);
       if (xmlBytes > MAX_ARCHIVE_BYTES || /<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error('DOCUMENT_UNSAFE_XML');
     }
-    if (!zip.file('word/document.xml')) throw new Error('DOCUMENT_INVALID_DOCX');
+    if (!zip.file('word/document.xml')) throw new RuntimeError('DOCUMENT_INVALID_DOCX');
   }
   return buffer;
 }
 
+class OfficeReplacementCountError extends RuntimeError {
+  constructor(expected: number, actual: number) {
+    super('DOCUMENT_REPLACEMENT_COUNT');
+    // Internal adapter tests retain the numbers; the MCP facade returns only code.
+    this.message = `Expected ${expected} occurrence(s) but found ${actual}`;
+  }
+}
+
 function replaceDocxBytes(input: Buffer, before: string, after: string, expected: number): Buffer {
   if (!Number.isInteger(expected) || expected < 1 || expected > 10000) {
-    throw new Error('DOCX_EXPECTED_REPLACEMENTS_INVALID');
+    throw new RuntimeError('DOCX_EXPECTED_REPLACEMENTS_INVALID');
   }
   const zip = new (pizzipPackage.load())(input);
   const names = Object.keys(zip.files)
     .filter(name => /^word\/(?:document|header\d+|footer\d+)\.xml$/.test(name))
     .sort((a, b) => a === 'word/document.xml' ? -1 : b === 'word/document.xml' ? 1 : a.localeCompare(b));
-  if (!names.includes('word/document.xml')) throw new Error('DOCUMENT_INVALID_DOCX');
+  if (!names.includes('word/document.xml')) throw new RuntimeError('DOCUMENT_INVALID_DOCX');
   const edits: Array<{ name: string; xml: string }> = [];
   let actual = 0;
   for (const name of names) {
@@ -98,7 +107,7 @@ function replaceDocxBytes(input: Buffer, before: string, after: string, expected
     if (result.count) edits.push({ name, xml: result.xml });
   }
   if (actual !== expected) {
-    throw new Error('Expected ' + expected + ' occurrence(s) but found ' + actual);
+    throw new OfficeReplacementCountError(expected, actual);
   }
   for (const edit of edits) zip.file(edit.name, edit.xml);
   return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -275,7 +284,7 @@ export class DocumentAdapter {
     if (ext === '.docx') {
       await checkOfficeArchive(file, '.docx');
       const result = await new DocxFileHandler().read(file, { offset: 0, length: 1000 });
-      if (typeof result.content !== 'string') throw new Error('DOCUMENT_READ_CONTENT_INVALID');
+      if (typeof result.content !== 'string') throw new RuntimeError('DOCUMENT_READ_CONTENT_INVALID');
       if (result.content.length > 2_000_000) throw new Error('DOCUMENT_READ_LIMIT');
       // Only remove the two upstream tooltips in the outline header and its
       // final Python tip. Never replace matching words in document body text.
