@@ -159,16 +159,20 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
   const quoted=(s:string)=>s.replace(/'/g,"''");
   const delayed="Start-Sleep -Seconds 3; [IO.File]::WriteAllText('"+quoted(marker)+"','late-output')";
   const encoded=Buffer.from(delayed,'utf16le').toString('base64');
-  const command="Start-Process -FilePath '"+quoted(shell)+
+  const command="$ownedChild=Start-Process -FilePath '"+quoted(shell)+
     "' -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand "+encoded+
-    "'; [IO.File]::WriteAllText('"+quoted(startMarker)+"','ready'); Start-Sleep -Seconds 12";
+    "' -PassThru -ErrorAction Stop; if($ownedChild.HasExited){throw 'CHILD_FAILED_TO_START'}; "+
+    "[IO.File]::WriteAllText('"+quoted(startMarker)+"','ready'); Start-Sleep -Seconds 12";
   const native={...options(root),launchJobs:true,shellExecutable:shell,desktopWorkerExecutable:exe,
     environment:{SystemRoot:process.env.SystemRoot,windir:process.env.windir,
       TEMP:process.env.TEMP,TMP:process.env.TMP}};
   const state=StateServices.create(native);
+  let jobId: string | undefined;
+  let contained=false;
   try{
     const accepted=await state.handle('submit_job',{command,working_directory:'.',
       idempotency_key:'own-descendant-cancel',timeout_seconds:25},context) as {job_id:string};
+    jobId=accepted.job_id;
     let started=false;
     for(let i=0;i<150;i++){
       if(existsSync(startMarker)){started=true;break;}
@@ -188,6 +192,7 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
     }
     assert.equal(final?.status,'cancelled');
     assert.equal(final?.descendants_contained,true);
+    contained=true;
     assert.ok(!final?.message?.includes('until its receipt is reconciled'));
     await new Promise(resolve=>setTimeout(resolve,3400));
     assert.equal(existsSync(marker),false,'cancelled tree cannot produce delayed descendant output');
@@ -195,9 +200,25 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
       idempotency_key:'own-descendant-cancel',timeout_seconds:25},context) as {job_id:string};
     assert.equal(replay.job_id,accepted.job_id,'resume:never / idempotency unchanged');
   }finally{
+    if(jobId&&!contained){
+      // Failure cleanup can only ask the SAME owned native job to cancel.
+      // If no positive owned-job receipt follows, preserve its private root
+      // for Codex inspection rather than erasing recovery evidence.
+      try{
+        await state.handle('cancel_job',{job_id:jobId},context);
+        for(let i=0;i<60;i++){
+          const progress=await state.handle('read_job',{job_id:jobId},context) as
+            {status:string;descendants_contained?:boolean};
+          if(progress.descendants_contained===true &&
+              ['succeeded','failed','interrupted','cancelled','timed_out'].includes(progress.status)){
+            contained=true;break;
+          }
+          await new Promise(resolve=>setTimeout(resolve,80));
+        }
+      }catch{t.diagnostic('Owned-job cleanup request failed; preserve isolated fixture for review.');}
+    }
     await state.close();
-    // Only the disposable fixture root is deleted. Unrelated user apps/jobs
-    // are never addressed by name or PID in this test.
-    await rm(root,{recursive:true,force:true});
+    if(contained||!jobId)await rm(root,{recursive:true,force:true});
+    else t.diagnostic('Owned-job containment unconfirmed; isolated fixture preserved, never clear raw receipt or unrelated processes.');
   }
 });
