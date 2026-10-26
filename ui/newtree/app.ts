@@ -213,6 +213,7 @@ function render(): void {
 }
 document.querySelectorAll<HTMLButtonElement>('nav button').forEach(item => item.addEventListener('click', () => { currentView = item.dataset.view!; render(); }));
 $('#refresh').addEventListener('click', render);
+device.addEventListener('change', () => { if (currentView === 'providers') render(); });
 $('#connect').addEventListener('click', async () => {
   if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') {
     try { await connectWithAccessToken(); } catch { status.textContent = 'Cloudflare Access connection failed. Sign in to the protected HostDeck page and retry.'; }
