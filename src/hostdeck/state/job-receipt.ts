@@ -2,6 +2,10 @@
  * not a terminal outcome; native descendant containment must be explicit.
  * This module never launches, kills, retries or replays a job.
  */
+// This provenance is fixed by the owning StateServices job reservation/launch
+// metadata, never inferred from potentially truncated or corrupt receipt fields.
+export type RunnerProtocol = 'native-job-object-v1' | 'legacy-powershell-v1';
+
 export type FinalJobStatus = 'succeeded' | 'failed' | 'timed_out' |
   'cancelled' | 'interrupted' | 'uncertain';
 
@@ -24,12 +28,21 @@ const exitCode = (value: unknown): number | null | undefined =>
   value === null ? null : typeof value === 'number' && Number.isInteger(value) &&
     value >= 0 && value <= 0xffffffff ? value : undefined;
 
-export function interpretJobReceipt(input: unknown): ReceiptVerdict {
+export function interpretJobReceipt(input: unknown, expectedProtocol: RunnerProtocol | undefined): ReceiptVerdict {
+  // Old jobs without a recorded protocol cannot be classified from a receipt:
+  // a damaged native receipt may have the same shape as legacy PowerShell.
+  if (expectedProtocol !== 'native-job-object-v1' && expectedProtocol !== 'legacy-powershell-v1') {
+    return uncertain('Persisted runner protocol is unavailable; command outcome remains uncertain.');
+  }
   const value = record(input);
   if (!value) return uncertain('Runner completion receipt is invalid; process outcome remains uncertain.');
   const status = value.status;
   const code = exitCode(value.exitCode);
-  if (typeof status === 'string') {
+  if (expectedProtocol === 'native-job-object-v1') {
+    // No fallthrough to legacy just because native status/containment is absent.
+    if (typeof status !== 'string') {
+      return uncertain('Native runner receipt is missing its status; descendant containment and outcome remain uncertain.');
+    }
     if (!NATIVE_STATUSES.has(status) ||
         !Object.prototype.hasOwnProperty.call(value,'exitCode') ||
         code === undefined || typeof value.descendantsContained !== 'boolean') {
@@ -68,8 +81,9 @@ export function interpretJobReceipt(input: unknown): ReceiptVerdict {
     }
     return uncertain('Runner completion status is unknown.');
   }
-  // Legacy PowerShell receipt: it has no native process-tree job proof.
-  // Keep its historic exit semantics but never assert descendants_contained.
+  // Only job metadata explicitly marked legacy permits the old receipt shape.
+  // A native status field on a legacy job is a protocol mismatch, not success.
+  // Legacy exit status never asserts descendant containment.
   if (status === undefined && code !== undefined && code !== null &&
       (value.timedOut === undefined || typeof value.timedOut === 'boolean')) {
     return { status: value.timedOut === true ? 'timed_out' : code === 0 ? 'succeeded' : 'failed',
