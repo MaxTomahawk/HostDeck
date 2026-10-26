@@ -89,7 +89,7 @@ export function normalizeConfig(config: FullTextConfig): { roots: string[]; inde
       new Set(excludedRoots.map(key)).size !== excludedRoots.length)
     throw new Error('FULLTEXT_DUPLICATE_ROOT');
   for (const volume of fixedVolumeRoots) {
-    if (process.platform!=='win32' || !/^[a-z]:\\\\$/i.test(volume) || !roots.some(root=>key(root)===key(volume)))
+    if (process.platform!=='win32' || !/^[a-z]:\\$/i.test(volume) || !roots.some(root=>key(root)===key(volume)))
       throw new Error('FULLTEXT_FIXED_VOLUME_SELECTION_INVALID');
   }
   for (const root of roots) {
