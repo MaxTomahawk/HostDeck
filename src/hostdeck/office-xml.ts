@@ -131,14 +131,14 @@ export function replaceVisibleDocxXml(xml: string, oldText: string, newText: str
  * Parsing is validation-only: XML is never reserialized, and untouched ZIP entries
  * retain their decompressed bytes. Unsupported namespace aliases fail closed.
  */
-export type OfficePart = 'document' | 'hdr' | 'ftr' | 'workbook' | 'worksheet' | 'relationships' | 'sst';
+export type OfficePart = 'document' | 'hdr' | 'ftr' | 'workbook' | 'worksheet' | 'relationships' | 'sst' | 'styleSheet';
 
 const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const SHEET_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const OFFICE_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const PACKAGE_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
-const SHEET_ELEMENTS = new Set(['workbook', 'sheets', 'sheet', 'worksheet', 'sheetData',
-  'row', 'c', 'f', 'v', 'is', 't', 'si', 'sst']);
+const SHEET_ELEMENTS = new Set(['workbook', 'workbookPr', 'sheets', 'sheet', 'worksheet', 'sheetData',
+  'row', 'c', 'f', 'v', 'is', 't', 'si', 'sst', 'styleSheet', 'numFmts', 'numFmt', 'cellXfs', 'xf']);
 
 interface OfficeElement { local: string; uri: string; prefix: string; }
 export function validateOfficeStructure(xml: string, kind: OfficePart): void {
@@ -241,6 +241,18 @@ export function validateOfficeStructure(xml: string, kind: OfficePart): void {
       } else if (kind === 'sst' && tag.local === 'si' &&
           (!parent || parent.local !== 'sst' || parent.uri !== SHEET_NS)) {
         throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
+      } else if (kind === 'styleSheet') {
+        if (['numFmts', 'cellXfs'].includes(tag.local) &&
+            (!parent || parent.local !== 'styleSheet' || parent.uri !== SHEET_NS)) {
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
+        }
+        if (tag.local === 'numFmt' &&
+            (!parent || parent.local !== 'numFmts' || parent.uri !== SHEET_NS)) {
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
+        }
+        if (tag.local === 'xf' && parent?.local === 'cellXfs' && parent.uri !== SHEET_NS) {
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NAMESPACE');
+        }
       }
     }
     stack.push(current);
