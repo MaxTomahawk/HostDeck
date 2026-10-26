@@ -1,6 +1,6 @@
 # HostDeck MCP App management panel
 
-`index.html`, the bundled `app.js`, and `styles.css` are served as the `ui://hostdeck/management` MCP App and by the standalone same-origin `/ui` route. Rebuild `app.js` from `app.ts` with `npx esbuild ui/newtree/app.ts --bundle --format=esm --platform=browser --outfile=ui/newtree/app.js` after changing the source. MCP Apps use the official `@modelcontextprotocol/ext-apps` `App` and `PostMessageTransport`; standalone mode uses the official MCP SDK Streamable HTTP client and an in-memory short-lived bearer token. Both paths show actual server responses, require an authorized device ID, and keep untrusted tool output in text nodes.
+`index.html`, the bundled `app.js`, and `styles.css` are served as the versioned `ui://hostdeck/management/v2` MCP App and by the standalone same-origin `/ui` route. Rebuild `app.js` from `app.ts` with `npx esbuild ui/newtree/app.ts --bundle --format=esm --platform=browser --outfile=ui/newtree/app.js` after changing the source. MCP Apps use the official `@modelcontextprotocol/ext-apps` `App` and `PostMessageTransport`; standalone mode uses the official MCP SDK Streamable HTTP client and an in-memory short-lived bearer token. Both paths show actual server responses, require an authorized device ID, and keep untrusted tool output in text nodes.
 
 ## B007 extension manager
 
@@ -12,3 +12,11 @@
 - Browser filtering/search/grouping is local-only and does not trigger a filesystem scan. Candidate capability hints are labelled research hints; only current HostDeck provider capabilities are called actual.
 - **Build gate:** `npm run build:hostdeck` rebuilds the generated `ui/newtree/app.js` from `app.ts` via `scripts/build-hostdeck-ui.mjs`; the checked-in bundle in this delegated source branch has not been generated or validated. Codex must rebuild and run the focused tests before installing/accepting this UI.
 - **Focused tests:** `node --import tsx --test test/hostdeck-manager-catalog.test.ts test/hostdeck-ui.test.ts`. The browser portion requires `HOSTDECK_TEST_BROWSER_EXECUTABLE`; otherwise it reports skipped. The tests are code proposals until actually executed.
+
+## B007 explicit host manager opening
+
+- The full manager is opened through the read-only `hostdeck_open_manager({device_id})` tool, gated by the existing `devices:read` grant. Ordinary HostDeck tools stay data-first with **no UI metadata**. No management/admin permission or lifecycle effect is introduced.
+- The render tool advertises `_meta.ui.resourceUri = ui://hostdeck/management/v2` and the matching ChatGPT compatibility alias. The former `ui://hostdeck/management` remains a gated read-compatible resource, not the active cache key.
+- The MCP Apps SDK `ontoolinput` and `ontoolresult` handlers are registered **before** `app.connect()`. Only the exact matching device ID plus successful structured server result `{device_id,view:'providers'}` can select the Extensions UI after connection. Tool-input/postMessage alone has no grant effect. Every later tool call still goes through the authenticated facade.
+- The standalone same-origin `/ui` OAuth/Access flow is unchanged. The host App carries no direct bearer token and cannot obtain authorization from a result notification. Do not claim ChatGPT rendering from test fixture discovery.
+- Focused tests: `node --import tsx --test test/hostdeck-manager-host-context.test.ts test/hostdeck-manager-host-gateway.test.ts test/hostdeck-ui.test.ts`. Browser fixture requires `HOSTDECK_TEST_BROWSER_EXECUTABLE`; without it browser rendering is **SKIP**. Rebuild `ui/newtree/app.js` through `npm run build:hostdeck` on the authorized Windows integration checkout. User-device grant and installed ChatGPT host rendering require separate evidence.

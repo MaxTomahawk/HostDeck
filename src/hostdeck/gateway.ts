@@ -5,6 +5,11 @@ import { discoverTools, parseToolArguments, listResourceTemplates, resolveResour
 import { PolicyGate, TokenAuthority, AuthenticationError, type AuthenticationReason, type Principal, type ExecutionContext } from './security.js';
 import { RuntimeError } from './runtime-error.js';
 
+// Versioned URI is the cache key for this new, explicitly opened MCP App.
+// Legacy resource remains readable only with the same devices:read gate.
+export const MANAGER_APP_URI = 'ui://hostdeck/management/v2';
+const LEGACY_MANAGER_APP_URI = 'ui://hostdeck/management';
+
 export interface Adapter {
   readonly implementedTools: ReadonlySet<string>;
   handle(name: string, args: Record<string, unknown>, context: ExecutionContext): Promise<unknown>;
@@ -51,6 +56,17 @@ export class HostDeckFacade {
   async call(principal: Principal, name: string, raw: unknown): Promise<unknown> {
     if (name.length > 128) throw new RuntimeError('UNAVAILABLE');
     const args = parseToolArguments(name, raw);
+    if (name === 'hostdeck_open_manager') {
+      // This is an intentionally read-only render operation. It does not call
+      // a management/admin adapter or mint a new principal. Missing bundled
+      // HTML means no discovery and no direct invocation.
+      if (!this.options.appHtml) throw new RuntimeError('UNAVAILABLE');
+      return this.options.gate.execute(principal, name, args, async context => {
+        this.bound(context);
+        await this.options.checkExecutor?.();
+        return { device_id: context.deviceId, view: 'providers' as const };
+      });
+    }
     const adapter = this.adapters.get(name);
     if (!adapter) throw new RuntimeError('UNAVAILABLE');
     return this.options.gate.execute(principal, name, args, async context => {
@@ -62,7 +78,9 @@ export class HostDeckFacade {
   private async visible(principal: Principal) {
     try {
       const allowed = await this.options.gate.visible(principal, this.options.deviceId, this.options.executorId);
-      return new Set([...this.adapters.keys()].filter(name => allowed.has(name)));
+      return new Set([...this.adapters.keys(),
+        ...(this.options.appHtml ? ['hostdeck_open_manager'] : [])]
+        .filter(name => allowed.has(name)));
     } catch { throw new RuntimeError('DENIED'); }
   }
   localUi(): string | undefined { return this.options.appHtml; }
@@ -72,7 +90,9 @@ export class HostDeckFacade {
     const server = new Server({ name: 'HostDeck', version: '0.3.0' }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
     server.setRequestHandler('tools/list', async () => {
       const tools=discoverTools(await this.visible(principal())).map(tool => ({ ...tool, inputSchema:{...tool.inputSchema,type:'object' as const},
-        ...(this.options.appHtml && tool.name === 'hostdeck_open_manager' ? { _meta: { ui: {resourceUri: 'ui://hostdeck/management'}, 'openai/outputTemplate': 'ui://hostdeck/management' } } : {}) }));
+        ...(tool.name === 'hostdeck_open_manager' && this.options.appHtml
+          ? { _meta: { ui: { resourceUri: MANAGER_APP_URI }, 'openai/outputTemplate': MANAGER_APP_URI } }
+          : {}) }));
       diagnose(this.options.diagnostic,{stage:'discovery',toolCount:tools.length});
       return {tools};
     });
@@ -91,13 +111,17 @@ export class HostDeckFacade {
       const names = await this.visible(principal());
       return { resourceTemplates: listResourceTemplates().filter(r => names.has(resourceOperation(r.name))).map(({requiredScopes, ...r}) => r) };
     });
-    server.setRequestHandler('resources/list', async () => ({ resources: this.options.appHtml && (await this.visible(principal())).size
-      ? [{uri:'ui://hostdeck/management',name:'HostDeck management',mimeType:'text/html;profile=mcp-app'}] : [] }));
+    server.setRequestHandler('resources/list', async () => ({ resources:
+      this.options.appHtml && (await this.visible(principal())).has('hostdeck_open_manager')
+      ? [{uri:MANAGER_APP_URI,name:'HostDeck extension manager',mimeType:'text/html;profile=mcp-app'}] : [] }));
     server.setRequestHandler('resources/read', async request => {
       const uri = request.params.uri;
       try {
-        if (uri === 'ui://hostdeck/management') {
-          if (!this.options.appHtml || !(await this.visible(principal())).size) throw new RuntimeError('DENIED');
+        if (uri === MANAGER_APP_URI || uri === LEGACY_MANAGER_APP_URI) {
+          if (!this.options.appHtml) throw new RuntimeError('DENIED');
+          // Resource reads re-enter exactly the same devices:read grant and
+          // executor boundary as open_manager. No "any visible tool" shortcut.
+          await this.call(principal(), 'hostdeck_open_manager', { device_id: this.options.deviceId });
           return { contents:[{uri,mimeType:'text/html;profile=mcp-app',text:this.options.appHtml,
             _meta:{ui:{csp:{connectDomains:[],resourceDomains:[]}},'openai/widgetPrefersBorder':true}}] };
         }
