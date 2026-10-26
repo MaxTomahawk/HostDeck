@@ -67,9 +67,9 @@ export class FullTextPort {
   async step(c:FullTextPrincipal, runId:string, maxOperations?:number):Promise<FullTextScanReceipt> {
     return (await this.require(c)).step(c,runId,maxOperations);
   }
-  async pause(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).pause(c,runId);}
-  async resume(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).resume(c,runId);}
-  async cancel(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).cancel(c,runId);}
+  async pause(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).pause(c,runId);}
+  async resume(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).resume(c,runId);}
+  async cancel(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).cancel(c,runId);}
   async query(c:FullTextPrincipal, phrase:string, limit?:number):Promise<FullTextSearchPage> {
     return (await this.require(c)).search(c,phrase,limit);
   }
