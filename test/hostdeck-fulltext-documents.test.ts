@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile , realpath} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
@@ -15,7 +15,7 @@ const principal:FullTextPrincipal={ownerId:'documents-test',deviceId:'own-device
 const authorize:FullTextAuthorizer=async req=>req.principal.ownerId==='documents-test';
 
 test('ground-truth DOCX/XLSX/PDF extractors use existing qualified parsers; no implicit OCR',async()=>{
-  const base=await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-docs-'));
+  const base=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-docs-')));
   const corpus=path.join(base,'chosen-documents'),state=path.join(base,'private-state');
   await mkdir(corpus);await mkdir(state);
   const config:FullTextConfig={indexFile:path.join(state,'private-index.sqlite'),roots:[corpus],
@@ -64,7 +64,7 @@ test('ground-truth DOCX/XLSX/PDF extractors use existing qualified parsers; no i
 });
 
 test('text extractor refuses invalid UTF-8 instead of indexing replacement characters',async()=>{
-  const base=await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-invalid-'));
+  const base=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-invalid-')));
   const file=path.join(base,'invalid.txt');
   try {
     await writeFile(file,Buffer.from([0x61,0x80,0x62]));
