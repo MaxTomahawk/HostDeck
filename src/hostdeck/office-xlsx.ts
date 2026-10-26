@@ -71,7 +71,106 @@ function inline(contents: string): string {
   for (const m of contents.matchAll(/<t\b[^>]*>([^<]*)<\/t>/g)) value += decodeOfficeXml(m[1]);
   return value;
 }
-function cellValue(cell: Cell, shared: string[]): unknown {
+/** SpreadsheetML style metadata used only for date-aware reads.
+ * Edits never reserialize these parts or reinterpret existing number formats.
+ */
+interface OfficeDateStyles {
+  formatsByStyle: number[];
+  customFormats: Map<number, string>;
+  date1904: boolean;
+  hasStyles: boolean;
+}
+const builtinDateFormatIds = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+
+function isDateNumberFormat(value: string): boolean {
+  // Match calendar/time tokens, excluding quoted/escaped literal text and colors.
+  const tokens = value.replace(/"(?:[^"]|"")*"/g, '')
+    .replace(/\\./g, '').replace(/[_*]./g, '')
+    .replace(/\[[^\]]*\]/g, token => /^\[(?:h+|m+|s+)\]$/i.test(token)
+      ? token.slice(1, -1) : '');
+  return /[ymdhs]/i.test(tokens);
+}
+
+function dateStyles(zip: any): OfficeDateStyles {
+  const workbook = part(zip, 'xl/workbook.xml');
+  validateOfficeStructure(workbook, 'workbook');
+  const property = /<workbookPr\b[^>]*\/?>/.exec(workbook);
+  const configured = property ? attribute(property[0], 'date1904') : undefined;
+  if (configured !== undefined && !['0', '1', 'false', 'true'].includes(configured)) {
+    throw new RuntimeError('XLSX_DATE_SYSTEM_UNSUPPORTED');
+  }
+  const date1904 = configured === '1' || configured === 'true';
+  if (!zip.file('xl/styles.xml')) {
+    return { formatsByStyle: [], customFormats: new Map(), date1904, hasStyles: false };
+  }
+  const xml = part(zip, 'xl/styles.xml');
+  validateOfficeStructure(xml, 'styleSheet');
+  const customFormats = new Map<number, string>();
+  const formats = /<numFmts\b[^>]*>([\s\S]*?)<\/numFmts>/.exec(xml);
+  if (formats) {
+    for (const item of formats[1].matchAll(/<numFmt\b[^>]*\/?>/g)) {
+      const id = attribute(item[0], 'numFmtId');
+      const format = attribute(item[0], 'formatCode');
+      if (!id || !/^\d+$/.test(id) || format === undefined) {
+        throw new RuntimeError('XLSX_NUMBER_FORMAT_INVALID');
+      }
+      const numFmtId = Number(id);
+      if (!Number.isSafeInteger(numFmtId) || customFormats.has(numFmtId)) {
+        throw new RuntimeError('XLSX_NUMBER_FORMAT_INVALID');
+      }
+      customFormats.set(numFmtId, format);
+    }
+  }
+  const styles = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(xml);
+  const formatsByStyle: number[] = [];
+  if (styles) for (const item of styles[1].matchAll(/<xf\b[^>]*\/?>/g)) {
+    const raw = attribute(item[0], 'numFmtId') ?? '0';
+    if (!/^\d+$/.test(raw)) throw new RuntimeError('XLSX_NUMBER_FORMAT_INVALID');
+    const id = Number(raw);
+    if (!Number.isSafeInteger(id)) throw new RuntimeError('XLSX_NUMBER_FORMAT_INVALID');
+    formatsByStyle.push(id);
+  }
+  return { formatsByStyle, customFormats, date1904, hasStyles: true };
+}
+
+function dateAwareNumber(cell: Cell, numeric: number, raw: string, styles: OfficeDateStyles): number | string | Record<string, unknown> {
+  const style = attribute(cell.attrs, 's');
+  if (style !== undefined && !/^\d+$/.test(style)) {
+    throw new RuntimeError('XLSX_STYLE_INDEX_INVALID');
+  }
+  const index = style === undefined ? 0 : Number(style);
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new RuntimeError('XLSX_STYLE_INDEX_INVALID');
+  }
+  const formatId = styles.formatsByStyle[index];
+  if (formatId === undefined) {
+    return style === undefined ? numeric
+      : { status: 'UNSUPPORTED_CELL_STYLE', serial: numeric, styleIndex: index };
+  }
+  const custom = styles.customFormats.get(formatId);
+  if (formatId >= 164 && custom === undefined) {
+    return { status: 'UNSUPPORTED_NUMBER_FORMAT', serial: numeric, numberFormatId: formatId };
+  }
+  const isDate = builtinDateFormatIds.has(formatId) ||
+    (custom !== undefined && isDateNumberFormat(custom));
+  if (!isDate) return numeric;
+  const timestamp = Math.round((numeric - 25569 + (styles.date1904 ? 1462 : 0)) * 86_400_000);
+  // The fictitious 29 February 1900 Excel serial cannot be mapped faithfully.
+  if (!Number.isFinite(timestamp) || numeric < 0 ||
+      (!styles.date1904 && numeric === 60)) {
+    return { status: 'UNSUPPORTED_DATE_SERIAL', serial: raw, numberFormatId: formatId,
+      date1904: styles.date1904 };
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return { status: 'UNSUPPORTED_DATE_SERIAL', serial: raw, numberFormatId: formatId,
+      date1904: styles.date1904 };
+  }
+  // Matches ExcelJS's established HostDeck JSON date representation.
+  return date.toISOString();
+}
+
+function cellValue(cell: Cell, shared: string[], styles: OfficeDateStyles): unknown {
   const type = attribute(cell.attrs, 't');
   const formula = tag(cell.inner, 'f'), raw = tag(cell.inner, 'v');
   const formulaTag = /<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/.exec(cell.inner);
@@ -105,7 +204,7 @@ function cellValue(cell: Cell, shared: string[]): unknown {
   if (type === 'str' || type === 'e') return raw;
   const number = Number(raw);
   if (!Number.isFinite(number)) throw new RuntimeError('XLSX_UNSUPPORTED_VALUE');
-  return number;
+  return dateAwareNumber(cell, number, raw, styles);
 }
 function sheetDetails(zip: any, selected?: string): { name: string; file: string; names: string[] } {
   const workbook = part(zip, 'xl/workbook.xml');
@@ -154,11 +253,12 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
     validateOfficeStructure(strings, 'sst');
     shared = [...strings.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map(m => inline(m[1]));
   }
+  const styles = dateStyles(zip);
   const values = new Map<string, unknown>();
   let lastRow = 1, lastCol = 1;
   for (const cell of cells(worksheet)) {
     if (values.has(cell.name)) throw new RuntimeError('XLSX_DUPLICATE_CELL');
-    values.set(cell.name, cellValue(cell, shared));
+    values.set(cell.name, cellValue(cell, shared, styles));
     const location = address(cell.name);
     lastRow = Math.max(lastRow, location.row);
     lastCol = Math.max(lastCol, location.col);
