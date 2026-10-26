@@ -8,7 +8,7 @@ import { extractDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
 import {excludedByFileAttributes} from './windows-attributes.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
-import { authorize, normalizeConfig, previewFullText, safeRealpath, within } from './policy.js';
+import { authorize, normalizeConfig, previewFullText, safeRealpath, within, isExcludedSource, qualifyFixedVolumes } from './policy.js';
 import type {
   FullTextAuthorizer, FullTextConfig, FullTextPrincipal, FullTextPreview,
   FullTextScanReceipt, FullTextSearchPage, FullTextFormat,
@@ -92,6 +92,7 @@ export class FullTextEngine {
     const owner = validPrincipal(principal);
     if (!c.roots.length || !c.formats.length || confirmedDigest !== c.digest)
       throw new Error('FULLTEXT_SELECTION_NOT_CONFIRMED');
+    await qualifyFixedVolumes(c); // exact owner-approved FIXED volumes only
     const rootIdentities=new Map<string,FsIdentity>();
     for (const root of c.roots) {
       await authorize(check, owner, 'configure', root, root);
@@ -177,6 +178,7 @@ export class FullTextEngine {
   }
   private async rootsAllowed(c: FullTextPrincipal, action: Parameters<FullTextAuthorizer>[0]['action']): Promise<void> {
     this.guard(c);
+    await qualifyFixedVolumes(this.config); // never assume prior drive type after removable mount changes
     for (const root of this.config.roots) {
       await this.auth(c, action, root, root);
       await this.verifyRoot(root);
@@ -284,6 +286,7 @@ export class FullTextEngine {
         if (!this.config.includeHidden && entry.name.startsWith('.')) continue;
         if (entry.name.includes(':') || entry.isSymbolicLink()) { incomplete = true; continue; }
         const child = path.join(dir,entry.name);
+        if(isExcludedSource(this.config,child))continue;
         if (!within(task.root,child)) { incomplete = true; continue; }
         const kind = entry.isDirectory()?'dir':entry.isFile()?'file':undefined;
         if (!kind) { incomplete = true; continue; }
@@ -313,6 +316,7 @@ export class FullTextEngine {
     try { file = await safeRealpath(task.path); }
     catch (error) { if (isMissing(error)) return 'skipped'; throw error; }
     if (!within(task.root,file)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+    if(isExcludedSource(this.config,file))return 'skipped';
     const format = path.extname(file).toLowerCase() as FullTextFormat;
     if (!formatSet.has(format) || !this.config.formats.includes(format)) return 'skipped';
     await this.verifyRoot(task.root);
@@ -339,6 +343,7 @@ export class FullTextEngine {
     await this.auth(c,'index',task.root,file);
     await this.verifyRoot(task.root);
     await safeRealpath(file);
+    if(isExcludedSource(this.config,file))throw new Error('FULLTEXT_SOURCE_EXCLUDED_DURING_SCAN');
     if(await excludedByFileAttributes(file,this.config.includeHidden))
       throw new Error('FULLTEXT_SOURCE_BECAME_HIDDEN');
     if (!sameIdentity(sourceIdentity,await identity(file)))
@@ -509,6 +514,7 @@ export class FullTextEngine {
     let authorizationGaps = false;
     for (const row of candidates) {
       if (results.length >= limit) break;
+      if(isExcludedSource(this.config,row.path)){authorizationGaps=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
         await this.auth(c,'snippet',row.root,row.path);
@@ -550,6 +556,7 @@ export class FullTextEngine {
       this.config.formats.map(format=>[format,{format,indexed:0,unqualified:0,reasons:{}}])
     );
     for (const row of rows.slice(0,this.config.budgets.maxQueryCandidates)) {
+      if(isExcludedSource(this.config,row.path)){hiddenByAcl=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
         const format=path.extname(row.path).toLowerCase() as FullTextFormat;
