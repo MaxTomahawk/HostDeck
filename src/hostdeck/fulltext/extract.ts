@@ -52,6 +52,10 @@ export async function extractDocument(file: string, root: string, budgets: FullT
     } else if (format === '.xlsx') {
       // ExcelJS is already a HostDeck dependency. Retain ALL sheet names and
       // primitive values, not just the existing read_document's first 1000 rows.
+      // Reuse the existing HostDeck ZIP/container security checks before
+      // using ExcelJS's all-sheets traversal. This is a read, not an edit.
+      const checked = await DocumentAdapter.create({ workspace: root });
+      await checked.handle('hostdeck_read_document', { path: file });
       const workbook = new (exceljsPackage.load().Workbook)();
       await workbook.xlsx.load(input);
       const values: string[] = [];
