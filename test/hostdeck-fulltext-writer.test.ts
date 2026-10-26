@@ -39,7 +39,7 @@ function snapshot(indexFile:string):string{
 function worker(configFile:string,mode:'hold'|'probe'):ChildProcessWithoutNullStreams{
   return spawn(process.execPath,['--import','tsx',
     fileURLToPath(new URL('./fixtures/hostdeck-fulltext-writer.ts',import.meta.url)),configFile,mode],
-    {stdio:['pipe','pipe','pipe'],windowsHide:true});
+    {stdio:'pipe',windowsHide:true});
 }
 
 function receive(child:ChildProcessWithoutNullStreams,pattern:RegExp,ms=12_000):Promise<string>{
