@@ -41,10 +41,12 @@ async function fixture(html?:string) {
       {implementedTools:new Set(['hostdeck_device_status']),handle:async()=>{effects++;return {status:'ready'};}},
       {implementedTools:new Set(['hostdeck_list_providers']),handle:async()=>{effects++;return {providers:[],functions:[]};}},
     ]});
+  const allowedHosts:string[]=[];
   const boundary=createHttpBoundary(facade,authority,{
-    issuer,resource,allowedHosts:[],allowedOrigins:[],
+    issuer,resource,allowedHosts,allowedOrigins:[],
   });
-  const server=createServer((request,response)=>void toNodeHandler(boundary)(request,response));
+  const nodeHandler=toNodeHandler(boundary);
+  const server=createServer((request,response)=>void nodeHandler(request,response));
   const sockets=new Set<Socket>();
   server.on('connection',s=>{sockets.add(s);s.once('close',()=>sockets.delete(s));});
   await new Promise<void>((resolve,reject)=>{
@@ -53,9 +55,7 @@ async function fixture(html?:string) {
   const address=server.address();
   assert.ok(address&&typeof address==='object');
   const host='127.0.0.1:'+address.port;
-  // Boundary host list is shared by reference.
-  // The configured host is injected only for this random loopback fixture.
-  // See extra note below: allowedHosts is updated by the caller after construction.
+  allowedHosts.push(host);
   return {
     root,audit,boundary,server,sockets,host,facade,
     ownerToken,filesOnlyToken,
