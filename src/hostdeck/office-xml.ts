@@ -28,7 +28,7 @@ export function decodeOfficeXml(value: string): string {
 }
 
 export function requireSafeOfficeXml(xml: string): void {
-  if (/<!(?:DOCTYPE|ENTITY)\b/i.test(xml) || /<\?xml-stylesheet\b/i.test(xml)) {
+  if (/<!(?:DOCTYPE|ENTITY)\b/i.test(xml) || /<\?xml-stylesheet\b/i.test(xml) || /<!\[CDATA\[|<!--/.test(xml)) {
     throw new Error('DOCUMENT_UNSAFE_XML');
   }
 }
