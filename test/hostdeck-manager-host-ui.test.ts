@@ -146,6 +146,8 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       assert.equal(after.providerRequests,1,'duplicate cannot fetch providers');
       assert.equal(after.managerCount,0,'Files remains active');
       assert.equal(after.fileInput,'keep-user-navigation.txt','navigation input preserved');
+      assert.equal(after.device,'fixture-device');
+      assert.equal(after.visibleStatus,prior.visibleStatus,'duplicate leaves status untouched');
       assert.equal(after.totalDomNodes,prior.totalDomNodes,'no DOM accumulation');
       assert.deepEqual(after.unexpectedRequests,[]);
       t.diagnostic('Hosted fixture counts '+JSON.stringify({
@@ -161,6 +163,8 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       assert.equal(stats.providerRequests,1);
       assert.equal(stats.managerCount,0);
       assert.equal(stats.fileInput,'keep-user-navigation.txt');
+      assert.equal(stats.device,'fixture-device');
+      assert.equal(stats.visibleStatus,prior.visibleStatus,'invalid input/result must not affect UI status');
       assert.equal(stats.totalDomNodes,prior.totalDomNodes);
       assert.deepEqual(stats.unexpectedRequests,[]);
     });
