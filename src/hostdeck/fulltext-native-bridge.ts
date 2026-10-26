@@ -157,12 +157,14 @@ export class FullTextNativeBridge {
   }
 
   private async openWorker(): Promise<void> {
+    if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
     if (process.platform !== 'win32') throw error('FULLTEXT_NATIVE_WINDOWS_REQUIRED');
     let actualHash: string;
     try { actualHash = await digest(this.options.workerExecutable); }
     catch { throw error('FULLTEXT_NATIVE_BINARY_UNAVAILABLE'); }
     if (actualHash.toLowerCase() !== this.options.workerSha256.toLowerCase())
       throw error('FULLTEXT_NATIVE_BINARY_CHANGED');
+    if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
     const env: NodeJS.ProcessEnv = {};
     for (const name of ['SystemRoot', 'windir', 'TEMP', 'TMP', 'DOTNET_ROOT']) {
       if (process.env[name]) env[name] = process.env[name];
@@ -184,6 +186,7 @@ export class FullTextNativeBridge {
       if (this.child === child) this.child = undefined;
     });
     try {
+      if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
       const identity = await this.raw('identity', {}) as Record<string, unknown>;
       const expected = this.options.expectedExecutor;
       if (identity.sid !== expected.sid ||
@@ -192,6 +195,7 @@ export class FullTextNativeBridge {
           identity.elevated !== false) {
         throw error('FULLTEXT_NATIVE_EXECUTOR_IDENTITY_MISMATCH');
       }
+      if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
       this.initialized = true;
     } catch {
       child.kill();
@@ -271,6 +275,12 @@ export class FullTextNativeBridge {
       closed.then(() => true),
       new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1000)),
     ]);
-    if (!result) child.kill(); // Only this test-owned/bridge-owned worker.
+    if (!result) {
+      child.kill(); // Only the bridge-owned helper, never an ordinary user job.
+      await Promise.race([
+        closed,
+        new Promise<void>(resolve => setTimeout(resolve, 1000)),
+      ]);
+    }
   }
 }
