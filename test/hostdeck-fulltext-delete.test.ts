@@ -37,8 +37,7 @@ async function complete(engine:FullTextEngine,id:string){
 function rows(index:string){
   const db=new DatabaseSync(index,{readOnly:true});
   try{
-    const docs=db.prepare('SELECT path,state,seen_scan FROM docs ORDER BY path').all() as
-      Array<{path:string;state:string;seen_scan:string}>;
+    const docs=db.prepare('SELECT path,state,seen_scan FROM docs ORDER BY path').all() as Array<{path:string;state:string;seen_scan:string}>;
     const text=db.prepare('SELECT body FROM docs_fts').all() as Array<{body:string}>;
     const run=db.prepare('SELECT state,incomplete,traversal_incomplete FROM runs ORDER BY rowid DESC LIMIT 1')
       .get() as {state:string;incomplete:number;traversal_incomplete:number};
@@ -137,16 +136,15 @@ test('legacy incomplete-only run migrates fail-closed; only new traversals start
     engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest);
     const db=new DatabaseSync(f.config.indexFile,{readOnly:true});
     try{
-      const old=db.prepare('SELECT incomplete,traversal_incomplete FROM runs WHERE id=?').get('legacy-fixture')
-        as {incomplete:number;traversal_incomplete:number};
-      assert.deepEqual(old,{incomplete:1,traversal_incomplete:1},
-        'legacy content/traversal ambiguity must never authorize deletion');
+      const old=db.prepare('SELECT incomplete,traversal_incomplete FROM runs WHERE id=?').get('legacy-fixture') as {incomplete:number;traversal_incomplete:number};
+      assert.equal(old.incomplete,1);
+      assert.equal(old.traversal_incomplete,1,'legacy ambiguity must not authorize deletion');
     }finally{db.close();}
     const id=(await engine.start(caller)).runId;
     const pending=new DatabaseSync(f.config.indexFile,{readOnly:true});
     try{
-      assert.equal((pending.prepare('SELECT traversal_incomplete FROM runs WHERE id=?').get(id)
-        as {traversal_incomplete:number}).traversal_incomplete,0);
+      const newRun=pending.prepare('SELECT traversal_incomplete FROM runs WHERE id=?').get(id) as {traversal_incomplete:number};
+      assert.equal(newRun.traversal_incomplete,0);
     }finally{pending.close();}
     await complete(engine,id);
   }finally{engine?.close();await rm(f.base,{recursive:true,force:true});}
