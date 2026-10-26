@@ -12,6 +12,9 @@
 .manager-filters label{margin:.2rem 0}
 .manager-filters input,.manager-filters select{display:block;width:100%;min-width:0;margin-top:.25rem}
 .manager-filters button{min-height:42px;align-self:end}
+.manager-advanced{grid-column:1/-1;border:1px solid #486071;border-radius:8px;padding:.4rem .7rem}
+.manager-advanced summary{cursor:pointer;font-weight:600;min-height:35px}
+.manager-advanced-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.4rem .8rem}
 .manager-count{margin:.9rem 0;font-weight:600}
 .manager-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:1rem;align-items:start;min-width:0}
 .manager-results,.manager-detail{min-width:0}
