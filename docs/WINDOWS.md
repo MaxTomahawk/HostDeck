@@ -194,3 +194,53 @@ account's key. This includes terminal execution under that account: a
 `host:manage` tool grant is not an independent OS boundary against such code.
 Account/key isolation must be assessed before granting less-trusted remote
 principals process execution or enabling a remote management bridge.
+
+## B007 WP-01/06: durable jobs, signed-client evidence and lifecycle preflight
+
+**Base:** codex/everything-b007 at 3e9403cfad3e968447f7f026dec6915b7f880d7b. This is a bounded engineering/acceptance matrix, not a second NEXT_RUN plan, permission change or live Windows transition.
+
+### Cancellation and recovery contract
+
+| State or request | Honest receipt/readback | Authorization and evidence boundary |
+|---|---|---|
+| Native cancellation *requested* | cancelling, cancelled:true = accepted request, outcome:uncertain | Only the owned job's private cancel flag, never arbitrary PIDs; no automatic retry |
+| Native cancelled/timed_out receipt | Confirm terminal state only when descendantsContained:true from that owned native Job Object | Actual TerminateJobObject, root handle completion and QueryInformationJobObject active count, not generic job membership |
+| Missing/invalid receipt or no containment | uncertain or interrupted, never confirmed cancelled | Preserve raw receipt/outputs/marker; do not replay resume:never |
+| Complete receipt before concurrent cancel | Reconcile receipt first and return terminal status; do not write cancel flag | Owner/device/executor-bound durable job |
+| Legacy PowerShell kill signal | Report uncertain descendant outcome, not cancelled | Node ChildProcess.kill indicates a wrapper signal only |
+| Artifact write failure after terminal receipt | Preserve original private .json/.out/.err and report artifact retention failure | Do not erase the only copy of output or pretend artifact success |
+| Reconnect/restart | Reuse job ID/idempotency key/artifact hashes and stored effect receipts | No accepted command re-execution; owner/device/executor binding persists |
+
+The JobStatus.Check marker validates a PID against process creation ticks, session and SID, but **does not** prove that this process belongs to HostDeck's intended native Job Object or that every descendant exited. IsProcessInJob(process, null) proves membership in **some** job, never ownership of the Codex/HostDeck job. Only the native runner's own Job Object handle and active-process accounting support the positive descendantsContained claim. If the handle is gone or the receipt lacks that proof, status remains uncertain.
+
+### Original owner audit atoms: purpose/action/effect/context/time
+
+**HD-REQ-0123–0129**, original S01-L0006738 at **2026-10-20 06:35:10.776 UTC = 08:35:10.776 CEST (Europe/Amsterdam)**. The source code and B005 future policies do not close these separate acceptance gates.
+
+| Requirement | Concrete acceptance need | Existing source and evidence limit |
+|---|---|---|
+| 0123 | Nonempty meaningful purpose, separately authorized mandate/scope/risk, before elevated effect; purpose linked to receipt | Submit-AdminRequest and Broker.Tick validate goal, mandate and action metadata, but string length and valid signing alone do not verify purpose or mandate |
+| 0124 | Accept requests without an Operator project; never manufacture a project/chat ID | ProjectId and ChatId are optional. Missing project does not mean missing owner mandate |
+| 0125 | Claimed action summary, exact script SHA-256 and actual broker operation joined in a sanitized audit | Script hash and action fields exist; submitted action_summary is not an independent effect observation |
+| 0126 | Compare expected_change against actual post-effect values, method and evidence hash | completed-unverified-effect and signed client assertions are not independent OS readback |
+| 0127 | Accurate UTC chronology and Europe/Amsterdam DST rendering across request, native and public surfaces | Original raw receipt strings use UTC; PowerShell JSON date coercion caused the apparent offset discrepancy. HD-B007-AUDIT-UTC-RAW-001 and the unchanged Windows PowerShell 5.1 audit display pass four DST cases. Preserve raw strings; broader cross-surface audit acceptance remains open. |
+| 0128 | Enrolled client credential, real origin, purpose/project/chat context when supplied, explicit unavailable state otherwise | Signed client_id/cert can establish enrolled signer, not which same-SID application originated a request; public status omits some source receipt fields |
+| 0129 | Same-goal continuation and changed-purpose scope/risk review, no blind replay after uncertain effect | retry_of/goal and owner checks exist; genuine client exclusivity and target effect/retry acceptance remain unproven |
+
+**HD-REQ-0132**, S01-L0010541 at **2026-10-21 10:49:59.283 UTC = 12:49:59.283 CEST**: measure exact idle/active component set, timers, CPU/RAM/disk/network bytes and index/service startup cost before claiming efficiency. No automatic monitoring is authorized. B005 DR01-0007 establishes the **future** requirement for distinct intended Codex/authorized HostDeck clients, not proof that current signed requests enforce such process isolation.
+
+**Specific same-SID threat:** another executable under the same account may be able to invoke the CurrentUser signing key or submit a request under an enrolled client identity. Valid RSA signature, client_id, process display name or a self-reported chat_id proves neither exclusive intended-client origin nor owner authority for arbitrary SYSTEM effects. Stronger isolation requires a separately protected signer/client identity boundary with target-action admission and effect verification; no broker reenrollment, key export, ACL change or other privilege mutation is performed by this patch. Signed broker policy remains in force but is not misrepresented as a cryptographic process-identity proof.
+
+### Lifecycle: preflight → future effect → recovery (transitions NOT_RUN)
+
+| Scenario | Read-only preflight | Later separately authorized effect/check | Recovery proof |
+|---|---|---|---|
+| User logon | Enrolled SID/LUID/session, service state, tray, HTTP listener, user worker, Everything process/IPC and startup context | Check actual session-bound status and safe MCP query; no automatic app startup in this delegation | Original user settings and exact startup receipts preserved |
+| Crash or launcher exit | Journal/receipt/marker, PID+creation/SID/session, artifact hash and ownership | In a disposable authorized fixture only, inspect recovery and no-replay; process death alone is not tree containment | No re-execution, prior receipts and idempotency intact; unknown effects remain unknown |
+| Reboot | Current/previous package version, source hash, protected state directory, owner/session identities and planned downtime | Reboot only under independent human-approved run; verify fresh session, service/tray/HTTP/Everything and job readback | No stale PID/session carried across reboot; persistent receipts/artifacts/permissions |
+| Update | Signed staged package, exact hashes, compat/config/ACL diff, previous stable package | Apply only after concrete reviewed release mandate and verify service/UI/MCP health | Previous version rollback candidate, journal and configuration map; no silent version promotion |
+| Rollback | Known previous package and full state/receipt/config baseline | Apply only under separate authorization and verify effect via actual readback | Verify restored binary, preserved artifact/job identities and settings; backup alone is insufficient |
+
+**Runtime observation supplied by owner:** 2026-10-26 **20:39 UTC = 21:39 CET** (DST ended October 25). HostDeck and cloudflared services were Running; tray, loopback HTTP and user Everything unavailable. Root cause **not proven**. Existing Codex user-app recovery is separate. Do not infer intended job membership from IsProcessInJob(null), or claim service Running proves HTTP/client/desktop readiness. Register-HostDeckUser.ps1 variables are not changed or called defective by this PR.
+
+**Narrow tests for Codex Windows integration:** execute the new receipt-interpretation and isolated job-recovery fixtures, plus one existing bounded native job/descendant regression. A source/mock PASS never qualifies installed product; Windows-native tests must report SKIP when build unavailable. Ordinary ChatGPT independent acceptance and logon/crash/reboot/update/rollback effects remain separate. No installed user app, existing job, Windows service, tunnel, index, key, task, ACL or grants are modified by this source-only branch.
