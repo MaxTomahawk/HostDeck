@@ -414,14 +414,14 @@ export class FullTextEngine {
     const run = this.active();
     const rows = this.db.prepare('SELECT path,root,state FROM docs ORDER BY path LIMIT ?')
       .all(this.config.budgets.maxQueryCandidates + 1) as Array<{path:string;root:string;state:string}>;
-    let visible = 0;
+    let visible = 0, hiddenByAcl = false;
     for (const row of rows.slice(0,this.config.budgets.maxQueryCandidates)) {
       try { await this.auth(c,'metadata',row.root,row.path); if(row.state==='indexed')visible++; }
-      catch { /* a revoked file is not counted or named */ }
+      catch { hiddenByAcl = true; /* Never count inaccessible documents. */ }
     }
     return {
       state:run?.state??'unstarted',
-      coverage:run?.state==='complete' && run.incomplete===0 && rows.length <= this.config.budgets.maxQueryCandidates
+      coverage:run?.state==='complete' && run.incomplete===0 && !hiddenByAcl && rows.length <= this.config.budgets.maxQueryCandidates
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
