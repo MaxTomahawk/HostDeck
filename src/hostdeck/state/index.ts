@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { interpretJobReceipt } from './job-receipt.js';
 
 export interface StateContext { ownerId: string; deviceId: string; executorId: string }
 export interface StateOptions { root: string; deviceId: string; workspace: string; shellExecutable: string; environment: NodeJS.ProcessEnv; desktopWorkerExecutable?: string; launchJobs?: boolean }
@@ -42,10 +43,37 @@ export class StateServices {
   private reconcile(j:Job):Promise<boolean>{const active=this.reconciling.get(j.id);if(active)return active;const task=this.performReconcile(j).finally(()=>this.reconciling.delete(j.id));this.reconciling.set(j.id,task);return task;}
   private async performReconcile(j:Job):Promise<boolean>{const token=randomUUID();this.db.exec('BEGIN IMMEDIATE');try{const claim=this.db.prepare('SELECT token,created_at FROM reconciliation_claims WHERE job_id=?').get(j.id) as {token:string;created_at:number}|undefined;if(claim&&Date.now()-claim.created_at<600_000){this.db.exec('ROLLBACK');for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,50));const row=this.db.prepare('SELECT payload FROM records WHERE kind=? AND id=?').get('job',j.id) as {payload:string}|undefined;if(row){const latest=JSON.parse(row.payload) as Job;if(['succeeded','failed','timed_out','cancelled','interrupted','uncertain'].includes(latest.status)){Object.assign(j,latest);return true}}const still=this.db.prepare('SELECT token FROM reconciliation_claims WHERE job_id=?').get(j.id);if(!still)break}return false}if(claim)this.db.prepare('UPDATE reconciliation_claims SET token=?,created_at=? WHERE job_id=?').run(token,Date.now(),j.id);else this.db.prepare('INSERT INTO reconciliation_claims(job_id,token,created_at) VALUES(?,?,?)').run(j.id,token,Date.now());this.db.exec('COMMIT')}catch(e){try{this.db.exec('ROLLBACK')}catch{}throw e}try{return await this.consumeReceipt(j)}finally{this.db.prepare('DELETE FROM reconciliation_claims WHERE job_id=? AND token=?').run(j.id,token)}}
   private async consumeReceipt(j:Job):Promise<boolean>{let r:any;try{r=JSON.parse(await readFile(j.runnerReceipt,'utf8'))}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT'){const recovery=await this.recoverMissingReceipt(j);if(recovery==='alive'){if(j.status==='uncertain'){j.status='running';delete j.error;j.updated=new Date().toISOString();this.saveJob(j)}return false}if(recovery==='starting')return false;await new Promise(r=>setTimeout(r,RUNNER_EXIT_SETTLE_MS));try{r=JSON.parse(await readFile(j.runnerReceipt,'utf8'))}catch{j.status=recovery==='absent'?'interrupted':'uncertain';j.error=recovery==='absent'?'Verified runner process is absent and no completion receipt exists; command outcome is uncertain.':'Runner liveness is unknown and no completion receipt exists; command outcome is uncertain.';j.updated=new Date().toISOString();this.saveJob(j);this.event(j.ownerId,j.status==='interrupted'?'job_interrupted':'job_uncertain',{jobId:j.id,status:j.status});return false}}else{j.status='uncertain';j.error='Completion receipt could not be read; command outcome is uncertain.';this.saveJob(j);return false}}
-    j.status=r.status==='uncertain'?'uncertain':r.status==='timed_out'||r.timedOut?'timed_out':r.status==='cancelled'?'cancelled':r.status==='interrupted'?'interrupted':r.exitCode===0?'succeeded':'failed';j.exitCode=r.exitCode;j.descendantsContained=r.descendantsContained===true;j.runnerContainmentUncertain=j.status==='uncertain';
-    if(j.status==='uncertain')j.error='Runner could not confirm that all descendant processes stopped; command outcome is uncertain.';
-    else {let outputFailure=false;try{if(r.stdout)j.stdoutArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,Buffer.from(r.stdout,'base64'),'stdout.txt');else j.stdoutArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,await readFile(path.join(this.options.root,'receipts',`${j.id}.out`)),'stdout.txt')}catch{outputFailure=true}try{if(r.stderr)j.stderrArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,Buffer.from(r.stderr,'base64'),'stderr.txt');else j.stderrArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,await readFile(path.join(this.options.root,'receipts',`${j.id}.err`)),'stderr.txt')}catch{outputFailure=true}if(outputFailure)j.error='Job finished, but output could not be retained.'}
-    j.updated=new Date().toISOString();this.jobs.set(j.id,j);this.saveJob(j);this.event(j.ownerId,j.status==='uncertain'?'job_uncertain':'job_reconciled',{jobId:j.id,status:j.status});if(j.status!=='uncertain'){await rm(j.runnerReceipt,{force:true});await rm(j.runnerRequest,{force:true});await rm(j.runnerCancel,{force:true});await rm(j.runnerMarker,{force:true});await rm(path.join(this.options.root,'receipts',`${j.id}.out`),{force:true});await rm(path.join(this.options.root,'receipts',`${j.id}.err`),{force:true});await rm(path.join(this.options.root,'receipts',`${j.id}.ps1`),{force:true})}return true;}
+    const verdict=interpretJobReceipt(r);
+    j.status=verdict.status;
+    if(verdict.exitCode===undefined)delete j.exitCode;else j.exitCode=verdict.exitCode;
+    if(verdict.descendantsContained===undefined)delete j.descendantsContained;
+    else j.descendantsContained=verdict.descendantsContained;
+    // A final receipt supersedes any prior cancellation-request warning.
+    if(verdict.message)j.error=verdict.message;else delete j.error;
+    j.runnerContainmentUncertain=j.status==='uncertain';
+    let outputFailure=false;
+    if(j.status!=='uncertain'){
+      try{
+        if(r.stdout)j.stdoutArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,Buffer.from(r.stdout,'base64'),'stdout.txt');
+        else j.stdoutArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,await readFile(path.join(this.options.root,'receipts',j.id+'.out')),'stdout.txt');
+      }catch{outputFailure=true}
+      try{
+        if(r.stderr)j.stderrArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,Buffer.from(r.stderr,'base64'),'stderr.txt');
+        else j.stderrArtifact=await this.saveArtifact(j.ownerId,j.deviceId,j.executorId,await readFile(path.join(this.options.root,'receipts',j.id+'.err')),'stderr.txt');
+      }catch{outputFailure=true}
+      if(outputFailure)j.error='Runner finished, but output artifact retention failed; original private receipt files remain for targeted recovery.';
+    }
+    j.updated=new Date().toISOString();this.jobs.set(j.id,j);this.saveJob(j);
+    this.event(j.ownerId,j.status==='uncertain'?'job_uncertain':'job_reconciled',{jobId:j.id,status:j.status});
+    // Do not destroy the only stdout/stderr copies when artifact retention fails.
+    if(j.status!=='uncertain'&&!outputFailure){
+      await rm(j.runnerReceipt,{force:true});await rm(j.runnerRequest,{force:true});
+      await rm(j.runnerCancel,{force:true});await rm(j.runnerMarker,{force:true});
+      await rm(path.join(this.options.root,'receipts',j.id+'.out'),{force:true});
+      await rm(path.join(this.options.root,'receipts',j.id+'.err'),{force:true});
+      await rm(path.join(this.options.root,'receipts',j.id+'.ps1'),{force:true});
+    }
+    return true;}
   private async recoverMissingReceipt(j:Job):Promise<'alive'|'absent'|'unknown'|'starting'>{if(!this.options.desktopWorkerExecutable&&Date.now()-Date.parse(j.updated)<RUNNER_START_GRACE_MS)return 'starting';if(this.options.desktopWorkerExecutable&&Date.now()-Date.parse(j.updated)<RUNNER_START_GRACE_MS){try{await readFile(j.runnerMarker); }catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return 'starting'}}const status=await new Promise<'alive'|'absent'|'unknown'>(resolve=>{if(!this.options.desktopWorkerExecutable){resolve('unknown');return}execFile(this.options.desktopWorkerExecutable,['--job-status',j.runnerMarker],{windowsHide:true,timeout:4000,maxBuffer:16*1024},(error,stdout)=>{if(error){resolve('unknown');return}try{const value=JSON.parse(stdout.trim());resolve(value.status==='alive'||value.status==='absent'?value.status:'unknown')}catch{resolve('unknown')}})});return status}
   private async removeArtifact(a:Artifact){this.db.exec('BEGIN IMMEDIATE');let removed=false;try{const result=this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run('artifact',a.id) as {changes?:number};removed=(result.changes??0)>0;this.db.prepare('DELETE FROM artifact_expiry WHERE artifact_id=?').run(a.id);if(removed)this.db.prepare('UPDATE artifact_usage SET used_bytes=MAX(0,used_bytes-?) WHERE owner_id=?').run(a.size,a.ownerId);this.db.exec('COMMIT')}catch(e){try{this.db.exec('ROLLBACK')}catch{}throw e}if(removed)await rm(a.path,{force:true});this.artifacts.delete(a.id);}
   private async saveArtifact(ownerId:string,deviceId:string,executorId:string,data:Buffer,name:string,mimeType?:string){const expired=this.db.prepare('SELECT r.id,r.payload FROM artifact_expiry e JOIN records r ON r.kind=? AND r.id=e.artifact_id WHERE e.expires<?').all('artifact',new Date().toISOString()) as {id:string;payload:string}[];for(const row of expired){const a=JSON.parse(row.payload) as Artifact;this.artifacts.set(a.id,a);await this.removeArtifact(a)}const truncated=data.length>MAX_ARTIFACT_BYTES;if(truncated)data=data.subarray(0,MAX_ARTIFACT_BYTES);const size=data.length,token=randomUUID();this.db.exec('BEGIN IMMEDIATE');try{this.db.prepare('DELETE FROM artifact_reservations WHERE created_at<?').run(Date.now()-600_000);const row=this.db.prepare('SELECT used_bytes FROM artifact_usage WHERE owner_id=?').get(ownerId) as {used_bytes:number}|undefined;const reserved=this.db.prepare('SELECT COALESCE(SUM(size),0) AS size FROM artifact_reservations WHERE owner_id=?').get(ownerId) as {size:number};if((row?.used_bytes??0)+reserved.size+size>MAX_OWNER_BYTES)throw new Error('ARTIFACT_QUOTA');this.db.prepare('INSERT INTO artifact_reservations(token,owner_id,size,created_at) VALUES(?,?,?,?)').run(token,ownerId,size,Date.now());this.db.exec('COMMIT')}catch(e){try{this.db.exec('ROLLBACK')}catch{}throw e}
@@ -83,7 +111,35 @@ export class StateServices {
     }
     if(name==='read_job'){const j=this.owned(this.jobs,a.job_id,c);if(j&&['queued','running','cancelling','uncertain'].includes(j.status)&&!j.runnerContainmentUncertain)await this.reconcile(j);return j?publicJob(j):null}
     if(name==='list_jobs'){const rows=[...this.jobs.values()].filter(x=>x.ownerId===c.ownerId&&x.deviceId===c.deviceId&&x.executorId===c.executorId).sort((x,y)=>x.created.localeCompare(y.created));const cursorIndex=a.cursor?rows.findIndex(x=>x.id===a.cursor):-1;const start=a.cursor?(cursorIndex<0?rows.length:cursorIndex+1):0;return {jobs:rows.slice(start,start+Number(a.limit??100)).map(publicJob),next_cursor:rows.length>start+Number(a.limit??100)?rows[start+Number(a.limit??100)-1]?.id:null}}
-    if(name==='cancel_job'){const j=this.owned(this.jobs,a.job_id,c);if(!j)return {cancelled:false,status:'unknown'};if(j.runnerContainmentUncertain)return {cancelled:false,status:'uncertain',descendants:'unknown',outcome:'uncertain'};const child=this.children.get(j.id);if(this.options.desktopWorkerExecutable&&['running','cancelling','uncertain'].includes(j.status)){await writeFile(j.runnerCancel,'cancel',{flag:'w'});j.status='cancelling';j.error='Cancellation requested; runner completion remains uncertain until its receipt is reconciled.';j.updated=new Date().toISOString();this.saveJob(j);this.event(c.ownerId,'job_cancel_requested',{jobId:j.id,status:j.status});return {cancelled:true,status:j.status,descendants:'awaiting-runner-receipt',outcome:'uncertain'}}if(child&&child.exitCode===null){child.kill();j.status='cancelled';j.error='Direct runner stopped; descendant completion is uncertain.';j.updated=new Date().toISOString();this.saveJob(j);this.event(c.ownerId,'job_cancelled',{jobId:j.id,status:j.status});return {cancelled:true,status:j.status,descendants:'uncertain'}}return {cancelled:false,status:j.status,descendants:'unknown'};}
+    if(name==='cancel_job'){
+      const j=this.owned(this.jobs,a.job_id,c);
+      if(!j)return {cancelled:false,status:'unknown'};
+      if(j.runnerContainmentUncertain)return {cancelled:false,status:'uncertain',descendants:'unknown',outcome:'uncertain'};
+      // A completion receipt may race with cancellation: reconcile first.
+      if(['running','cancelling','uncertain'].includes(j.status))await this.reconcile(j);
+      if(j.runnerContainmentUncertain)return {cancelled:false,status:'uncertain',descendants:'unknown',outcome:'uncertain'};
+      if(this.options.desktopWorkerExecutable&&['running','cancelling','uncertain'].includes(j.status)){
+        if(j.status!=='cancelling'){
+          await writeFile(j.runnerCancel,'cancel',{flag:'w'});
+          j.status='cancelling';
+          j.error='Cancellation requested; descendant outcome remains uncertain until the native receipt is reconciled.';
+          j.updated=new Date().toISOString();this.saveJob(j);
+          this.event(c.ownerId,'job_cancel_requested',{jobId:j.id,status:j.status});
+        }
+        // cancelled:true means request accepted, not confirmed descendant stop.
+        return {cancelled:true,status:'cancelling',descendants:'awaiting-runner-receipt',outcome:'uncertain'};
+      }
+      const child=this.children.get(j.id);
+      if(child&&child.exitCode===null){
+        const signalSent=child.kill();
+        j.status='uncertain';
+        j.error='Legacy runner stop requested; descendant containment and completion remain unverified.';
+        j.updated=new Date().toISOString();this.saveJob(j);
+        this.event(c.ownerId,'job_cancel_requested',{jobId:j.id,status:j.status});
+        return {cancelled:signalSent,status:'uncertain',descendants:'unknown',outcome:'uncertain'};
+      }
+      return {cancelled:false,status:j.status,descendants:j.descendantsContained===true?'contained':'unknown'};
+    }
     if(name==='read_artifact'){const x=this.owned(this.artifacts,a.artifact_id,c);if(!x||Date.parse(x.expires)<Date.now())return null;const b=await readFile(x.path);if(hash(b)!==x.sha256)throw new Error('ARTIFACT_INTEGRITY');const offset=Number(a.offset??0),length=Math.min(1_048_576,Number(a.length??65536));return {artifact_id:x.id,name:x.name,size:x.size,sha256:x.sha256,truncated:x.truncated??false,offset,data_base64:b.subarray(offset,offset+length).toString('base64')}}
     if(name==='apply_artifact'){const x=this.owned(this.artifacts,a.artifact_id,c);if(!x)return null;const workspace=path.resolve(this.options.workspace),requested=String(a.path??''),dest=path.resolve(workspace,requested),rel=path.relative(workspace,dest);if(rel==='..'||rel.startsWith(`..${path.sep}`)||path.isAbsolute(rel))throw new Error('FORBIDDEN');const b=await readFile(x.path);if(hash(b)!==x.sha256)throw new Error('ARTIFACT_INTEGRITY');return {destination:dest,bytes:b,mimeType:x.mimeType,sha256:x.sha256}}
     if(name==='read_events'){return this.events.filter(e=>e.ownerId===c.ownerId&&e.deviceId===c.deviceId&&e.sequence>Number(a.after??0)).sort((x,y)=>x.sequence-y.sequence).slice(0,Number(a.limit??100)).map(({ownerId,...e})=>e)}
