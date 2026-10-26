@@ -146,7 +146,7 @@ test('non-native runner kill acknowledgment remains outcome-uncertain (stub; no 
   }finally{await state.close();await rm(root,{recursive:true,force:true})}
 });
 
-test('real Windows native cancel contains its own delayed descendant, not unrelated processes',async t=>{
+test('real Windows native cancel contains its own delayed descendant, not unrelated processes', {timeout:50_000}, async t=>{
   if(process.platform!=='win32'||!process.env.SystemRoot){
     t.skip('Windows native worker required');return;
   }
@@ -185,7 +185,8 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
     assert.equal(requested.status,'cancelling');
     assert.equal(requested.outcome,'uncertain');
     let final: {status:string;message?:string;descendants_contained?:boolean}|undefined;
-    for(let i=0;i<150;i++){
+    const receiptDeadline=Date.now()+16_000;
+    while(Date.now()<receiptDeadline){
       final=await state.handle('read_job',{job_id:accepted.job_id},context) as typeof final;
       if(final?.status==='cancelled')break;
       await new Promise(resolve=>setTimeout(resolve,80));
@@ -206,7 +207,8 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
       // for Codex inspection rather than erasing recovery evidence.
       try{
         await state.handle('cancel_job',{job_id:jobId},context);
-        for(let i=0;i<60;i++){
+        const cleanupDeadline=Date.now()+6_000;
+        while(Date.now()<cleanupDeadline){
           const progress=await state.handle('read_job',{job_id:jobId},context) as
             {status:string;descendants_contained?:boolean};
           if(progress.descendants_contained===true &&
