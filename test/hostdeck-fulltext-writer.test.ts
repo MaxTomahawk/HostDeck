@@ -114,8 +114,9 @@ test('two real child processes: live contention, normal close, crash, OS lock re
       const p=await FullTextEngine.preview(graceful.config,principal,authorize);
       return FullTextEngine.openConfirmed(graceful.config,principal,authorize,p.digest);
     })().then(()=>false,error=>error?.message==='FULLTEXT_WRITER_BUSY')),true);
+    const closing=receive(first,/^CLOSED$/);
     first.stdin.write('CLOSE\n');
-    assert.equal(await receive(first,/^CLOSED$/),'CLOSED');
+    assert.equal(await closing,'CLOSED');
     await awaitExit(first);
     const reopened=worker(graceful.file,'probe');children.push(reopened);
     assert.equal(await receive(reopened,/^OPENED interrupted$/),'OPENED interrupted');
