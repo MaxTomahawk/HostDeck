@@ -99,6 +99,13 @@ test('actual discovery exposes a single UI-render manager tool and preserves all
     assert.deepEqual(renderers.map(t=>t.name),['hostdeck_open_manager']);
     assert.equal(renderers[0]._meta?.ui?.resourceUri,MANAGER_APP_URI);
     assert.equal(renderers[0]._meta?.['openai/outputTemplate'],MANAGER_APP_URI);
+    const renderContract=renderers[0] as typeof renderers[0] & {
+      annotations?:{readOnlyHint?:boolean};
+      inputSchema?:{required?:string[];additionalProperties?:boolean};
+    };
+    assert.equal(renderContract.annotations?.readOnlyHint,true);
+    assert.deepEqual(renderContract.inputSchema?.required,['device_id']);
+    assert.equal(renderContract.inputSchema?.additionalProperties,false);
     assert.ok(tools.filter(t=>t.name!=='hostdeck_open_manager').every(t=>!t._meta),
       'all ordinary tools remain data-first even with an HTML app');
     const resources=await request(f,'resources/list');
