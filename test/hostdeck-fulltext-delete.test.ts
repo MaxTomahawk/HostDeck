@@ -113,3 +113,41 @@ for(const mode of ['acl','depth','entry_limit'] as const){
     }finally{engine?.close();await rm(f.base,{recursive:true,force:true});}
   });
 }
+
+
+test('legacy incomplete-only run migrates fail-closed; only new traversals start eligible for purge',async()=>{
+  const f=await ownFixture();
+  let engine:FullTextEngine|undefined;
+  try{
+    const legacy=new DatabaseSync(f.config.indexFile);
+    try{
+      legacy.exec(`
+        CREATE TABLE runs (
+          id TEXT PRIMARY KEY, state TEXT NOT NULL,
+          incomplete INTEGER NOT NULL DEFAULT 0,
+          processed INTEGER NOT NULL DEFAULT 0, read_bytes INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        INSERT INTO runs(id,state,incomplete,created_at,updated_at)
+        VALUES('legacy-fixture','complete',1,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z');
+      `);
+    }finally{legacy.close();}
+    const allow:FullTextAuthorizer=async()=>true;
+    const preview=await FullTextEngine.preview(f.config,caller,allow);
+    engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest);
+    const db=new DatabaseSync(f.config.indexFile,{readOnly:true});
+    try{
+      const old=db.prepare('SELECT incomplete,traversal_incomplete FROM runs WHERE id=?').get('legacy-fixture')
+        as {incomplete:number;traversal_incomplete:number};
+      assert.deepEqual(old,{incomplete:1,traversal_incomplete:1},
+        'legacy content/traversal ambiguity must never authorize deletion');
+    }finally{db.close();}
+    const id=(await engine.start(caller)).runId;
+    const pending=new DatabaseSync(f.config.indexFile,{readOnly:true});
+    try{
+      assert.equal((pending.prepare('SELECT traversal_incomplete FROM runs WHERE id=?').get(id)
+        as {traversal_incomplete:number}).traversal_incomplete,0);
+    }finally{pending.close();}
+    await complete(engine,id);
+  }finally{engine?.close();await rm(f.base,{recursive:true,force:true});}
+});
