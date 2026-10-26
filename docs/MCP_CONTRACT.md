@@ -52,3 +52,16 @@ npm run build
 ```
 
 The hand-authored contract tests exercise actual Zod validation, generated discovery schemas, explicit action requirements, canonical resource routing and structured prompt rendering. They are compatibility/registry checks; they do not prove filesystem containment, token verification, Windows ACLs, real GUI/browser behavior, installed service lifecycle or ChatGPT operation. Native dependency setup and runtime hooks must be reviewed separately before execution. `SECURITY_ACCEPTANCE.md` retains those full acceptance requirements.
+
+
+## B007 Office document compatibility (draft behavior; independent Windows acceptance pending)
+
+The existing \`hostdeck_edit_document\` API retains its established \`text_replace\` and \`table_range\` changes; it stages bytes and does not modify the source on a rejected edit. The following bounded behavior is proposed by the B007 Office patch:
+
+- DOCX \`text_replace\` uses **visible literal \`w:t\` text in one paragraph**, including a text span split across ordinary runs. It compares \`expected_replacements\` against the total across document body, headers and footers **before** staging changes. Matches do not span paragraphs, fields/instructions, tabs, line breaks or other explicit non-text boundaries. A replacement inherits the **first affected run's styling**; remaining run/style elements are preserved, but their replaced text nodes become empty. The patch is not a general Word layout or fields editing engine.
+- Input search and replacement are Unicode text, not raw XML fragments. Text entities are decoded for matching and escaped on output; XML/DTD/field instructions and unrelated package entries must not be altered.
+- For **openpyxl-comment-layout XLSX workbooks**, existing-cell edits use a narrow OOXML worksheet-patch route. Original comment XML, VML drawings, relationships, other worksheets, media and styles retain their uncompressed ZIP-part bytes. Missing target cells, unsupported cell-owned markup, unsafe package relationships and new-sheet/full-sheet edits are rejected rather than silently losing features. This is not a universal Excel edit/layout-preservation claim. Other ExcelJS-supported workbooks retain the existing edit route.
+- Such commented workbooks are read from safe OOXML cell/value parts when ExcelJS 4.4.0 cannot parse their comments. Notes are retained as source package parts, **not exposed as rendered cell comments by the read tool**.
+- Uncached Excel formula cells return an explicit structure such as \`{ "formula":"=B1*2", "calculated":false, "cachedResultAvailable":false }\`. **No formula calculation is performed.** Existing non-null cached results remain the previously useful primitive values where supported.
+- The ordinary HostDeck DOCX read output documents the actual \`hostdeck_edit_document\` tool and no longer recommends \`edit_block\` or direct low-level raw XML replacement. ExcelJS's upstream generic handler may still expose separate legacy guidance outside HostDeck's JSON read adapter.
+- Structural/archive/path/DTD limits, source byte integrity on errors and separate independent client acceptance remain mandatory. Included unit/fixture tests must run on the Codex Windows environment with the exact pinned dependencies before claiming a repaired installed product.
