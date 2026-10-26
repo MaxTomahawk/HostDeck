@@ -30,6 +30,8 @@ export type FullTextAuthorizer = (request: FullTextCheck) => Promise<boolean>;
 export interface FullTextBudgets {
   maxFileBytes: number;
   maxTotalSourceBytes: number;
+  maxIndexBytes: number;
+  minFreeDiskBytes: number;
   maxDocuments: number;
   maxDepth: number;
   maxEntriesPerDirectory: number;
