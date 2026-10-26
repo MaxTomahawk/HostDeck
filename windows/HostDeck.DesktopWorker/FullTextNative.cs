@@ -59,6 +59,12 @@ internal static class FullTextNative
                 {
                     "attributes_batch" => Attributes(args),
                     "effective_acl" => FullTextProtectedAcl.Qualify(RequiredPath(args)),
+                    "owner_boundary" => FullTextProtectedAcl.QualifyBoundary(
+                        RequiredPath(args, "protectedDirectory"),
+                        RequiredPath(args, "selectionFile"),
+                        RequiredPath(args, "approvalFile"),
+                        RequiredPath(args, "indexDirectory")),
+                    "identity" => Identity(),
                     _ => throw new WorkerError("FULLTEXT_NATIVE_UNKNOWN_OPERATION")
                 };
                 response = new { id, result };
@@ -89,11 +95,24 @@ internal static class FullTextNative
         }
     }
 
-    internal static string RequiredPath(JsonElement args)
+    internal static string RequiredPath(JsonElement args) => RequiredPath(args, "path");
+
+    private static string RequiredPath(JsonElement args, string field)
     {
-        if (!args.TryGetProperty("path", out var element) || element.ValueKind != JsonValueKind.String)
+        if (!args.TryGetProperty(field, out var element) || element.ValueKind != JsonValueKind.String)
             throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
         return LocalPath(element.GetString());
+    }
+
+    private static object Identity()
+    {
+        var token = System.Security.Principal.WindowsIdentity.GetCurrent();
+        // Private IPC only: the coordinator MUST compare this to its trusted
+        // executor identity. This is a same-token check, not cryptographic
+        // intended-application isolation or a public authorization claim.
+        return new { sid = token.User?.Value, logon_id = Native.LogonId(),
+            session_id = Process.GetCurrentProcess().SessionId,
+            elevated = Native.IsElevated(), integrity = Native.Integrity() };
     }
 
     /// <summary>Only ordinary absolute local fixed-disk paths, not an authorizer.</summary>
