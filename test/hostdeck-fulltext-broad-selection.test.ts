@@ -21,9 +21,9 @@ test('broad budgets are hardware-dependent, not fixed at 5000 documents/256 MiB'
 test('fixed C:/D:/G: selection requires exact opt-in and protected index subtree', {
   skip:process.platform!=='win32'?'Windows-specific volume syntax':false,
 },()=>{
-  const system=String.raw`C:\`;
-  const data=String.raw`D:\`;
-  const archive=String.raw`G:\`;
+  const system='C:\\';
+  const data='D:\\';
+  const archive='G:\\';
   const index=String.raw`C:\ProgramData\HostDeck\Index\own.sqlite`;
   const exclusion=String.raw`C:\ProgramData\HostDeck\Index`;
   const config:FullTextConfig={indexFile:index,roots:[system,data,archive],
