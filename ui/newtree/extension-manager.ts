@@ -89,6 +89,25 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   const selected = field(filters, 'Selected', 'extension-selected', [
     ['all', 'All'], ['yes', 'Selected'], ['no', 'Not selected'], ['unknown', 'Unknown'],
   ]);
+  const advanced = add(filters, 'details', undefined, 'manager-advanced');
+  add(advanced, 'summary', 'More status filters');
+  const advancedFields = add(advanced, 'div', undefined, 'manager-advanced-fields');
+  const enabled = field(advancedFields, 'Enabled', 'extension-enabled', [
+    ['all', 'All'], ['yes', 'Enabled'], ['no', 'Disabled'], ['unknown', 'Unknown'],
+  ]);
+  const running = field(advancedFields, 'Running', 'extension-running', [
+    ['all', 'All'], ['yes', 'Running'], ['no', 'Not running'],
+    ['on_demand', 'On demand'], ['unknown', 'Unknown'],
+  ]);
+  const onDemand = field(advancedFields, 'On demand', 'extension-on-demand', [
+    ['all', 'All'], ['yes', 'Yes'], ['no', 'No'], ['unknown', 'Unknown'],
+  ]);
+  const compatible = field(advancedFields, 'Compatible', 'extension-compatible', [
+    ['all', 'All'], ['yes', 'Compatible'], ['no', 'Incompatible'], ['unknown', 'Unknown'],
+  ]);
+  const healthy = field(advancedFields, 'Healthy', 'extension-healthy', [
+    ['all', 'All'], ['yes', 'Healthy'], ['no', 'Unhealthy'], ['unknown', 'Unknown'],
+  ]);
   const capability = field(filters, 'Function', 'extension-capability', [
     ['all', 'All functions'], ['files.name', 'File names and paths'],
     ['files.content', 'File content'],
@@ -98,12 +117,15 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     ['qualification', 'Qualification'],
   ]);
   const grouping = field(filters, 'Group by', 'extension-group', [
-    ['category', 'Category'], ['installed', 'Installed state'],
+    ['category', 'Category'], ['capability', 'Function / candidate hint'],
+    ['installed', 'Installed state'],
     ['qualification', 'Qualification'], ['none', 'None'],
   ]);
   const clearFilters = button(filters, 'Clear filters', () => {
     search.value = ''; category.value = 'all'; presence.value = 'all';
     qualification.value = 'all'; selected.value = 'all'; capability.value = 'all';
+    enabled.value = 'all'; running.value = 'all'; onDemand.value = 'all';
+    compatible.value = 'all'; healthy.value = 'all';
     sort.value = 'name'; grouping.value = 'category'; limit = 30; renderList(); search.focus();
   });
   clearFilters.classList.add('manager-secondary');
@@ -138,6 +160,9 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     add(detail, 'p', entry.candidate.id + ' · ' + entry.candidate.category, 'manager-muted');
     const dl = add(detail, 'dl', undefined, 'manager-dl');
     fieldValue(dl, 'Research source', entry.candidate.origin + ' · ' + entry.candidate.researchDisposition);
+    fieldValue(dl, 'Owner delivery priority', entry.candidate.ownerPriority
+      ? 'Selected as a delivery priority (not a general install or qualification approval)'
+      : 'No candidate-specific adoption approved by this catalogue');
     fieldValue(dl, 'Upstream version observed (not local)', entry.candidate.upstreamVersionObservation || 'Unknown');
     fieldValue(dl, 'Actual local version', typeof entry.live?.version === 'string' ? entry.live.version : 'Unknown');
     fieldValue(dl, 'License (research hint, not adoption)', entry.candidate.licenseResearchHint);
@@ -168,6 +193,8 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
       search: search.value, category: category.value, presence: presence.value,
       qualification: qualification.value, selected: selected.value,
       capability: capability.value, sort: sort.value,
+      enabled: enabled.value, running: running.value, onDemand: onDemand.value,
+      compatible: compatible.value, healthy: healthy.value,
     });
     counts.textContent = String(matching.length) + ' matching of ' + String(entries.length) +
       ' entries; ' + String(Math.min(limit, matching.length)) + ' on this page. ' +
@@ -180,7 +207,8 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
       for (const entry of group.entries) {
         const card = add(section, 'article', undefined, 'manager-entry');
         add(card, 'h4', entry.candidate.name);
-        add(card, 'p', entry.candidate.id + ' · ' + entry.candidate.category, 'manager-muted');
+        add(card, 'p', entry.candidate.id + ' · ' + entry.candidate.category +
+          (entry.candidate.ownerPriority ? ' · Owner delivery priority' : ''), 'manager-muted');
         add(card, 'p', 'Installed: ' + stateLabel(entry.states.installed) +
           ' · Healthy: ' + stateLabel(entry.states.healthy) +
           ' · Qualification: ' + stateLabel(entry.states.qualified));
@@ -190,12 +218,13 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     }
     if (!visible.length) add(results, 'p', 'No matching candidates. This local catalogue filter does not scan Windows.');
     more.hidden = matching.length <= limit;
-    const same = entries.find(item => item.candidate.id === selectedId);
+    const same = matching.find(item => item.candidate.id === selectedId);
     if (same) showDetails(same, false);
     else { selectedId = null; detail.replaceChildren();
       add(detail, 'p', 'Select Details for provenance, qualifications and separate observed status axes.'); }
   }
-  for (const select of [search, category, presence, qualification, selected, capability, sort, grouping]) {
+  for (const select of [search, category, presence, qualification, selected, capability,
+    enabled, running, onDemand, compatible, healthy, sort, grouping]) {
     select.addEventListener(select === search ? 'input' : 'change', () => { limit = 30; renderList(); });
   }
   function renderChanges(): void {
@@ -216,7 +245,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     const fnSelect = field(functions, 'Function', 'provider-function', snapshot.functions.map(fn => [
       fn.capability, fn.capability === 'files.name' ? 'File names and paths' :
         fn.capability === 'files.content' ? 'File content' : fn.capability,
-    ]));
+    ] as const));
     const preference = field(functions, 'Saved preference', 'provider-preference', []);
     const effective = add(functions, 'p', '', 'manager-notice');
     const feedback = add(functions, 'p', '', 'manager-notice');
