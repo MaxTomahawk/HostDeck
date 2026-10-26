@@ -24,7 +24,12 @@ export class FullTextPort {
   readonly providerId = FULLTEXT_PROVIDER_ID;
   private engine?: FullTextEngine;
   private activePrincipal?: string;
+  private activeDigest?: string;
   constructor(private readonly wiring: FullTextPortWiring) {}
+
+  private key(c: FullTextPrincipal): string {
+    return JSON.stringify([c.ownerId,c.deviceId,c.executorId,c.sessionId??null]);
+  }
 
   async preview(c: FullTextPrincipal): Promise<FullTextPreview | {configured:false;reason:'ROOTS_NOT_SELECTED'}> {
     const config=await this.wiring.loadSelectedConfig();
@@ -40,29 +45,37 @@ export class FullTextPort {
       throw new Error('FULLTEXT_OWNER_CONFIRMATION_REQUIRED');
     if (this.engine) throw new Error('FULLTEXT_ALREADY_OPEN');
     this.engine=await FullTextEngine.openConfirmed(config,c,this.wiring.authorize,digest);
-    this.activePrincipal=JSON.stringify(c);
+    this.activePrincipal=this.key(c);
+    this.activeDigest=digest;
     return {ready:true,provider:this.providerId};
   }
 
-  private require(c: FullTextPrincipal): FullTextEngine {
-    if (!this.engine || this.activePrincipal!==JSON.stringify(c)) throw new Error('FULLTEXT_NOT_CONFIGURED');
+  private async require(c: FullTextPrincipal): Promise<FullTextEngine> {
+    if (!this.engine || this.activePrincipal!==this.key(c) || !this.activeDigest)
+      throw new Error('FULLTEXT_NOT_CONFIGURED');
+    const config=await this.wiring.loadSelectedConfig();
+    if (!config) throw new Error('FULLTEXT_OWNER_SELECTION_REVOKED');
+    const preview=await FullTextEngine.preview(config,c,this.wiring.authorize);
+    if (preview.digest!==this.activeDigest || await this.wiring.isOwnerConfirmed(c,this.activeDigest)!==true)
+      throw new Error('FULLTEXT_OWNER_SELECTION_REVOKED');
     return this.engine;
   }
-  start(c:FullTextPrincipal): Promise<{runId:string;state:'running'}> {
-    return this.require(c).start(c);
+
+  async start(c:FullTextPrincipal): Promise<{runId:string;state:'running'}> {
+    return (await this.require(c)).start(c);
   }
-  step(c:FullTextPrincipal, runId:string, maxOperations?:number):Promise<FullTextScanReceipt> {
-    return this.require(c).step(c,runId,maxOperations);
+  async step(c:FullTextPrincipal, runId:string, maxOperations?:number):Promise<FullTextScanReceipt> {
+    return (await this.require(c)).step(c,runId,maxOperations);
   }
-  pause(c:FullTextPrincipal, runId:string):Promise<void> {return this.require(c).pause(c,runId);}
-  resume(c:FullTextPrincipal, runId:string):Promise<void> {return this.require(c).resume(c,runId);}
-  cancel(c:FullTextPrincipal, runId:string):Promise<void> {return this.require(c).cancel(c,runId);}
-  query(c:FullTextPrincipal, phrase:string, limit?:number):Promise<FullTextSearchPage> {
-    return this.require(c).search(c,phrase,limit);
+  async pause(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).pause(c,runId);}
+  async resume(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).resume(c,runId);}
+  async cancel(c:FullTextPrincipal, runId:string):Promise<void> {(await this.require(c)).cancel(c,runId);}
+  async query(c:FullTextPrincipal, phrase:string, limit?:number):Promise<FullTextSearchPage> {
+    return (await this.require(c)).search(c,phrase,limit);
   }
-  status(c:FullTextPrincipal):ReturnType<FullTextEngine['status']> {
-    return this.require(c).status(c);
+  async status(c:FullTextPrincipal):ReturnType<FullTextEngine['status']> {
+    return (await this.require(c)).status(c);
   }
 
-  close():void {this.engine?.close();this.engine=undefined;this.activePrincipal=undefined;}
+  close():void {this.engine?.close();this.engine=undefined;this.activePrincipal=undefined;this.activeDigest=undefined;}
 }
