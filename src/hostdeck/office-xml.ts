@@ -18,7 +18,7 @@ export function decodeOfficeXml(value: string): string {
   return value.replace(/&(?:amp|lt|gt|quot|apos|#(?:[0-9]+|x[0-9a-fA-F]+));/g, entity => {
     const named: Record<string, string> = { '&amp;': '&', '&lt;': '<',
       '&gt;': '>', '&quot;': '"', '&apos;': "'" };
-    if (Object.hasOwn(named, entity)) return named[entity];
+    if (Object.prototype.hasOwnProperty.call(named, entity)) return named[entity];
     const hex = entity.startsWith('&#x');
     const n = Number.parseInt(entity.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
     if (!Number.isInteger(n) || n < 1 || n > 0x10ffff ||
