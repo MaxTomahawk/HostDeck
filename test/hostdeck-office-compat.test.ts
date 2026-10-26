@@ -203,6 +203,21 @@ test('ExcelJS 4.4.0 formula values distinguish missing caches from existing cach
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('DOCX wrong root is rejected without changing source bytes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-invalid-root-'));
+  try {
+    const bytes = fixture({ ...docxParts,
+      'word/document.xml': '<w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p>' });
+    const file = path.join(root, 'wrong-root.docx');
+    await writeFile(file, bytes);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
+      change: { kind: 'text_replace', old_text: 'SPLIT_TARGET',
+        new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_DOCX/);
+    assert.deepEqual(await readFile(file), bytes);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('OOXML unsafe root/DTD guard rejects affected comment workbook with source retained', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-dtd-'));
   try {
