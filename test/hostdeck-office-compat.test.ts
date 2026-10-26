@@ -260,7 +260,7 @@ test('Word namespace spoof and nested lookalike root never stage edits', async (
 test('DOCX xml:space default becomes preserve for leading/trailing literal whitespace', async () => {
   const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
   const xml = '<w:document xmlns:w="' + ns + '"><w:body>' +
-    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="default">TARGET</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="default">SPACE_MARKER</w:t></w:r></w:p>' +
     '</w:body></w:document>';
   validateOfficeStructure(xml, 'document');
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-space-'));
@@ -270,7 +270,7 @@ test('DOCX xml:space default becomes preserve for leading/trailing literal white
     await writeFile(file, original);
     const adapter = await DocumentAdapter.create({ workspace: root });
     const staged = await adapter.handle('hostdeck_edit_document', { path: file,
-      change: { kind: 'text_replace', old_text: 'TARGET', new_text: ' spaced ',
+      change: { kind: 'text_replace', old_text: 'SPACE_MARKER', new_text: ' spaced ',
         expected_replacements: 1 } }) as { bytes: Uint8Array };
     const result = new PizZip(staged.bytes).file('word/document.xml').asText();
     assert.match(result, /<w:t xml:space="preserve"> spaced <\/w:t>/);
