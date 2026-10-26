@@ -27,6 +27,8 @@ test('accepted cancellation and false/absent containment are not terminal confir
     {status:'interrupted',exitCode:0,descendantsContained:false},
     {status:'completed',exitCode:0,descendantsContained:false},
     {status:'completed',exitCode:0},
+    {status:'cancelled',descendantsContained:true},
+    {status:'cancelled',exitCode:'0',descendantsContained:true},
     {status:'completed',exitCode:null,descendantsContained:true},
     {status:'completed',descendantsContained:true},
     {status:'nonsense',exitCode:0,descendantsContained:true},
