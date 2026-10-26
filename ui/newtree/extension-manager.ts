@@ -161,6 +161,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     add(detail, 'p', entry.candidate.id + ' · ' + entry.candidate.category, 'manager-muted');
     const dl = add(detail, 'dl', undefined, 'manager-dl');
     fieldValue(dl, 'Research source', entry.candidate.origin + ' · ' + entry.candidate.researchDisposition);
+    fieldValue(dl, 'Research qualification', entry.candidate.researchQualification + ' (not a local runtime acceptance)');
     fieldValue(dl, 'Owner delivery priority', entry.candidate.ownerPriority
       ? 'Selected as a delivery priority (not a general install or qualification approval)'
       : 'No candidate-specific adoption approved by this catalogue');
