@@ -67,6 +67,7 @@ test('OCR-required blank PDF keeps recall partial but fully traversed delete pur
     await rm(f.old);
     const {removed,last}=await complete(engine,(await engine.start(caller)).runId);
     assert.equal(last.coverage,'partial','OCR is still unavailable');
+    assert.equal(last.traversalCoverage,'bounded_complete','directory walk did complete');
     assert.equal(removed,1,'complete traversal must purge exactly the deleted TXT');
     const after=rows(f.config.indexFile);
     assert.deepEqual(after.docs.map(x=>({path:x.path,state:x.state})),[{path:scanned,state:'ocr_required'}]);
@@ -77,17 +78,21 @@ test('OCR-required blank PDF keeps recall partial but fully traversed delete pur
     const status=await engine.status(caller);
     assert.equal(status.visibleDocuments,0);
     assert.equal(status.coverage,'partial_or_unverified');
+    assert.equal(status.traversalCoverage,'complete_bounded_scan');
   }finally{engine?.close();await rm(f.base,{recursive:true,force:true});}
 });
 
-for(const mode of ['acl','depth','entry_limit'] as const){
+for(const mode of ['acl','metadata_acl','depth','entry_limit'] as const){
   test('partial '+mode+' traversal preserves unmatched prior index rows',async()=>{
     const budgets=mode==='entry_limit'?{maxEntriesPerDirectory:1}:
       mode==='depth'?{maxDepth:1}:{};
     const f=await ownFixture(budgets);
     const blocked=path.join(f.root,'blocked');
     let deny=false;
-    const allow:FullTextAuthorizer=async r=>!(deny&&mode==='acl'&&r.action==='scan'&&r.path===blocked);
+    const allow:FullTextAuthorizer=async r=>!(deny&&(
+      (mode==='acl'&&r.action==='scan'&&r.path===blocked) ||
+      (mode==='metadata_acl'&&r.action==='metadata'&&r.path===f.old)
+    ));
     let engine:FullTextEngine|undefined;
     try{
       const preview=await FullTextEngine.preview(f.config,caller,allow);
@@ -96,6 +101,8 @@ for(const mode of ['acl','depth','entry_limit'] as const){
       await rm(f.old);
       if(mode==='acl'){
         await mkdir(blocked);deny=true;
+      } else if(mode==='metadata_acl'){
+        deny=true;
       } else if(mode==='depth'){
         await mkdir(blocked);await mkdir(path.join(blocked,'deeper'));
       } else{
@@ -106,6 +113,7 @@ for(const mode of ['acl','depth','entry_limit'] as const){
       const after=rows(f.config.indexFile);
       assert.equal(removed,0,'unsafe traversal must not purge an old row');
       assert.equal(last.coverage,'partial');
+      assert.equal(last.traversalCoverage,'partial');
       assert.equal(after.run.traversal_incomplete,1,mode+' did not set traversal-incomplete');
       assert.ok(after.docs.some(x=>x.path===f.old),'prior metadata must be retained');
       assert.ok(after.text.some(x=>x.body.includes(marker)),'prior FTS content must be retained on unsafe purge');
