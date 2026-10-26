@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,mkdir,writeFile,rm,access} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,access, realpath} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {FullTextPort} from '../src/hostdeck/fulltext/wiring.js';
 import type {FullTextConfig,FullTextAuthorizer,FullTextPrincipal} from '../src/hostdeck/fulltext/types.js';
 
 test('fulltext provider stays dormant and fails closed on unapproved/revoked selected roots',async()=>{
-  const base=await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-port-'));
+  const base=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-port-')));
   const data=path.join(base,'chosen'),state=path.join(base,'state');
   await mkdir(data);await mkdir(state);
   const dbPath=path.join(state,'private.sqlite');
