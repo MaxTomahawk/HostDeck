@@ -67,10 +67,12 @@ export class FullTextNativeBridge {
   private sequence = 0;
   private initialized = false;
   private opening?: Promise<void>;
+  private closed = false;
   private readonly timeout: number;
 
   constructor(private readonly options: FullTextNativeOptions) {
-    if (!path.win32.isAbsolute(options.workerExecutable) ||
+    if (!/^[A-Za-z]:\\/.test(options.workerExecutable) ||
+        !path.win32.isAbsolute(options.workerExecutable) ||
         !/^[a-fA-F0-9]{64}$/.test(options.workerSha256) ||
         !/^[A-Za-z0-9_.-]{1,200}$/.test(options.expectedExecutor.sid) ||
         !/^[a-fA-F0-9]{16}$/.test(options.expectedExecutor.logonId) ||
@@ -147,6 +149,7 @@ export class FullTextNativeBridge {
   }
 
   async open(): Promise<void> {
+    if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
     if (this.initialized) return;
     if (this.opening) return this.opening;
     this.opening = this.openWorker();
@@ -155,16 +158,21 @@ export class FullTextNativeBridge {
 
   private async openWorker(): Promise<void> {
     if (process.platform !== 'win32') throw error('FULLTEXT_NATIVE_WINDOWS_REQUIRED');
-    if ((await digest(this.options.workerExecutable)).toLowerCase() !== this.options.workerSha256.toLowerCase()) {
+    let actualHash: string;
+    try { actualHash = await digest(this.options.workerExecutable); }
+    catch { throw error('FULLTEXT_NATIVE_BINARY_UNAVAILABLE'); }
+    if (actualHash.toLowerCase() !== this.options.workerSha256.toLowerCase())
       throw error('FULLTEXT_NATIVE_BINARY_CHANGED');
-    }
     const env: NodeJS.ProcessEnv = {};
     for (const name of ['SystemRoot', 'windir', 'TEMP', 'TMP', 'DOTNET_ROOT']) {
       if (process.env[name]) env[name] = process.env[name];
     }
-    const child = spawn(this.options.workerExecutable, ['--fulltext-native'], {
-      stdio: 'pipe', shell: false, windowsHide: true, env,
-    });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(this.options.workerExecutable, ['--fulltext-native'], {
+        stdio: 'pipe', shell: false, windowsHide: true, env,
+      });
+    } catch { throw error('FULLTEXT_NATIVE_WORKER_UNAVAILABLE'); }
     this.child = child;
     this.buffer = '';
     child.stdout.on('data', (data: Buffer) => this.receive(data));
@@ -202,6 +210,7 @@ export class FullTextNativeBridge {
     this.tail = next;
     await previous;
     try {
+      if (this.closed) throw error('FULLTEXT_NATIVE_WORKER_CLOSED');
       await this.open();
       return await this.raw(operation, args);
     } finally { release(); }
@@ -215,7 +224,9 @@ export class FullTextNativeBridge {
       throw error('FULLTEXT_NATIVE_BATCH_LIMIT');
     }
     for (const file of paths) {
-      if (await authorize(file) !== true) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
+      let allowed = false;
+      try { allowed = await authorize(file) === true; } catch { /* default deny */ }
+      if (!allowed) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
     }
     const result = await this.queued('attributes_batch', {paths}) as Record<string, any>;
     if (result?.count !== paths.length || !Array.isArray(result.items) ||
@@ -248,6 +259,7 @@ export class FullTextNativeBridge {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     const child = this.child;
     this.initialized = false;
     this.child = undefined;
