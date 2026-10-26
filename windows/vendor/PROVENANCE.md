@@ -11,3 +11,9 @@ the public MCP server and does not expose upstream operations directly.
 HostDeck also preserves explicit pointer coordinates instead of replacing them
 with the window centre, and starts a drag at the previously selected origin.
 Window/session bounds remain checked by HostDeck before invoking the service.
+
+HostDeck's local `VisionService` modification exposes the selected on-device
+WinRT OCR recognizer language and throws a typed, bounded missing-language
+error. This does not import a newer upstream revision or claim multilingual
+OCR accuracy; confidence stays unmeasured. Original MIT attribution and source
+revision above remain unchanged.
