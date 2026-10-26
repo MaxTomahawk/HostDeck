@@ -28,7 +28,8 @@ export function parseManagerHostInput(params: unknown): ManagerToolInput | null 
 export function parseManagerHostResult(value: unknown, expectedInput: ManagerToolInput | null): ManagerHostContext | null {
   // Never infer a device from host messages without a validated matching input
   // AND a server-produced result. Ignore the untrusted plain text content.
-  if (!expectedInput || !isRecord(value) || value.isError === true ||
+  if (!expectedInput || !isRecord(value) ||
+      ('isError' in value && value.isError !== false) ||
       !isRecord(value.structuredContent) ||
       !hasExactKeys(value.structuredContent, ['result'])) return null;
   const result = value.structuredContent.result;
