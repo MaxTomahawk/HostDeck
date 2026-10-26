@@ -447,6 +447,7 @@ export class FullTextEngine {
     state: string; coverage: 'partial_or_unverified'|'complete_bounded_scan';
     visibleDocuments: number; visibleCountTruncated: boolean;
     actualFreshness: 'not_monitored'; configuredRoots: number;
+    visibleFormatCoverage: Array<{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>;
     resource: {indexBytes:number;freeDiskMiB:number|null;freeMemoryMiB:number;
       processRssMiB:number;gpuUsed:false;cpuPressure:'not_measured'};
   }> {
@@ -455,8 +456,22 @@ export class FullTextEngine {
     const rows = this.db.prepare('SELECT path,root,state FROM docs ORDER BY path LIMIT ?')
       .all(this.config.budgets.maxQueryCandidates + 1) as Array<{path:string;root:string;state:string}>;
     let visible = 0, hiddenByAcl = false;
+    const coverage=new Map<FullTextFormat,{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>(
+      this.config.formats.map(format=>[format,{format,indexed:0,unqualified:0,reasons:{}}])
+    );
     for (const row of rows.slice(0,this.config.budgets.maxQueryCandidates)) {
-      try { await this.auth(c,'metadata',row.root,row.path); if(row.state==='indexed')visible++; }
+      try {
+        await this.auth(c,'metadata',row.root,row.path);
+        const format=path.extname(row.path).toLowerCase() as FullTextFormat;
+        const entry=coverage.get(format);
+        if (row.state==='indexed') {
+          visible++;
+          if(entry)entry.indexed++;
+        } else if (entry) {
+          entry.unqualified++;
+          entry.reasons[row.state]=(entry.reasons[row.state]??0)+1;
+        }
+      }
       catch { hiddenByAcl = true; /* Never count inaccessible documents. */ }
     }
     const resource=await this.resourceSample();
@@ -466,6 +481,7 @@ export class FullTextEngine {
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
+      visibleFormatCoverage:[...coverage.values()],
       resource:{indexBytes:resource.indexBytes,
         freeDiskMiB:resource.freeDiskBytes===null?null:Math.floor(resource.freeDiskBytes/(1024*1024)),
         freeMemoryMiB:Math.floor(resource.freeMemoryBytes/(1024*1024)),
