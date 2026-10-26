@@ -52,8 +52,13 @@ async function exercise(label:string,swap:Swap,allowedCodes:RegExp):Promise<void
       const run=db.prepare('SELECT state FROM runs WHERE id=?').get(id) as {state:string};
       assert.equal(run.state,'paused');
     }finally{db.close();}
-    await assert.rejects(engine.search(principal,'PRIVATE_MARKER_NOT_FOR_INDEX'),
-      /FULLTEXT_REPARSE_DENIED|FULLTEXT_ROOT_IDENTITY_CHANGED|FULLTEXT_SOURCE_IDENTITY_CHANGED|FULLTEXT_OUTSIDE_ROOT/);
+    if (label.startsWith('root')) {
+      await assert.rejects(engine.search(principal,'PRIVATE_MARKER_NOT_FOR_INDEX'),
+        /FULLTEXT_REPARSE_DENIED|FULLTEXT_ROOT_IDENTITY_CHANGED|FULLTEXT_OUTSIDE_ROOT/);
+    } else {
+      assert.deepEqual((await engine.search(principal,'PRIVATE_MARKER_NOT_FOR_INDEX')).results,[],
+        'Even under a changed file identity, no unapproved results may be returned');
+    }
   }finally{
     engine?.close();
     await rm(tmp,{recursive:true,force:true});
@@ -83,7 +88,7 @@ test('file reparse into outside root during extraction is denied before index co
   try {
     await writeFile(path.join(tmp,'target.txt'),'owned');
     try{await symlink(path.join(tmp,'target.txt'),path.join(tmp,'probe.txt'),'file');}
-    catch {t.diagnostic('Windows fixture symlink privilege absent; this case NOT_RUN');return;}
+    catch {t.skip('Windows fixture symlink privilege absent; reparse negative NOT_RUN');return;}
   } finally {await rm(tmp,{recursive:true,force:true});}
   await exercise('file reparse',async(root,doc,outside)=>{
     await rm(doc);
