@@ -50,3 +50,39 @@ export function applyManagerHostContext(
   update(context.device_id, context.view);
   return true;
 }
+
+/**
+ * Apply each *exact* validated device/view pair once per iframe lifetime.
+ *
+ * The SDK host may resend an identical tool-result notification. Re-rendering
+ * that context would unmount the user's current view and can launch another
+ * provider request. Do not use the current navigation state to decide whether
+ * a context is a duplicate: the user may have deliberately navigated away.
+ *
+ * Bound the remembered keys; even repeatedly supplied distinct, valid
+ * presentation hints cannot grow iframe memory without limit.
+ * This is presentation-only, NOT a device authorization cache.
+ */
+export function createManagerHostContextApplier(): (
+  context: ManagerHostContext | null,
+  ready: boolean,
+  update: (deviceId: string, view: 'providers') => void,
+) => boolean {
+  const applied = new Set<string>();
+  const maxContexts = 32;
+  return (context, ready, update) => {
+    if (!ready || !context || !isDeviceId(context.device_id) ||
+        context.view !== 'providers') return false;
+    const key = JSON.stringify([context.device_id, context.view]);
+    if (applied.has(key)) return false;
+    // Only remember a context after a successful presentation update.
+    // A throwing callback must never poison the deduplication ledger.
+    if (!applyManagerHostContext(context, ready, update)) return false;
+    if (applied.size >= maxContexts) {
+      const oldest = applied.values().next().value;
+      if (oldest !== undefined) applied.delete(oldest);
+    }
+    applied.add(key);
+    return true;
+  };
+}
