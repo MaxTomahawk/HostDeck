@@ -31,7 +31,8 @@ export function interpretJobReceipt(input: unknown): ReceiptVerdict {
   const code = exitCode(value.exitCode);
   if (typeof status === 'string') {
     if (!NATIVE_STATUSES.has(status) ||
-        typeof value.descendantsContained !== 'boolean') {
+        !Object.prototype.hasOwnProperty.call(value,'exitCode') ||
+        code === undefined || typeof value.descendantsContained !== 'boolean') {
       return uncertain('Native runner completion receipt is invalid; process outcome remains uncertain.');
     }
     const contained = value.descendantsContained;
