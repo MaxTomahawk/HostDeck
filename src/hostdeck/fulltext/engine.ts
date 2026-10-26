@@ -40,7 +40,7 @@ type Doc = {
   sha256: string; bytes: number; indexed_at: string; seen_scan: string;
 };
 type Run = {
-  id: string; state: string; incomplete: number; processed: number;
+  id: string; state: string; incomplete: number; traversal_incomplete: number; processed: number;
   read_bytes: number; created_at: string; updated_at: string;
 };
 const formatSet = new Set<FullTextFormat>(['.txt','.md','.csv','.json','.docx','.xlsx','.pdf']);
@@ -133,10 +133,17 @@ export class FullTextEngine {
         );
         CREATE TABLE IF NOT EXISTS runs (
           id TEXT PRIMARY KEY, state TEXT NOT NULL, incomplete INTEGER NOT NULL DEFAULT 0,
+          traversal_incomplete INTEGER NOT NULL DEFAULT 0,
           processed INTEGER NOT NULL DEFAULT 0, read_bytes INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
       `);
+      // Existing indices predate the content-vs-traversal split. Legacy
+      // incomplete runs cannot prove that traversal finished: fail closed.
+      // Fresh scans explicitly initialize both flags to zero below.
+      const runColumns=db.prepare('PRAGMA table_info(runs)').all() as Array<{name:string}>;
+      if (!runColumns.some(column=>column.name==='traversal_incomplete'))
+        db.exec('ALTER TABLE runs ADD COLUMN traversal_incomplete INTEGER NOT NULL DEFAULT 1');
       const scopeHash = hashScope(owner);
       for (const [key, value] of [['owner_scope', scopeHash], ['config_digest', c.digest]]) {
         const existing = db.prepare('SELECT value FROM meta WHERE key=?').get(key) as { value: string } | undefined;
@@ -196,7 +203,7 @@ export class FullTextEngine {
       const previous = this.active();
       if (previous && !['complete','cancelled'].includes(previous.state)) throw new Error('FULLTEXT_SCAN_ALREADY_ACTIVE');
       this.db.prepare('DELETE FROM queue').run();
-      this.db.prepare('INSERT INTO runs(id,state,created_at,updated_at) VALUES(?,?,?,?)').run(id,'running',time,time);
+      this.db.prepare('INSERT INTO runs(id,state,incomplete,traversal_incomplete,created_at,updated_at) VALUES(?,?,0,0,?,?)').run(id,'running',time,time);
       for (const root of this.config.roots)
         this.db.prepare('INSERT INTO queue(path,root,depth,kind,run_id) VALUES(?,?,?,?,?)').run(root,root,0,'dir',id);
       this.db.exec('COMMIT');
@@ -229,8 +236,14 @@ export class FullTextEngine {
     // implicit re-run or rollback is implied by cancellation.
   }
 
-  private markPartial(runId: string): void {
+  /** Content may be unqualified while the selected directory traversal is complete. */
+  private markContentPartial(runId: string): void {
     this.db.prepare('UPDATE runs SET incomplete=1 WHERE id=?').run(runId);
+  }
+
+  /** Any unvisited/unauthorized directory prevents the deletion proof. */
+  private markTraversalPartial(runId: string): void {
+    this.db.prepare('UPDATE runs SET incomplete=1,traversal_incomplete=1 WHERE id=?').run(runId);
   }
 
   private async resourceSample(): Promise<{indexBytes:number;freeDiskBytes:number|null;freeMemoryBytes:number}> {
@@ -286,7 +299,7 @@ export class FullTextEngine {
           .run(child,task.root,task.depth+1,kind,task.run_id);
       }
     } finally { await handle.close().catch(() => undefined); }
-    if (incomplete) this.markPartial(task.run_id);
+    if (incomplete) this.markTraversalPartial(task.run_id);
     return incomplete;
   }
 
@@ -325,7 +338,7 @@ export class FullTextEngine {
     if (trustedHash!==postHash || (document.sha256!=='' && document.sha256!==trustedHash))
       throw new Error('FULLTEXT_SOURCE_CHANGED');
     if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
-    if (!document.sha256) this.markPartial(task.run_id);
+    if (!document.sha256) this.markContentPartial(task.run_id);
     const old = previous?.sha256 === document.sha256 && previous?.state === document.status;
     const stamp = now();
     let movedId: number|undefined;
@@ -367,7 +380,7 @@ export class FullTextEngine {
       // presentation/graphics or guaranteed OCR of every PDF page. Keep the
       // scan's recall claim partial even when indexed text is searchable.
       if (document.status !== 'indexed' || ['.docx','.xlsx','.pdf'].includes(format))
-        this.markPartial(task.run_id);
+        this.markContentPartial(task.run_id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     return document.status !== 'indexed' ? 'skipped' : movedId !== undefined ? 'renamed' : old ? 'unchanged' : previous ? 'changed' : 'indexed';
@@ -376,13 +389,23 @@ export class FullTextEngine {
   private async finish(c: FullTextPrincipal, runId: string): Promise<number> {
     const run = this.runById(runId);
     let removed = 0;
-    if (run.incomplete === 0) {
+    // Purging stale text requires a fully enumerated source tree, NOT
+    // completely extracted contents. OCR-required or partial Office pages
+    // limit recall but cannot justify retaining a proven deleted TXT forever.
+    if (run.traversal_incomplete === 0) {
       const missing = this.db.prepare('SELECT * FROM docs WHERE seen_scan<>?').all(runId) as Doc[];
       for (const old of missing) {
         // Root may be revoked midscan. No deletions/counts are disclosed unless
         // the current authority still admits this exact document metadata.
-        try { await this.auth(c,'metadata',old.root,old.path); }
-        catch { this.markPartial(runId); return removed; }
+        try {
+          await this.auth(c,'metadata',old.root,old.path);
+          await this.auth(c,'scan',old.root,old.root);
+          await this.verifyRoot(old.root);
+        } catch {
+          // Never purge on changed root identity or revoked root/file rights.
+          this.markTraversalPartial(runId);
+          return removed;
+        }
         this.db.exec('BEGIN IMMEDIATE');
         try {
           this.db.prepare('DELETE FROM docs_fts WHERE rowid=?').run(old.id);
@@ -437,7 +460,7 @@ export class FullTextEngine {
         // converted into successful scan coverage or deleted from the queue.
         reason = stableErr(error);
         if (this.runById(runId).state === 'running') {
-          this.markPartial(runId);
+          this.markTraversalPartial(runId);
           this.state(runId,'paused');
         }
         break;
