@@ -18,9 +18,9 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   // All documents/config/grants are synthetic and remain within this one
   // disposable fixture. This is not a Windows install or personal drive scan.
   const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'hd-fulltext-facade-')));
-  const workspace=path.join(root,'workspace'),state=path.join(root,'protected-state');
+  const workspace=path.join(root,'workspace'),state=path.join(root,'writable-index-state'),protectedDir=path.join(root,'synthetic-protected-approvals');
   const corpus=path.join(root,'owner-selected-corpus'),other=path.join(root,'unselected');
-  await Promise.all([workspace,state,corpus,other].map(dir=>fs.mkdir(dir)));
+  await Promise.all([workspace,state,protectedDir,corpus,other].map(dir=>fs.mkdir(dir)));
   const marker=path.join(corpus,'owned.txt'),forbidden=path.join(corpus,'restricted.txt');
   await fs.writeFile(marker,'Sunflower Café België 中文文件 السلام');
   await fs.writeFile(forbidden,'Hiddensecret document contents');
@@ -40,13 +40,21 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
     executorId:'exec_ft',scopes,expiresAt:expires,revision,broadUserAuthority:true,sessionIds:[1]}];
   const gate=new PolicyGate(authority,audit,async()=>grants.map(g=>({...g,scopes:[...scopes],revision})));
   let facade:HostDeckFacade;
+  // Synthetic fixture qualifier is NOT an actual native Windows ACL proof.
+  // Production FullTextAdapter supplies no verifier and remains dormant.
+  let testOnlyBoundaryVerified=true;
+  const syntheticBoundary=async()=>{
+    if(!testOnlyBoundaryVerified)throw new Error('FULLTEXT_OWNER_ACL_UNQUALIFIED');
+  };
   const adapter=new FullTextAdapter({
     stateDirectory:state,workspace,
+    protectedOwnerDirectory:protectedDir,
+    verifyProtectedOwnerAcl:syntheticBoundary,
     reauthorize:(name,args)=>facade.reauthorize(name,args),
     additionalReadDeny:async r=>extraDenied.has(r.path),
   });
   facade=new HostDeckFacade({deviceId:'device_ft',executorId:'exec_ft',gate,adapters:[adapter]});
-  const store=new FullTextSelectionStore(state,workspace);
+  const store=new FullTextSelectionStore(protectedDir,workspace,state,syntheticBoundary);
   const owner={ownerId,deviceId:'device_ft',executorId:'exec_ft'};
   const allowedHosts:string[]=[];
   const boundary=createHttpBoundary(facade,authority,{issuer,resource,allowedHosts,allowedOrigins:[]});
@@ -100,6 +108,9 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   const selected={version:1,owner,selection:{roots:[corpus],formats:['.txt'],
     budgets:{maxOperationsPerStep:4,maxStepMilliseconds:6_000}}};
   await fs.writeFile(store.selectionFile,JSON.stringify(selected));
+  const unqualifiedStore=new FullTextSelectionStore(protectedDir,workspace,state);
+  assert.equal(await unqualifiedStore.selected({...owner,sessionId:1}),null,
+    'no native effective ACL verifier means no approved selection');
   const config=await store.selected({...owner,sessionId:1});
   assert.ok(config);
   const digest=normalizeConfig(config!).digest;
@@ -155,6 +166,13 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   assert.equal((await call('query',{query:'Sunflower'})).isError,true);
   assert.deepEqual((await rpc('tools/list')).payload.result.tools,[]);
   scopes=['fulltext:read','fulltext:index'];revision='r6';
+
+  // Owner approval provenance can be revoked independently of current MCP
+  // grants: the protected boundary itself must remain verified.
+  testOnlyBoundaryVerified=false;
+  assert.equal((await call('query',{query:'Sunflower'})).isError,true);
+  assert.equal((await call('confirm',{digest})).isError,true);
+  testOnlyBoundaryVerified=true;
 
   extraDenied.add(corpus);
   const rootRevoked=await call('query',{query:'Sunflower'});
