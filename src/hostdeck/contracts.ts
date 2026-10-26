@@ -33,7 +33,10 @@ const process = { process_id: id };
 const browser = { browser_id: id };
 // JSON Schema has no RegExp flags. Character classes preserve scheme casing
 // and avoid escaped slash delimiters in connector-side pattern validators.
-const browserUrl = z.string().url().regex(/^[Hh][Tt][Tt][Pp][Ss]?:[/][/]/).max(8192);
+// Full-string connector validators reject a prefix-only pattern even for valid HTTPS URLs.
+// Keep HTTP(S) restricted in both exported JSON Schema and runtime Zod parsing;
+// use no regex flags or escaped slash tokens (some clients mishandle those).
+const browserUrl = z.string().url().regex(/^[Hh][Tt][Tt][Pp][Ss]?:[/][/].+$/).max(8192);
 const point = { x: z.number().int().min(-1_000_000).max(1_000_000), y: z.number().int().min(-1_000_000).max(1_000_000) };
 const rectangle = z.object({ ...point, width: positive.max(32768), height: positive.max(32768) }).strict();
 const cell = z.union([z.string().max(32767), z.number().finite(), z.boolean(), z.null()]);
