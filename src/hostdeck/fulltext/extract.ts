@@ -65,6 +65,10 @@ export async function extractDocument(file: string, root: string, budgets: FullT
         sheet.eachRow({ includeEmpty:false }, row => {
           const cells: string[] = [];
           row.eachCell({ includeEmpty:false }, cell => {
+            // ExcelJS comments/notes are not part of a primitive cell value.
+            // Refuse to call a comment-bearing workbook fully indexed.
+            if (cell.note !== undefined && cell.note !== null)
+              throw new Error('FULLTEXT_UNSUPPORTED_OFFICE_VALUE');
             const value = cell.value;
             if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
               cells.push(String(value));
