@@ -24,6 +24,9 @@ async function main():Promise<void> {
       if(state!=='running')throw new Error('TEST_EXPECTED_RUNNING');
       process.stdout.write('HELD '+state+'\n');
       await new Promise<void>(resolve=>process.stdin.once('data',()=>resolve()));
+      // Releasing SQLite is not sufficient for process exit while stdin is
+      // still in flowing mode and the parent keeps its pipe open.
+      process.stdin.pause();
       engine.close();
       engine=undefined;
       process.stdout.write('CLOSED\n');
