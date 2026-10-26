@@ -1,1 +1,60 @@
 :root{color-scheme:light dark;font:15px/1.5 system-ui,sans-serif;color:#e8edf2;background:#111820}*{box-sizing:border-box}body{margin:0}main{max-width:960px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between}h1{margin:0 0 18px;font-size:1.7rem}.eyebrow{font-size:.72rem;letter-spacing:.12em;color:#8fa9be;margin:0}nav,.actions{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}button,input,textarea,select{font:inherit;color:inherit;background:#1b2732;border:1px solid #425365;border-radius:6px;padding:8px}button{cursor:pointer}button:hover{border-color:#75b8e7}label{display:block;margin:12px 0}label input,label textarea{display:block;width:100%;margin-top:4px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18222c;padding:14px;border-radius:6px;max-height:60vh;overflow:auto}.card{border:1px solid #334555;border-radius:8px;padding:14px;margin:12px 0}.connection{border:1px solid #334555;padding:12px;border-radius:8px}.screenshot{display:block;max-width:100%;height:auto;margin:16px auto;border:1px solid #425365}#status{color:#a6c9e1;font-size:.88rem}
+
+/* B007 extension manager — isolated styles; all other HostDeck views unchanged. */
+.manager{width:100%;min-width:0}
+.manager p{overflow-wrap:anywhere}
+.manager-actions,.manager-tabs{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.9rem 0}
+.manager-tabs{border-bottom:1px solid #486071;padding-bottom:.7rem}
+.manager-tabs button[aria-pressed="true"]{background:#22506b;border-color:#9fd6f6;font-weight:700}
+.manager button:disabled{opacity:.7;cursor:not-allowed}
+.manager-notice,.manager-note{padding:.6rem .8rem;border-left:3px solid #74abc8;background:#162733}
+.manager-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.4rem 1rem;align-items:end}
+.manager-filters label{margin:.2rem 0}
+.manager-filters input,.manager-filters select{display:block;width:100%;min-width:0;margin-top:.25rem}
+.manager-filters button{min-height:42px;align-self:end}
+.manager-advanced{grid-column:1/-1;border:1px solid #486071;border-radius:8px;padding:.4rem .7rem}
+.manager-advanced summary{cursor:pointer;font-weight:600;min-height:35px}
+.manager-advanced-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.4rem .8rem}
+.manager-count{margin:.9rem 0;font-weight:600}
+.manager-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:1rem;align-items:start;min-width:0}
+.manager-results,.manager-detail{min-width:0}
+.manager-group{border-top:1px solid #486071;padding-top:.6rem}
+.manager-group h3{font-size:1.05rem;margin:.4rem 0}
+.manager-entry,.manager-detail{border:1px solid #486071;border-radius:8px;padding:.8rem;margin:.55rem 0;background:#182632}
+.manager-entry h4{margin:0;font-size:1rem}
+.manager-entry p{margin:.4rem 0}
+.manager-entry button{margin-top:.25rem;min-height:40px}
+.manager-muted{opacity:.86;font-size:.88rem}
+.manager-detail{position:sticky;top:.5rem;max-height:75vh;overflow-y:auto}
+.manager-detail h3{margin:0 0 .5rem}
+.manager-dl{display:grid;grid-template-columns:minmax(100px,40%) minmax(0,1fr);gap:.3rem .8rem;margin:.4rem 0 1rem}
+.manager-dl dt{font-weight:650}
+.manager-dl dd{margin:0;overflow-wrap:anywhere}
+.manager-section[hidden],.manager button[hidden]{display:none}
+.manager button:focus-visible,.manager select:focus-visible,.manager input:focus-visible,.manager h3:focus-visible{outline:3px solid #f8d374;outline-offset:3px}
+.manager-section>label{max-width:460px}
+.manager-section>label select{display:block;width:100%;margin-top:.25rem}
+#extension-more{margin:.7rem 0;min-height:42px}
+@media(max-width:670px){
+ main{padding:12px}
+ .manager-layout{grid-template-columns:minmax(0,1fr)}
+ .manager-detail{position:static;max-height:none}
+ .manager-filters{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+ .manager-tabs button{flex:1 1 110px;min-height:44px}
+ .manager-entry button{min-height:44px}
+}
+@media(max-width:360px){
+ .manager-filters{grid-template-columns:minmax(0,1fr)}
+ .manager-dl{grid-template-columns:minmax(0,1fr);gap:.12rem}
+ .manager-dl dd{margin:0 0 .55rem}
+}
+@media(prefers-color-scheme:light){
+ .manager-entry,.manager-detail{background:#f0f4f7;color:#142332;border-color:#71899a}
+ .manager-tabs button[aria-pressed="true"]{background:#d4eafa;color:#102b40;border-color:#436f8b}
+ .manager-notice,.manager-note{background:#dbeaf4;color:#102b40}
+}
+@media(forced-colors:active){
+ .manager-entry,.manager-detail,.manager-notice{border:1px solid CanvasText}
+ .manager-tabs button[aria-pressed="true"]{outline:2px solid Highlight}
+}
+@media(prefers-reduced-motion:reduce){.manager *{scroll-behavior:auto;transition:none}}

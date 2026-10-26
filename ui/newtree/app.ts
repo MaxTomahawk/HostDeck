@@ -2,6 +2,7 @@ import { App } from '@modelcontextprotocol/ext-apps';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { mountExtensionManager } from './extension-manager.js';
 
 const app = new App({ name: 'HostDeck Management', version: '1.1.0' }, {});
 const $ = <T extends HTMLElement>(selector: string, root: ParentNode = document) => root.querySelector<T>(selector)!;
@@ -153,44 +154,15 @@ function baseCard(): HTMLElement { content.replaceChildren(); return node(conten
 function buildOverview(): void {
   content.replaceChildren(); node(content, 'section', undefined, 'card').id = 'device-overview'; node(content, 'section', undefined, 'card').id = 'recent-jobs'; void run(overview);
 }
-function buildProviders():void {
-  const pane=baseCard();node(pane,'h2','Search providers');
-  node(pane,'p','Preferences apply to this user, device and function. A one-time search choice does not change them.');
-  const area=node(pane,'div');area.id='provider-status';area.setAttribute('aria-busy','true');
-  const form=node(pane,'div');
-  const refresh=async()=>{
-    area.setAttribute('aria-busy','true');
-    try {
-      const value=await call('hostdeck_list_providers');area.replaceChildren();form.replaceChildren();
-      const label=(v:unknown)=>v===null||v===undefined?'unknown':String(v);
-      for(const provider of rows(value,'providers')){
-        const item=node(area,'section',undefined,'card');node(item,'h3',provider.id);
-        const details=node(item,'dl');
-        for(const [name,key] of [['Installed','installed'],['Integration enabled','enabled'],['Runtime','running'],['Compatible','compatible'],['Healthy','healthy'],['Reason','reason'],['Qualification','qualified']]){
-          node(details,'dt',name);node(details,'dd',label(provider[key]));
-        }
-      }
-      const functionLabel=node(form,'label','Function');const capability=document.createElement('select');capability.id='provider-function';functionLabel.append(capability);
-      for(const fn of rows(value,'functions')){const option=document.createElement('option');option.value=fn.capability;option.textContent=fn.capability==='files.name'?'File names and paths':'File content';capability.append(option);}
-      const preferenceLabel=node(form,'label','Saved preference');const preference=document.createElement('select');preference.id='provider-preference';preferenceLabel.append(preference);
-      const selected=node(form,'p');
-      const update=()=>{
-        const fn=rows(value,'functions').find((item:any)=>item.capability===capability.value);preference.replaceChildren();
-        for(const [id,text] of [['','Automatic · stable direct default'],['direct','Direct filesystem'],...(capability.value==='files.name'?[['everything','Everything']]:[])]){
-          const option=document.createElement('option');option.value=id;option.textContent=text;preference.append(option);
-        }
-        preference.value=fn?.preference??'';selected.textContent=`Selected provider: ${fn?.selected??'unknown'}. A saved preference can be unavailable.`;
-      };
-      capability.addEventListener('change',update);update();
-      const apply=button(form,'Save preference',()=>{
-        apply.disabled=true;
-        void run(async()=>{try{const result=await call('hostdeck_set_provider_preference',{capability:capability.value,provider:preference.value||null});await refresh();return result;}finally{apply.disabled=false;}});
-      });
-      return value;
-    }finally{area.setAttribute('aria-busy','false');}
-  };
-  void run(refresh);
+function buildProviders(): void {
+  const pane = baseCard();
+  mountExtensionManager(pane, {
+    call,
+    deviceId: () => device.value.trim(),
+    isCurrent: () => currentView === 'providers' && content.contains(pane),
+  });
 }
+
 function buildFiles(): void {
   const pane = baseCard(); const pathField = input(pane, 'Workspace path', 'file-path', '.'); const output = node(pane, 'div');
   button(pane, 'List directory', () => void run(async () => { const value = await call('hostdeck_list_directory', { path: pathField.value, depth: 2, limit: 100 }); output.replaceChildren(); for (const item of rows(value, 'entries')) node(output, 'p', `${item.type} · ${item.path}`); return value; }));
@@ -241,6 +213,7 @@ function render(): void {
 }
 document.querySelectorAll<HTMLButtonElement>('nav button').forEach(item => item.addEventListener('click', () => { currentView = item.dataset.view!; render(); }));
 $('#refresh').addEventListener('click', render);
+device.addEventListener('change', () => { if (currentView === 'providers') render(); });
 $('#connect').addEventListener('click', async () => {
   if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') {
     try { await connectWithAccessToken(); } catch { status.textContent = 'Cloudflare Access connection failed. Sign in to the protected HostDeck page and retry.'; }
