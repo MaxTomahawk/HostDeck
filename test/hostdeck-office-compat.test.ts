@@ -242,6 +242,7 @@ test('Word namespace spoof and nested lookalike root never stage edits', async (
       '<w:document xmlns:w="urn:unrelated"><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document>',
       '<w:document xmlns:w="' + ns + '"><w:body><w:p xmlns:w="urn:unrelated"><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document>',
       '<outer xmlns:w="' + ns + '"><w:document><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document></outer>',
+      '<w:document xmlns:w="' + ns + '"><w:body><w:document><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document></w:body></w:document>',
     ];
     const adapter = await DocumentAdapter.create({ workspace: root });
     for (let i = 0; i < invalidDocuments.length; i++) {
@@ -250,7 +251,7 @@ test('Word namespace spoof and nested lookalike root never stage edits', async (
       await writeFile(file, before);
       await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
         change: { kind: 'text_replace', old_text: 'SPLIT_TARGET',
-          new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_XML_(?:ROOT_OR_NAMESPACE|NAMESPACE)/);
+          new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_XML_(?:ROOT_OR_NAMESPACE|NAMESPACE|NESTING)/);
       assert.deepEqual(await readFile(file), before, 'source must be unchanged on namespace rejection');
     }
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -298,6 +299,9 @@ test('workbook, worksheet and relationship namespace lookalikes fail closed on r
       { name: 'nested-worksheet', parts: {
         ...workbookParts, 'xl/worksheets/sheet1.xml':
           '<outer>' + worksheetXml.replace('<?xml version="1.0"?>', '') + '</outer>' } },
+      { name: 'nested-worksheet-inside-valid-root', parts: { ...workbookParts,
+        'xl/worksheets/sheet1.xml': worksheetXml.replace('<sheetViews/>',
+          '<worksheet><sheetData/></worksheet><sheetViews/>') } },
       { name: 'wrong-relationship-root', parts: { ...workbookParts,
         'xl/_rels/workbook.xml.rels': workbookRels.replace(
           'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"', 'xmlns="' + alias + '"') } },
