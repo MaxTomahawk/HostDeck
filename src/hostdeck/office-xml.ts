@@ -148,7 +148,7 @@ export function validateOfficeStructure(xml: string, kind: OfficePart): void {
   const requiredName = relation ? 'Relationships' : kind;
   const requiredPrefix = word ? 'w' : '';
   const stack: OfficeElement[] = [];
-  const parser = new SaxesParser({ xmlns: true });
+  const parser = new SaxesParser<{ xmlns: true }>({ xmlns: true });
   let roots = 0, bodyCount = 0, sheetDataCount = 0;
   parser.on('doctype', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
   parser.on('processinginstruction', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
