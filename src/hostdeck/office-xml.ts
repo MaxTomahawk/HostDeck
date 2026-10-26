@@ -1,3 +1,5 @@
+import { SaxesParser } from 'saxes';
+
 /** Preserve OOXML structures while editing only ordinary visible text nodes. */
 export function escapeOfficeXml(value: string): string {
   for (const char of value) {
@@ -116,4 +118,126 @@ export function replaceVisibleDocxXml(xml: string, oldText: string, newText: str
     position = item.index! + item[0].length;
   }
   return { xml: out + xml.slice(position), count };
+}
+
+/** 
+ * Namespace-aware, fully nesting-checked guard applied BEFORE any OOXML rewrite.
+ * Parsing is validation-only: XML is never reserialized, and untouched ZIP entries
+ * retain their decompressed bytes. Unsupported namespace aliases fail closed.
+ */
+export type OfficePart = 'document' | 'hdr' | 'ftr' | 'workbook' | 'worksheet' | 'relationships' | 'sst';
+
+const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const SHEET_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const OFFICE_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const PACKAGE_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+const SHEET_ELEMENTS = new Set(['workbook', 'sheets', 'sheet', 'worksheet', 'sheetData',
+  'row', 'c', 'f', 'v', 'is', 't', 'si', 'sst']);
+
+interface OfficeElement { local: string; uri: string; prefix: string; }
+export function validateOfficeStructure(xml: string, kind: OfficePart): void {
+  requireSafeOfficeXml(xml);
+  const word = kind === 'document' || kind === 'hdr' || kind === 'ftr';
+  const relation = kind === 'relationships';
+  const requiredUri = word ? WORD_NS : relation ? PACKAGE_REL_NS : SHEET_NS;
+  const requiredName = relation ? 'Relationships' : kind;
+  const requiredPrefix = word ? 'w' : '';
+  const stack: OfficeElement[] = [];
+  const parser = new SaxesParser({ xmlns: true });
+  let roots = 0, bodyCount = 0, sheetDataCount = 0;
+  parser.on('doctype', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
+  parser.on('processinginstruction', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
+  parser.on('error', () => { throw new Error('DOCUMENT_INVALID_XML'); });
+  parser.on('opentag', tag => {
+    const parent = stack[stack.length - 1];
+    const current: OfficeElement = { local: tag.local, prefix: tag.prefix, uri: tag.uri };
+    if (!parent) {
+      roots++;
+      if (roots !== 1 || tag.local !== requiredName || tag.uri !== requiredUri ||
+          tag.prefix !== requiredPrefix) throw new Error('DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE');
+    }
+    if (word) {
+      if ((tag.prefix === 'w' && tag.uri !== WORD_NS) ||
+          (tag.uri === WORD_NS && tag.prefix !== 'w')) {
+        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+      }
+      if (tag.uri === WORD_NS && tag.local === 'body') {
+        if (kind !== 'document' || !parent || parent.local !== 'document' ||
+            parent.uri !== WORD_NS) throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        bodyCount++;
+      }
+      if (tag.uri === WORD_NS && tag.local === 'p') {
+        if (stack.some(element => element.local === 'p' && element.uri === WORD_NS)) {
+          throw new Error('DOCUMENT_UNSUPPORTED_NESTED_PARAGRAPH');
+        }
+        if (kind === 'document' &&
+            !stack.some(element => element.local === 'body' && element.uri === WORD_NS)) {
+          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        }
+      }
+      if (tag.uri === WORD_NS && tag.local === 't' &&
+          (!parent || parent.local !== 'r' || parent.uri !== WORD_NS ||
+            !stack.some(element => element.local === 'p' && element.uri === WORD_NS))) {
+        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+      }
+    } else if (relation) {
+      if ((tag.local === 'Relationship' || tag.local === 'Relationships') &&
+          (tag.uri !== PACKAGE_REL_NS || tag.prefix !== '')) {
+        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+      }
+      if (tag.local === 'Relationship' &&
+          (!parent || parent.local !== 'Relationships' || parent.uri !== PACKAGE_REL_NS)) {
+        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+      }
+    } else {
+      if (SHEET_ELEMENTS.has(tag.local) && (tag.uri !== SHEET_NS || tag.prefix !== '')) {
+        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+      }
+      if (kind === 'workbook') {
+        if (tag.local === 'sheets' &&
+            (!parent || parent.local !== 'workbook' || parent.uri !== SHEET_NS)) {
+          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        }
+        if (tag.local === 'sheet') {
+          if (!parent || parent.local !== 'sheets' || parent.uri !== SHEET_NS) {
+            throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          }
+          const relationshipId = tag.attributes['r:id'];
+          if (!relationshipId || relationshipId.uri !== OFFICE_REL_NS) {
+            throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+          }
+        }
+      } else if (kind === 'worksheet') {
+        if (tag.local === 'sheetData') {
+          if (!parent || parent.local !== 'worksheet' || parent.uri !== SHEET_NS) {
+            throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          }
+          sheetDataCount++;
+        }
+        if (tag.local === 'row' &&
+            (!parent || parent.local !== 'sheetData' || parent.uri !== SHEET_NS)) {
+          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        }
+        if (tag.local === 'c' &&
+            (!parent || parent.local !== 'row' || parent.uri !== SHEET_NS)) {
+          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        }
+        if (['f', 'v', 'is'].includes(tag.local) &&
+            (!parent || parent.local !== 'c' || parent.uri !== SHEET_NS)) {
+          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        }
+      } else if (kind === 'sst' && tag.local === 'si' &&
+          (!parent || parent.local !== 'sst' || parent.uri !== SHEET_NS)) {
+        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+      }
+    }
+    stack.push(current);
+  });
+  parser.on('closetag', () => { stack.pop(); });
+  parser.write(xml).close();
+  if (roots !== 1 || stack.length !== 0 ||
+      (kind === 'document' && bodyCount !== 1) ||
+      (kind === 'worksheet' && sheetDataCount !== 1)) {
+    throw new Error('DOCUMENT_INVALID_XML_NESTING');
+  }
 }
