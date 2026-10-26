@@ -122,7 +122,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     })().finally(()=>{diagnosticTask=undefined;});
   };
   const environment:Record<string,string>={};
-  for(const key of ['SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA']) if(process.env[key])environment[key]=process.env[key]!;
+  for(const key of ['SystemRoot','SystemDrive','WINDIR','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA']) if(process.env[key])environment[key]=process.env[key]!;
   const systemRoot=process.env.SystemRoot;
   if(!systemRoot||!path.isAbsolute(systemRoot))throw new RuntimeError('EXECUTOR_UNAVAILABLE');
   const shell=path.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
