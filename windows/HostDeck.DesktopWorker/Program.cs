@@ -185,10 +185,13 @@ internal sealed class DesktopWorker
                 var window = ResolveWindow(args);
                 RectBounds? region = args.TryGetProperty("region", out var r) ? Rect(r) : null;
                 if (region is not null) RequireRegionWithin(window, region);
-                var result = await vision.OcrScreenAsync("window", window, region);
+                OcrResult result;
+                try { result = await vision.OcrScreenAsync("window", window, region); }
+                catch (OcrLanguageUnavailableException) { throw new WorkerError("OCR_LANGUAGE_UNAVAILABLE"); }
                 return new { text = result.CombinedText, blocks = result.Blocks.Take(500).Select(b => new {
                     text = b.Text, bounds = Bounds(b.Bounds), confidence = (double?)null
                 }).ToArray(), confidence = (double?)null, confidence_status = "unmeasured",
+                    recognizer_language = vision.RecognizerLanguageTag, language_coverage = "not_verified",
                     region = Bounds(result.Region) };
             }
             case "hostdeck_read_clipboard":

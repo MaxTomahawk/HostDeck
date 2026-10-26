@@ -10,8 +10,17 @@ using WinRtOcr = Windows.Media.Ocr;
 
 namespace WindowsCommander.Windows.Services;
 
+// A missing installed recognizer is a capability limitation, not a generic desktop crash.
+public sealed class OcrLanguageUnavailableException : InvalidOperationException
+{
+    public OcrLanguageUnavailableException() : base("OCR_LANGUAGE_UNAVAILABLE") { }
+}
+
 public sealed class VisionService : IVisionService
 {
+    // The on-device engine uses one profile-selected language; this is not a claim
+    // that all scripts appearing in a captured image are supported or recognized.
+    public string? RecognizerLanguageTag => ocrEngine?.RecognizerLanguage?.LanguageTag;
     // Caps the longest side of a returned capture so payloads stay small enough
     // to be usable; an explicit max_dimension argument can override this.
     private const int DefaultMaxDimension = 1400;
@@ -120,8 +129,7 @@ public sealed class VisionService : IVisionService
     private WinRtOcr.OcrEngine GetOcrEngine()
     {
         return ocrEngine ??= WinRtOcr.OcrEngine.TryCreateFromUserProfileLanguages()
-            ?? throw new InvalidOperationException(
-                "No OCR language pack is available. Add one via Settings > Time & language > Language & region.");
+            ?? throw new OcrLanguageUnavailableException();
     }
 
     // Renders a GDI bitmap (optionally scaled) into the BGRA8 SoftwareBitmap
