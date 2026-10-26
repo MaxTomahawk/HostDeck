@@ -108,6 +108,17 @@ test('actual discovery exposes a single UI-render manager tool and preserves all
     assert.equal(renderContract.inputSchema?.additionalProperties,false);
     assert.ok(tools.filter(t=>t.name!=='hostdeck_open_manager').every(t=>!t._meta),
       'all ordinary tools remain data-first even with an HTML app');
+    // Repeated discovery and the versioned UI cache key cannot reattach a
+    // template to any ordinary tool; only explicit open_manager may render.
+    for(let repetition=0;repetition<3;repetition++){
+      const again=await request(f,'tools/list');
+      const discovered=again.data.result.tools as Array<{name:string;_meta?:Record<string,any>}>;
+      assert.deepEqual(discovered.filter(t=>t._meta).map(t=>t.name),['hostdeck_open_manager']);
+      assert.ok(discovered.every(t=>t.name==='hostdeck_open_manager'||!t._meta),
+        'normal data tools have zero UI metadata on every discovery');
+      assert.deepEqual(discovered.find(t=>t.name==='hostdeck_open_manager')?._meta?.ui,
+        {resourceUri:MANAGER_APP_URI});
+    }
     const resources=await request(f,'resources/list');
     assert.deepEqual(resources.data.result.resources.map((r:{uri:string})=>r.uri),[MANAGER_APP_URI]);
     const html=await request(f,'resources/read',{uri:MANAGER_APP_URI});
