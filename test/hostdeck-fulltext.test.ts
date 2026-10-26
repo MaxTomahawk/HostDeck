@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, writeFile, rename, rm, access, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rename, rm, access, symlink , realpath} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FullTextEngine } from '../src/hostdeck/fulltext/engine.js';
@@ -21,7 +21,7 @@ async function completeScan(engine: FullTextEngine, id: string): Promise<{rename
 }
 
 test('manual SQLite FTS5: explicit roots, Han bigrams, updates, rename/delete and live ACLs',async()=>{
-  const tmp=await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-fixture-'));
+  const tmp=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-fixture-')));
   const corpus=path.join(tmp,'selected-corpus'),state=path.join(tmp,'state');
   await mkdir(corpus); await mkdir(state);
   const file=(name:string)=>path.join(corpus,name);
@@ -118,7 +118,7 @@ test('Han query semantics are explicit; never claim general CJK substring recall
 });
 
 test('no automatic indexing of a volume root; symlinks cannot leave own corpus',async t=>{
-  const tmp=await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-link-'));
+  const tmp=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-fulltext-link-')));
   const corpus=path.join(tmp,'corpus'),state=path.join(tmp,'state'),external=path.join(tmp,'external');
   await Promise.all([mkdir(corpus),mkdir(state),mkdir(external)]);
   const config:FullTextConfig={indexFile:path.join(state,'index.sqlite'),roots:[corpus],formats:['.txt']};
