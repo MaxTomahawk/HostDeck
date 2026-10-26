@@ -40,6 +40,8 @@ export function resolveBudgets(config: FullTextConfig): FullTextBudgets {
   const defaults: FullTextBudgets = {
     maxFileBytes: Math.min(4 * MiB, conservativeMemory / 16),
     maxTotalSourceBytes: 256 * MiB,
+    maxIndexBytes: 256 * MiB,
+    minFreeDiskBytes: 512 * MiB,
     maxDocuments: 5_000,
     maxDepth: 12,
     maxEntriesPerDirectory: 1_000,
@@ -53,6 +55,8 @@ export function resolveBudgets(config: FullTextConfig): FullTextBudgets {
   const caps: FullTextBudgets = {
     maxFileBytes: 32 * MiB,
     maxTotalSourceBytes: 16 * GiB,
+    maxIndexBytes: 8 * GiB,
+    minFreeDiskBytes: 64 * GiB,
     maxDocuments: 100_000,
     maxDepth: 30,
     maxEntriesPerDirectory: 10_000,
