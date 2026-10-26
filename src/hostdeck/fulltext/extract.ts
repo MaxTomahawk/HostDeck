@@ -57,7 +57,7 @@ export async function extractDocument(file: string, root: string, budgets: FullT
       const checked = await DocumentAdapter.create({ workspace: root });
       await checked.handle('hostdeck_read_document', { path: file });
       const workbook = new (exceljsPackage.load().Workbook)();
-      await workbook.xlsx.load(input);
+      await workbook.xlsx.load(Uint8Array.from(input).buffer);
       const values: string[] = [];
       let count = 0;
       for (const sheet of workbook.worksheets) {
