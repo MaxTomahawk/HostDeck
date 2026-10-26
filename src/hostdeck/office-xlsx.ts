@@ -92,6 +92,10 @@ function cellValue(cell: Cell, shared: string[]): unknown {
 function sheetDetails(zip: any, selected?: string): { name: string; file: string; names: string[] } {
   const workbook = part(zip, 'xl/workbook.xml');
   const refs = part(zip, 'xl/_rels/workbook.xml.rels');
+  if (!/<workbook\b[^>]*>/.test(workbook) || !workbook.includes('</workbook>') ||
+      !/<Relationships\b[^>]*>/.test(refs) || !refs.includes('</Relationships>')) {
+    throw new Error('XLSX_INVALID_WORKBOOK_ROOT');
+  }
   const available: Array<{ name: string; rel: string }> = [];
   for (const m of workbook.matchAll(/<sheet\b[^>]*\/?>/g)) {
     const name = attribute(m[0], 'name'), rel = attribute(m[0], 'r:id');
@@ -127,6 +131,9 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
 } {
   const zip = open(input), info = sheetDetails(zip, sheet);
   const worksheet = part(zip, info.file);
+  if (!/<worksheet\b[^>]*>/.test(worksheet) || !worksheet.includes('</worksheet>')) {
+    throw new Error('XLSX_INVALID_WORKSHEET_ROOT');
+  }
   let shared: string[] = [];
   if (zip.file('xl/sharedStrings.xml')) {
     const strings = part(zip, 'xl/sharedStrings.xml');
@@ -183,6 +190,9 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
   if (!modifications.size) throw new Error('XLSX_EMPTY_EDIT');
   const zip = open(input), info = sheetDetails(zip, sheet);
   let xml = part(zip, info.file);
+  if (!/<worksheet\b[^>]*>/.test(xml) || !xml.includes('</worksheet>')) {
+    throw new Error('XLSX_INVALID_WORKSHEET_ROOT');
+  }
   const existing = cells(xml);
   const seen = new Set<string>();
   const changes: Array<{ start: number; end: number; content: string }> = [];
