@@ -45,8 +45,10 @@ internal static class FullTextProtectedAcl
         string reason;
         try
         {
-            if (Native.IsElevated() || WindowsIdentity.GetCurrent().IsSystem)
-                return Refuse("PRIVILEGED_OR_SYSTEM_TOKEN", inspected);
+            if (Native.IsElevated() || WindowsIdentity.GetCurrent().IsSystem ||
+                Process.GetCurrentProcess().SessionId <= 0 ||
+                Native.Integrity() != "medium")
+                return Refuse("NOT_ORDINARY_INTERACTIVE_TOKEN", inspected);
             if (!OpenProcessToken(Process.GetCurrentProcess().Handle, TokenQuery | TokenDuplicate,
                 out var token))
                 return Refuse("TOKEN_UNAVAILABLE", inspected);
@@ -225,7 +227,9 @@ internal static class FullTextProtectedAcl
 
     private static bool CanWriteIndexDirectory(string directory)
     {
-        if (Native.IsElevated() || WindowsIdentity.GetCurrent().IsSystem) return false;
+        if (Native.IsElevated() || WindowsIdentity.GetCurrent().IsSystem ||
+            Process.GetCurrentProcess().SessionId <= 0 || Native.Integrity() != "medium")
+            return false;
         if (!OpenProcessToken(Process.GetCurrentProcess().Handle, TokenQuery | TokenDuplicate, out var token))
             return false;
         try
