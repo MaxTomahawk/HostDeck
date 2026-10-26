@@ -139,6 +139,9 @@ test('open_manager read-only goes through real facade/PolicyGate with device bin
     assert.equal(denied.data.result.content[0].text,'DENIED');
     const hidden=await request(f,'resources/list',{},f.filesOnlyToken);
     assert.deepEqual(hidden.data.result.resources,[]);
+    const blockedLegacy=await request(f,'resources/read',{uri:legacy},f.filesOnlyToken);
+    assert.equal(blockedLegacy.data.result?.contents,undefined,
+      'legacy UI resource cannot bypass missing devices:read permission');
     f.revokeDevices();
     const revoked=await request(f,'tools/list');
     assert.ok(!revoked.data.result.tools.some((t:{name:string})=>t.name==='hostdeck_open_manager'));
@@ -146,6 +149,9 @@ test('open_manager read-only goes through real facade/PolicyGate with device bin
       arguments:{device_id:'device_fixture'}});
     assert.equal(deniedAfterRevocation.data.result.isError,true);
     assert.equal(deniedAfterRevocation.data.result.content[0].text,'DENIED');
+    const blockedNewUri=await request(f,'resources/read',{uri:MANAGER_APP_URI});
+    assert.equal(blockedNewUri.data.result?.contents,undefined,
+      'active resource cannot bypass revoked device grant');
     assert.equal(f.effects(),0);
   }finally{await f.close();}
 });
@@ -162,6 +168,8 @@ test('without bundled appHtml manager and UI resources are not discovered or cal
       arguments:{device_id:'device_fixture'}});
     assert.equal(opened.data.result.isError,true);
     assert.equal(opened.data.result.content[0].text,'UNAVAILABLE');
+    const missingResource=await request(f,'resources/read',{uri:MANAGER_APP_URI});
+    assert.equal(missingResource.data.result?.contents,undefined);
     assert.equal(f.effects(),0);
   }finally{await f.close();}
 });
