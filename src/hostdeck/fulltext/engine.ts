@@ -204,7 +204,8 @@ export class FullTextEngine {
     let freeDiskBytes: number|null = null;
     try {
       const stat = await fs.statfs(path.dirname(this.config.indexFile));
-      freeDiskBytes = Number(stat.bavail) * Number(stat.bsize);
+      const sampled = Number(stat.bavail) * Number(stat.bsize);
+      freeDiskBytes = Number.isFinite(sampled) && sampled >= 0 ? sampled : null;
     } catch { /* Disk pressure remains explicitly unverified; never invent free bytes. */ }
     return {indexBytes,freeDiskBytes,freeMemoryBytes:os.freemem()};
   }
