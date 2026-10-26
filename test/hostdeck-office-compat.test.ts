@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { DocumentAdapter } from '../src/hostdeck/documents.js';
-import { replaceVisibleDocxXml } from '../src/hostdeck/office-xml.js';
+import { replaceVisibleDocxXml, validateOfficeStructure } from '../src/hostdeck/office-xml.js';
 import { isOpenpyxlCommentLayout } from '../src/hostdeck/office-xlsx.js';
 
 const require = createRequire(import.meta.url);
@@ -117,12 +117,12 @@ test('DOCX never crosses paragraphs, tabs or field instructions; entity text is 
     'x', 'y'), /DOCUMENT_UNSAFE_XML/);
 });
 
-const workbookXml = '<?xml version="1.0"?><workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+const workbookXml = '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
   '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>';
-const workbookRels = '<Relationships><Relationship Id="rId1" ' +
+const workbookRels = '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" ' +
   'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ' +
   'Target="/xl/worksheets/sheet1.xml"/></Relationships>';
-const worksheetXml = '<?xml version="1.0"?><worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+const worksheetXml = '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
   '<sheetViews/><sheetData><row r="1">' +
   '<c r="A1" s="1" t="inlineStr"><is><t>ORIGINAL</t></is></c>' +
   '<c r="B1" s="1" t="n"><v>7</v></c>' +
@@ -207,13 +207,13 @@ test('DOCX wrong root is rejected without changing source bytes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-invalid-root-'));
   try {
     const bytes = fixture({ ...docxParts,
-      'word/document.xml': '<w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p>' });
+      'word/document.xml': '<other xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document></other>' });
     const file = path.join(root, 'wrong-root.docx');
     await writeFile(file, bytes);
     const adapter = await DocumentAdapter.create({ workspace: root });
     await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
       change: { kind: 'text_replace', old_text: 'SPLIT_TARGET',
-        new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_DOCX/);
+        new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE/);
     assert.deepEqual(await readFile(file), bytes);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -230,5 +230,146 @@ test('OOXML unsafe root/DTD guard rejects affected comment workbook with source 
     await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
       change: { kind: 'table_range', sheet: 'Sheet1', range: 'A1', cells: [['test']] } }), /DOCUMENT_UNSAFE_XML/);
     assert.deepEqual(await readFile(file), original);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('Word namespace spoof and nested lookalike root never stage edits', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-ns-'));
+  try {
+    const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const invalidDocuments = [
+      '<w:document xmlns:w="urn:unrelated"><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document>',
+      '<w:document xmlns:w="' + ns + '"><w:body><w:p xmlns:w="urn:unrelated"><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document>',
+      '<outer xmlns:w="' + ns + '"><w:document><w:body><w:p><w:r><w:t>SPLIT_TARGET</w:t></w:r></w:p></w:body></w:document></outer>',
+    ];
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    for (let i = 0; i < invalidDocuments.length; i++) {
+      const before = fixture({ ...docxParts, 'word/document.xml': invalidDocuments[i] });
+      const file = path.join(root, 'invalid-' + i + '.docx');
+      await writeFile(file, before);
+      await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
+        change: { kind: 'text_replace', old_text: 'SPLIT_TARGET',
+          new_text: 'REPLACED', expected_replacements: 1 } }), /DOCUMENT_INVALID_XML_(?:ROOT_OR_NAMESPACE|NAMESPACE)/);
+      assert.deepEqual(await readFile(file), before, 'source must be unchanged on namespace rejection');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('DOCX xml:space default becomes preserve for leading/trailing literal whitespace', async () => {
+  const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const xml = '<w:document xmlns:w="' + ns + '"><w:body>' +
+    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="default">TARGET</w:t></w:r></w:p>' +
+    '</w:body></w:document>';
+  validateOfficeStructure(xml, 'document');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-space-'));
+  try {
+    const original = fixture({ ...docxParts, 'word/document.xml': xml });
+    const file = path.join(root, 'space.docx');
+    await writeFile(file, original);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const staged = await adapter.handle('hostdeck_edit_document', { path: file,
+      change: { kind: 'text_replace', old_text: 'TARGET', new_text: ' spaced ',
+        expected_replacements: 1 } }) as { bytes: Uint8Array };
+    const result = new PizZip(staged.bytes).file('word/document.xml').asText();
+    assert.match(result, /<w:t xml:space="preserve"> spaced <\/w:t>/);
+    assert.match(result, /<w:rPr><w:b\/><\/w:rPr>/);
+    assert.deepEqual(await readFile(file), original);
+    const prior = uncompressedArchive(original), after = uncompressedArchive(staged.bytes);
+    for (const [part, hash] of prior) {
+      if (part !== 'word/document.xml') assert.equal(after.get(part), hash, part);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('workbook, worksheet and relationship namespace lookalikes fail closed on reads and edits', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-xlsx-ns-'));
+  const alias = 'urn:unrelated';
+  try {
+    const cases: Array<{ name: string; parts: Record<string, string> }> = [
+      { name: 'wrong-workbook-root', parts: {
+        ...workbookParts, 'xl/workbook.xml': workbookXml.replace(
+          'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"', 'xmlns="' + alias + '"') } },
+      { name: 'nested-workbook', parts: { ...workbookParts,
+        'xl/workbook.xml': '<outer>' + workbookXml.replace('<?xml version="1.0"?>', '') + '</outer>' } },
+      { name: 'wrong-worksheet-root', parts: {
+        ...workbookParts, 'xl/worksheets/sheet1.xml': worksheetXml.replace(
+          'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"', 'xmlns="' + alias + '"') } },
+      { name: 'nested-worksheet', parts: {
+        ...workbookParts, 'xl/worksheets/sheet1.xml':
+          '<outer>' + worksheetXml.replace('<?xml version="1.0"?>', '') + '</outer>' } },
+      { name: 'wrong-relationship-root', parts: { ...workbookParts,
+        'xl/_rels/workbook.xml.rels': workbookRels.replace(
+          'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"', 'xmlns="' + alias + '"') } },
+      { name: 'fake-cell-namespace', parts: { ...workbookParts,
+        'xl/worksheets/sheet1.xml': worksheetXml.replace('<c r="A1"', '<c xmlns="' + alias + '" r="A1"') } },
+      { name: 'fake-sheet-namespace', parts: { ...workbookParts,
+        'xl/workbook.xml': workbookXml.replace('<sheet name="Sheet1"', '<sheet xmlns="' + alias + '" name="Sheet1"') } },
+    ];
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    for (const { name, parts } of cases) {
+      const file = path.join(root, name + '.xlsx'), original = fixture(parts);
+      await writeFile(file, original);
+      await assert.rejects(adapter.handle('hostdeck_read_document', { path: file }),
+        /DOCUMENT_INVALID_XML_(?:ROOT_OR_NAMESPACE|NAMESPACE|NESTING)/, name + ' read');
+      await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
+        change: { kind: 'table_range', sheet: 'Sheet1', range: 'A1',
+          cells: [['CHANGED']] } }), /DOCUMENT_INVALID_XML_(?:ROOT_OR_NAMESPACE|NAMESPACE|NESTING)/, name + ' edit');
+      assert.deepEqual(await readFile(file), original, name + ' source unchanged');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('shared and array formula targets are rejected before staging, but unrelated A1 preserves groups', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-formula-group-'));
+  try {
+    const grouped = worksheetXml.replace(
+      '<c r="C1"><f>B1*2</f><v></v></c>',
+      '<c r="C1"><f t="shared" si="4" ref="C1:C2">B1*2</f><v/></c>'
+    ).replace(
+      '</row></sheetData>',
+      '<c r="C2"><f t="shared" si="4"/><v/></c></row></sheetData>'
+    );
+    const parts = { ...workbookParts, 'xl/worksheets/sheet1.xml': grouped };
+    const original = fixture(parts), file = path.join(root, 'shared.xlsx');
+    await writeFile(file, original);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const read = await adapter.handle('hostdeck_read_document', {
+      path: file, sheet: 'Sheet1', range: 'C1:C2'
+    }) as { content: unknown[][] };
+    const master = read.content[0][0] as Record<string, unknown>;
+    const dependent = read.content[1][0] as Record<string, unknown>;
+    assert.equal(master.status, 'UNSUPPORTED_FORMULA_GROUP');
+    assert.equal(master.formulaType, 'shared');
+    assert.equal(master.formula, '=B1*2');
+    assert.equal(dependent.status, 'UNSUPPORTED_FORMULA_GROUP');
+    assert.equal(dependent.formulaType, 'shared');
+    assert.equal(dependent.formula, null);
+    for (const target of ['C1', 'C2']) {
+      await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
+        change: { kind: 'table_range', sheet: 'Sheet1', range: target, cells: [['broken']] } }),
+        /XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED/, target);
+      assert.deepEqual(await readFile(file), original);
+    }
+    const staged = await adapter.handle('hostdeck_edit_document', { path: file,
+      change: { kind: 'table_range', sheet: 'Sheet1', range: 'A1', cells: [['CHANGED']] } }) as { bytes: Uint8Array };
+    const after = new PizZip(staged.bytes);
+    const xml = after.file('xl/worksheets/sheet1.xml').asText();
+    assert.match(xml, /<f t="shared" si="4" ref="C1:C2">B1\*2<\/f><v\/>/);
+    assert.match(xml, /<c r="C2"><f t="shared" si="4"\/><v\/><\/c>/);
+    const oldHashes = uncompressedArchive(original), newHashes = uncompressedArchive(staged.bytes);
+    for (const [part, hash] of oldHashes) {
+      if (part !== 'xl/worksheets/sheet1.xml') assert.equal(newHashes.get(part), hash, part);
+    }
+    assert.deepEqual(await readFile(file), original);
+    const arrayParts = { ...workbookParts,
+      'xl/worksheets/sheet1.xml': worksheetXml.replace('<f>B1*2</f>', '<f t="array" ref="C1:C2">B1*2</f>') };
+    const arrayFile = path.join(root, 'array.xlsx');
+    const arrayOriginal = fixture(arrayParts);
+    await writeFile(arrayFile, arrayOriginal);
+    await assert.rejects(adapter.handle('hostdeck_edit_document', { path: arrayFile,
+      change: { kind: 'table_range', sheet: 'Sheet1', range: 'C1', cells: [['broken']] } }),
+      /XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED/);
+    assert.deepEqual(await readFile(arrayFile), arrayOriginal);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
