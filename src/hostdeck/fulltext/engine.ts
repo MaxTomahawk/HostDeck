@@ -195,6 +195,28 @@ export class FullTextEngine {
     this.db.prepare('UPDATE runs SET incomplete=1 WHERE id=?').run(runId);
   }
 
+  private async resourceSample(): Promise<{indexBytes:number;freeDiskBytes:number|null;freeMemoryBytes:number}> {
+    let indexBytes = 0;
+    for (const name of [this.config.indexFile, this.config.indexFile+'-wal', this.config.indexFile+'-shm']) {
+      try { indexBytes += (await fs.stat(name)).size; }
+      catch (error) { if (!isMissing(error)) throw error; }
+    }
+    let freeDiskBytes: number|null = null;
+    try {
+      const stat = await fs.statfs(path.dirname(this.config.indexFile));
+      freeDiskBytes = Number(stat.bavail) * Number(stat.bsize);
+    } catch { /* Disk pressure remains explicitly unverified; never invent free bytes. */ }
+    return {indexBytes,freeDiskBytes,freeMemoryBytes:os.freemem()};
+  }
+
+  private pressureReason(s: Awaited<ReturnType<FullTextEngine['resourceSample']>>): string|undefined {
+    if (s.freeMemoryBytes < this.config.budgets.minFreeMemoryBytes) return 'LOW_FREE_MEMORY';
+    if (s.indexBytes >= this.config.budgets.maxIndexBytes) return 'INDEX_QUOTA';
+    if (s.freeDiskBytes === null) return 'DISK_PRESSURE_UNAVAILABLE';
+    if (s.freeDiskBytes < this.config.budgets.minFreeDiskBytes) return 'LOW_FREE_DISK';
+    return undefined;
+  }
+
   private async scanDirectory(task: Task, c: FullTextPrincipal, deadline: number): Promise<boolean> {
     await this.auth(c,'scan',task.root,task.path);
     const dir = await safeRealpath(task.path);
@@ -329,16 +351,19 @@ export class FullTextEngine {
     const maxOps = requestedOperations === undefined ? limits.maxOperationsPerStep
       : Math.min(limits.maxOperationsPerStep,Math.floor(requestedOperations));
     if (!Number.isSafeInteger(maxOps) || maxOps < 1) throw new Error('FULLTEXT_BUDGET_INVALID');
-    if (os.freemem() < limits.minFreeMemoryBytes) {
+    const initialPressure=this.pressureReason(await this.resourceSample());
+    if (initialPressure) {
       this.state(runId,'resource_paused');
       return {state:'resource_paused',runId,processedThisStep:0,indexedThisStep:0,changedThisStep:0,
-        renamedThisStep:0,skippedThisStep:0,removedAtCompletion:0,coverage:'partial',reason:'LOW_FREE_MEMORY'};
+        renamedThisStep:0,skippedThisStep:0,removedAtCompletion:0,coverage:'partial',reason:initialPressure};
     }
     const deadline = Date.now() + limits.maxStepMilliseconds;
     let processed = 0, indexed = 0, changed = 0, renamed = 0, skipped = 0, removed = 0;
     let reason: string|undefined;
     while (processed < maxOps && Date.now() < deadline) {
       if (this.runById(runId).state !== 'running') { reason = 'FULLTEXT_STEP_STOPPED'; break; }
+      const pressure=this.pressureReason(await this.resourceSample());
+      if (pressure) {this.state(runId,'resource_paused');reason=pressure;break;}
       const task = this.db.prepare('SELECT * FROM queue WHERE run_id=? ORDER BY path LIMIT 1').get(runId) as Task|undefined;
       if (!task) break;
       try {
@@ -422,6 +447,8 @@ export class FullTextEngine {
     state: string; coverage: 'partial_or_unverified'|'complete_bounded_scan';
     visibleDocuments: number; visibleCountTruncated: boolean;
     actualFreshness: 'not_monitored'; configuredRoots: number;
+    resource: {indexBytes:number;freeDiskMiB:number|null;freeMemoryMiB:number;
+      processRssMiB:number;gpuUsed:false;cpuPressure:'not_measured'};
   }> {
     await this.rootsAllowed(c,'status');
     const run = this.active();
@@ -432,12 +459,18 @@ export class FullTextEngine {
       try { await this.auth(c,'metadata',row.root,row.path); if(row.state==='indexed')visible++; }
       catch { hiddenByAcl = true; /* Never count inaccessible documents. */ }
     }
+    const resource=await this.resourceSample();
     return {
       state:run?.state??'unstarted',
       coverage:run?.state==='complete' && run.incomplete===0 && !hiddenByAcl && rows.length <= this.config.budgets.maxQueryCandidates
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
+      resource:{indexBytes:resource.indexBytes,
+        freeDiskMiB:resource.freeDiskBytes===null?null:Math.floor(resource.freeDiskBytes/(1024*1024)),
+        freeMemoryMiB:Math.floor(resource.freeMemoryBytes/(1024*1024)),
+        processRssMiB:Math.floor(process.memoryUsage().rss/(1024*1024)),
+        gpuUsed:false,cpuPressure:'not_measured'},
     };
   }
 
