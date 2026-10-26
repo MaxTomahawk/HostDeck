@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { DocumentAdapter } from '../src/hostdeck/documents.js';
 import { replaceVisibleDocxXml, validateOfficeStructure } from '../src/hostdeck/office-xml.js';
 import { isOpenpyxlCommentLayout } from '../src/hostdeck/office-xlsx.js';
+import { publicError } from '../src/hostdeck/gateway.js';
 
 const require = createRequire(import.meta.url);
 const PizZip = require('pizzip');
@@ -83,7 +84,11 @@ test('DOCX global expected count checked before any staged changes; headers and 
     const adapter = await DocumentAdapter.create({ workspace: root });
     await assert.rejects(adapter.handle('hostdeck_edit_document', { path: input,
       change: { kind: 'text_replace', old_text: '_TARGET', new_text: '_REPLACED',
-        expected_replacements: 1 } }), /Expected 1 occurrence\(s\) but found 3/);
+        expected_replacements: 1 } }), (error: unknown) => {
+      assert.match((error as Error).message, /Expected 1 occurrence\(s\) but found 3/);
+      assert.equal(publicError(error), 'DOCUMENT_REPLACEMENT_COUNT');
+      return true;
+    });
     assert.deepEqual(await readFile(input), original);
     const result = await adapter.handle('hostdeck_edit_document', { path: input,
       change: { kind: 'text_replace', old_text: '_TARGET', new_text: '_REPLACED',
@@ -95,7 +100,14 @@ test('DOCX global expected count checked before any staged changes; headers and 
     assert.deepEqual(await readFile(input), original);
     const read = await adapter.handle('hostdeck_read_document', { path: input }) as { content: string };
     assert.match(read.content, /hostdeck_edit_document/);
-    assert.doesNotMatch(read.content, /edit_block|use start_process with a Python script/);
+    assert.match(read.content, /DOCX Outline:/);
+    assert.match(read.content, /SPLIT_/);
+    assert.match(read.content, /Headers\/Footers:/);
+    assert.match(read.content, /HEADER_TARGET/);
+    assert.match(read.content, /FOOTER_TARGET/);
+    assert.doesNotMatch(read.content, /Edit with: edit_block\(/);
+    assert.doesNotMatch(read.content, /Raw XML: use read_file with offset=1/);
+    assert.doesNotMatch(read.content, /For bulk changes:|use start_process with a Python script/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -139,7 +151,9 @@ const workbookParts = {
     '<Relationship Id="rIdC" Target="/xl/drawings/commentsDrawing1.vml"/></Relationships>',
   'xl/comments/comment1.xml': '<comments><commentList><comment ref="A1"><text><t>KEEP_NOTE</t></text></comment></commentList></comments>',
   'xl/drawings/commentsDrawing1.vml': '<xml><shape id="note1"/></xml>',
-  'xl/styles.xml': '<styleSheet><cellXfs count="2"><xf/><xf numFmtId="0"/></cellXfs></styleSheet>',
+  'xl/styles.xml': '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts>' +
+    '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>',
   'docProps/core.xml': '<coreProperties><creator>TEST</creator></coreProperties>',
 };
 
@@ -180,6 +194,60 @@ test('openpyxl comment + VML ZIP survives targeted A1 edit; B1/C1/D1 and styles 
       change: { kind: 'table_range', sheet: 'Sheet1', range: 'E1',
         cells: [['new']] } }), /XLSX_EXISTING_CELL_REQUIRED/);
     assert.deepEqual(await readFile(input), original);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('openpyxl-style date serial uses custom number format; numeric cells remain numbers and ZIP parts stable', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-date-'));
+  try {
+    const dateRow = '<row r="2"><c r="A2" s="1" t="n"><v>46024</v></c>' +
+      '<c r="B2" s="0" t="n"><v>19.5</v></c></row>';
+    const document = worksheetXml.replace('</sheetData>', dateRow + '</sheetData>');
+    const input = fixture({ ...workbookParts, 'xl/worksheets/sheet1.xml': document });
+    const file = path.join(root, 'date.xlsx');
+    await writeFile(file, input);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const read = await adapter.handle('hostdeck_read_document', {
+      path: file, sheet: 'Sheet1', range: 'A2:B2'
+    }) as { content: unknown[][] };
+    assert.deepEqual(read.content, [['2026-01-02T00:00:00.000Z', 19.5]]);
+    const staged = await adapter.handle('hostdeck_edit_document', {
+      path: file, change: { kind: 'table_range', sheet: 'Sheet1', range: 'A1', cells: [['EDITED']] }
+    }) as { bytes: Uint8Array };
+    assert.deepEqual(await readFile(file), input);
+    const originalZip = uncompressedArchive(input), updatedZip = uncompressedArchive(staged.bytes);
+    for (const [entry, hash] of originalZip) {
+      if (entry !== 'xl/worksheets/sheet1.xml') assert.equal(updatedZip.get(entry), hash, entry);
+    }
+    const updated = new PizZip(staged.bytes).file('xl/worksheets/sheet1.xml').asText();
+    assert.match(updated, /<c r="A2" s="1" t="n"><v>46024<\/v><\/c>/);
+    assert.match(updated, /<c r="B2" s="0" t="n"><v>19\.5<\/v><\/c>/);
+    const stagedPath = path.join(root, 'dated-staged.xlsx');
+    await writeFile(stagedPath, staged.bytes);
+    const readBack = await adapter.handle('hostdeck_read_document', {
+      path: stagedPath, sheet: 'Sheet1', range: 'A2:B2'
+    }) as { content: unknown[][] };
+    assert.deepEqual(readBack.content, [['2026-01-02T00:00:00.000Z', 19.5]]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('openpyxl date1904 correctly shifts epoch without changing date-typed response or normal numbers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-date1904-'));
+  try {
+    const book = workbookXml.replace('<sheets>', '<workbookPr date1904="1"/><sheets>');
+    const dateRow = '<row r="2"><c r="A2" s="1" t="n"><v>44562</v></c>' +
+      '<c r="B2" s="0" t="n"><v>42</v></c></row>';
+    const document = worksheetXml.replace('</sheetData>', dateRow + '</sheetData>');
+    const bytes = fixture({ ...workbookParts, 'xl/workbook.xml': book,
+      'xl/worksheets/sheet1.xml': document });
+    const file = path.join(root, 'date1904.xlsx');
+    await writeFile(file, bytes);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const read = await adapter.handle('hostdeck_read_document', {
+      path: file, sheet: 'Sheet1', range: 'A2:B2'
+    }) as { content: unknown[][] };
+    assert.deepEqual(read.content, [['2026-01-02T00:00:00.000Z', 42]]);
+    assert.deepEqual(await readFile(file), bytes);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
