@@ -350,7 +350,7 @@ export class FullTextEngine {
         let originalMissing = false;
         try { await fs.lstat(matches[0].path); } catch (error) { originalMissing = isMissing(error); }
         if (originalMissing) {
-          try { await this.auth(c,'metadata',task.root,matches[0].path); movedId = matches[0].id; }
+          try { await this.auth(c,'index',task.root,matches[0].path); movedId = matches[0].id; }
           catch { /* Can't disclose a rename from inaccessible old metadata. */ }
         }
       }
@@ -398,7 +398,9 @@ export class FullTextEngine {
         // Root may be revoked midscan. No deletions/counts are disclosed unless
         // the current authority still admits this exact document metadata.
         try {
-          await this.auth(c,'metadata',old.root,old.path);
+          // Deletion is index maintenance: an absent old path has no read ACL.
+          // Authorize current root and its canonical parent, never reveal it.
+          await this.auth(c,'index',old.root,old.path);
           await this.auth(c,'scan',old.root,old.root);
           await this.verifyRoot(old.root);
         } catch {
