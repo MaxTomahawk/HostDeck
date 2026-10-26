@@ -63,8 +63,12 @@ function receive(child:ChildProcessWithoutNullStreams,pattern:RegExp,ms=12_000):
     child.once('exit',onExit);
   });
 }
+async function awaitExit(child:ChildProcessWithoutNullStreams):Promise<void>{
+  if (child.exitCode!==null || child.signalCode!==null) return;
+  await once(child,'exit');
+}
 async function terminateOwn(child:ChildProcessWithoutNullStreams):Promise<void>{
-  if(child.exitCode!==null)return;
+  if(child.exitCode!==null || child.signalCode!==null)return;
   const ended=once(child,'exit');
   child.kill('SIGKILL');
   await ended;
@@ -102,7 +106,7 @@ test('two real child processes: live contention, normal close, crash, OS lock re
     const snapshotBefore=snapshot(graceful.config.indexFile);
     const competing=worker(graceful.file,'probe');children.push(competing);
     assert.equal(await receive(competing,/^BUSY FULLTEXT_WRITER_BUSY$/),'BUSY FULLTEXT_WRITER_BUSY');
-    await once(competing,'exit');
+    await awaitExit(competing);
     assert.equal(snapshot(graceful.config.indexFile),snapshotBefore);
     assert.equal((await (async()=>{
       const p=await FullTextEngine.preview(graceful.config,principal,authorize);
@@ -110,23 +114,23 @@ test('two real child processes: live contention, normal close, crash, OS lock re
     })().then(()=>false,error=>error?.message==='FULLTEXT_WRITER_BUSY')),true);
     first.stdin.write('CLOSE\n');
     assert.equal(await receive(first,/^CLOSED$/),'CLOSED');
-    await once(first,'exit');
+    await awaitExit(first);
     const reopened=worker(graceful.file,'probe');children.push(reopened);
     assert.equal(await receive(reopened,/^OPENED interrupted$/),'OPENED interrupted');
-    await once(reopened,'exit');
+    await awaitExit(reopened);
 
     const holder=worker(crash.file,'hold');children.push(holder);
     assert.equal(await receive(holder,/^HELD running$/),'HELD running');
     const beforeCrash=snapshot(crash.config.indexFile);
     const denied=worker(crash.file,'probe');children.push(denied);
     assert.equal(await receive(denied,/^BUSY FULLTEXT_WRITER_BUSY$/),'BUSY FULLTEXT_WRITER_BUSY');
-    await once(denied,'exit');
+    await awaitExit(denied);
     assert.equal(snapshot(crash.config.indexFile),beforeCrash);
     // This kills ONLY the new test helper, simulating a real process crash.
     await terminateOwn(holder);
     const recovered=worker(crash.file,'probe');children.push(recovered);
     assert.equal(await receive(recovered,/^OPENED interrupted$/),'OPENED interrupted');
-    await once(recovered,'exit');
+    await awaitExit(recovered);
   }finally{
     for(const child of children)await terminateOwn(child);
     await rm(graceful.root,{recursive:true,force:true});
