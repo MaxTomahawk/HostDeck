@@ -27,7 +27,7 @@ export async function windowsAttributes(file:string):Promise<{hidden:boolean;sys
     const answer=await execFile(binary,[file],{
       shell:false,windowsHide:true,timeout:2500,maxBuffer:8192,encoding:'utf8',
     });
-    stdout=answer.stdout;stderr=answer.stderr;
+    stdout=String(answer.stdout);stderr=String(answer.stderr);
   }catch{throw new Error('FULLTEXT_ATTRIBUTES_UNAVAILABLE');}
   if(stderr.trim())throw new Error('FULLTEXT_ATTRIBUTES_UNAVAILABLE');
   const lines=stdout.split(/\r?\n/u).filter(Boolean);
