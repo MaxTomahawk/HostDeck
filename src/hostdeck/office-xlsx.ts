@@ -7,13 +7,14 @@
  * an ExcelJS whole-workbook round trip.
  */
 import path from 'node:path';
+import { RuntimeError } from './runtime-error.js';
 import { pizzipPackage } from '../utils/files/docx.js';
 import { decodeOfficeXml, escapeOfficeXml, requireSafeOfficeXml, validateOfficeStructure } from './office-xml.js';
 
 function open(buffer: Buffer): any { return new (pizzipPackage.load())(buffer); }
 function part(zip: any, name: string): string {
   const file = zip.file(name);
-  if (!file) throw new Error('XLSX_PART_MISSING');
+  if (!file) throw new RuntimeError('XLSX_PART_MISSING');
   const xml = file.asText();
   requireSafeOfficeXml(xml);
   return xml;
@@ -31,9 +32,9 @@ function columns(value: string): number {
 }
 function address(value: string): { row: number; col: number } {
   const m = /^([A-Z]{1,3})([1-9]\d{0,6})$/i.exec(value);
-  if (!m) throw new Error('XLSX_CELL_ADDRESS_INVALID');
+  if (!m) throw new RuntimeError('XLSX_CELL_ADDRESS_INVALID');
   const col = columns(m[1]), row = Number(m[2]);
-  if (col < 1 || col > 16384 || row > 1048576) throw new Error('XLSX_CELL_ADDRESS_INVALID');
+  if (col < 1 || col > 16384 || row > 1048576) throw new RuntimeError('XLSX_CELL_ADDRESS_INVALID');
   return { row, col };
 }
 function key(row: number, col: number): string {
@@ -43,9 +44,9 @@ function key(row: number, col: number): string {
 }
 function cellRange(value: string): { row: number; col: number; endRow: number; endCol: number } {
   const m = /^([A-Z]{1,3}[1-9]\d{0,6})(?::([A-Z]{1,3}[1-9]\d{0,6}))?$/i.exec(value);
-  if (!m) throw new Error('XLSX_EXPLICIT_RANGE_REQUIRED');
+  if (!m) throw new RuntimeError('XLSX_EXPLICIT_RANGE_REQUIRED');
   const start = address(m[1]), end = address(m[2] ?? m[1]);
-  if (end.row < start.row || end.col < start.col) throw new Error('XLSX_INVALID_RANGE');
+  if (end.row < start.row || end.col < start.col) throw new RuntimeError('XLSX_INVALID_RANGE');
   return { row: start.row, col: start.col, endRow: end.row, endCol: end.col };
 }
 interface Cell { name: string; start: number; end: number; attrs: string; inner: string; }
@@ -53,7 +54,7 @@ function cells(xml: string): Cell[] {
   const found: Cell[] = [];
   for (const match of xml.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
     const name = attribute(match[1], 'r');
-    if (!name) throw new Error('XLSX_MISSING_CELL_REFERENCE');
+    if (!name) throw new RuntimeError('XLSX_MISSING_CELL_REFERENCE');
     address(name);
     found.push({ name: name.toUpperCase(), start: match.index!, end: match.index! + match[0].length,
       attrs: match[1], inner: match[2] ?? '' });
@@ -96,14 +97,14 @@ function cellValue(cell: Cell, shared: string[]): unknown {
   if (type === 'inlineStr') return inline(cell.inner);
   if (type === 's') {
     const index = Number(raw);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= shared.length) throw new Error('XLSX_SHARED_STRING_INVALID');
+    if (!Number.isSafeInteger(index) || index < 0 || index >= shared.length) throw new RuntimeError('XLSX_SHARED_STRING_INVALID');
     return shared[index];
   }
   if (raw === undefined || raw === '') return null;
   if (type === 'b') return raw === '1';
   if (type === 'str' || type === 'e') return raw;
   const number = Number(raw);
-  if (!Number.isFinite(number)) throw new Error('XLSX_UNSUPPORTED_VALUE');
+  if (!Number.isFinite(number)) throw new RuntimeError('XLSX_UNSUPPORTED_VALUE');
   return number;
 }
 function sheetDetails(zip: any, selected?: string): { name: string; file: string; names: string[] } {
@@ -118,19 +119,19 @@ function sheetDetails(zip: any, selected?: string): { name: string; file: string
   }
   const selectedSheet = selected === undefined || selected === '' ? available[0]
     : /^\d+$/.test(selected) ? available[Number(selected)] : available.find(x => x.name === selected);
-  if (!selectedSheet) throw new Error('XLSX_SHEET_NOT_FOUND');
+  if (!selectedSheet) throw new RuntimeError('XLSX_SHEET_NOT_FOUND');
   const relations = new Map<string, { target: string; external: boolean }>();
   for (const m of refs.matchAll(/<Relationship\b[^>]*\/?>/g)) {
     const id = attribute(m[0], 'Id'), target = attribute(m[0], 'Target');
     if (id && target) relations.set(id, { target, external: attribute(m[0], 'TargetMode') === 'External' });
   }
   const relation = relations.get(selectedSheet.rel);
-  if (!relation || relation.external) throw new Error('XLSX_SHEET_RELATION_DENIED');
+  if (!relation || relation.external) throw new RuntimeError('XLSX_SHEET_RELATION_DENIED');
   const target = relation.target;
-  if (target.split('/').includes('..') || target.includes('\\')) throw new Error('XLSX_SHEET_RELATION_DENIED');
+  if (target.split('/').includes('..') || target.includes('\\')) throw new RuntimeError('XLSX_SHEET_RELATION_DENIED');
   const file = target.startsWith('/') ? target.slice(1) : path.posix.normalize(path.posix.join('xl', target));
   if (!/^xl\/worksheets\/[^/]+\.xml$/i.test(file) || !zip.file(file)) {
-    throw new Error('XLSX_SHEET_RELATION_DENIED');
+    throw new RuntimeError('XLSX_SHEET_RELATION_DENIED');
   }
   return { name: selectedSheet.name, file, names: available.map(x => x.name) };
 }
@@ -156,7 +157,7 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
   const values = new Map<string, unknown>();
   let lastRow = 1, lastCol = 1;
   for (const cell of cells(worksheet)) {
-    if (values.has(cell.name)) throw new Error('XLSX_DUPLICATE_CELL');
+    if (values.has(cell.name)) throw new RuntimeError('XLSX_DUPLICATE_CELL');
     values.set(cell.name, cellValue(cell, shared));
     const location = address(cell.name);
     lastRow = Math.max(lastRow, location.row);
@@ -167,7 +168,7 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
   const count = (selectedRange.endRow - selectedRange.row + 1) *
     (selectedRange.endCol - selectedRange.col + 1);
   if (count > 20000 || selectedRange.endRow - selectedRange.row + 1 > 1000) {
-    throw new Error('DOCUMENT_READ_LIMIT');
+    throw new RuntimeError('DOCUMENT_READ_LIMIT');
   }
   const data: unknown[][] = [];
   for (let row = selectedRange.row; row <= selectedRange.endRow; row++) {
@@ -183,12 +184,12 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
 export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range: string,
     newCells: unknown[][]): Buffer {
   if (!Array.isArray(newCells) || !newCells.every(row => Array.isArray(row))) {
-    throw new Error('DOCUMENT_CHANGE_INVALID');
+    throw new RuntimeError('DOCUMENT_CHANGE_INVALID');
   }
   const bound = cellRange(range);
   if (newCells.length > bound.endRow - bound.row + 1 ||
       newCells.some(row => row.length > bound.endCol - bound.col + 1)) {
-    throw new Error('XLSX_CONTENT_EXCEEDS_RANGE');
+    throw new RuntimeError('XLSX_CONTENT_EXCEEDS_RANGE');
   }
   const modifications = new Map<string, string | number | boolean | null>();
   for (let row = 0; row < newCells.length; row++) {
@@ -196,12 +197,12 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
       const value = newCells[row][col];
       if (value !== null && typeof value !== 'string' && typeof value !== 'boolean' &&
         !(typeof value === 'number' && Number.isFinite(value))) {
-        throw new Error('XLSX_CELL_VALUE_UNSUPPORTED');
+        throw new RuntimeError('XLSX_CELL_VALUE_UNSUPPORTED');
       }
       modifications.set(key(bound.row + row, bound.col + col), value as string | number | boolean | null);
     }
   }
-  if (!modifications.size) throw new Error('XLSX_EMPTY_EDIT');
+  if (!modifications.size) throw new RuntimeError('XLSX_EMPTY_EDIT');
   const zip = open(input), info = sheetDetails(zip, sheet);
   let xml = part(zip, info.file);
   validateOfficeStructure(xml, 'worksheet');
@@ -210,19 +211,19 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
   const changes: Array<{ start: number; end: number; content: string }> = [];
   for (const cell of existing) {
     if (!modifications.has(cell.name)) continue;
-    if (seen.has(cell.name)) throw new Error('XLSX_DUPLICATE_CELL');
+    if (seen.has(cell.name)) throw new RuntimeError('XLSX_DUPLICATE_CELL');
     seen.add(cell.name);
     // Never delete a shared/array/dataTable formula master or dependent. Even
     // replacing only one member invalidates the group's si/ref references.
     // Reject every attributed <f> conservatively (including unknown kinds).
     const formulaElement = /<f\b([^>]*?)(?:\/>|>)/.exec(cell.inner);
     if (formulaElement && formulaElement[1].trim()) {
-      throw new Error('XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED');
+      throw new RuntimeError('XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED');
     }
     // Reject unsupported cell-owned markup rather than deleting it silently.
     const remainder = cell.inner.replace(/<f\b[^>]*>[\s\S]*?<\/f>|<f\b[^>]*\/>|<v\b[^>]*>[\s\S]*?<\/v>|<v\s*\/>|<is\b[^>]*>[\s\S]*?<\/is>/g, '').trim();
     if (remainder || /\s(?:cm|vm|ph)\s*=/.test(cell.attrs)) {
-      throw new Error('XLSX_UNSUPPORTED_CELL_CONTENT');
+      throw new RuntimeError('XLSX_UNSUPPORTED_CELL_CONTENT');
     }
     let opening = cell.attrs.replace(/\s+t\s*=\s*(["'])[\s\S]*?\1/, '');
     const value = modifications.get(cell.name)!;
@@ -233,7 +234,7 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
     }
     if (typeof value === 'string') {
       if (value.startsWith('=')) {
-        if (!value.slice(1).trim()) throw new Error('XLSX_FORMULA_EMPTY');
+        if (!value.slice(1).trim()) throw new RuntimeError('XLSX_FORMULA_EMPTY');
         contents = '<f>' + escapeOfficeXml(value.slice(1)) + '</f><v/>';
       } else {
         type = ' t="inlineStr"';
@@ -245,7 +246,7 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
     } else contents = '<v>' + String(value) + '</v>';
     changes.push({ start: cell.start, end: cell.end, content: '<c' + opening + type + '>' + contents + '</c>' });
   }
-  if (seen.size !== modifications.size) throw new Error('XLSX_EXISTING_CELL_REQUIRED');
+  if (seen.size !== modifications.size) throw new RuntimeError('XLSX_EXISTING_CELL_REQUIRED');
   for (const change of changes.reverse()) {
     xml = xml.slice(0, change.start) + change.content + xml.slice(change.end);
   }
