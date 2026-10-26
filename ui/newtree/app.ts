@@ -3,6 +3,8 @@ import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { mountExtensionManager } from './extension-manager.js';
+import { parseManagerHostInput, parseManagerHostResult, applyManagerHostContext,
+  type ManagerToolInput, type ManagerHostContext } from './manager-host-context.js';
 
 const app = new App({ name: 'HostDeck Management', version: '1.1.0' }, {});
 const $ = <T extends HTMLElement>(selector: string, root: ParentNode = document) => root.querySelector<T>(selector)!;
@@ -13,6 +15,9 @@ const tokenInput = $('#token') as HTMLInputElement;
 const connection = $('#connection');
 let connected = false;
 let currentView = 'overview';
+let pendingManagerInput: ManagerToolInput | null = null;
+let pendingManagerContext: ManagerHostContext | null = null;
+let hostConnected = false;
 let client: Client | undefined;
 let transport: StreamableHTTPClientTransport | undefined;
 let activeSession = '';
@@ -48,7 +53,9 @@ function unwrap(value: any): any {
 async function call(name: string, extra: Record<string, unknown> = {}): Promise<any> {
   if (!connected) throw new Error('Connect to HostDeck first.');
   const deviceId = device.value.trim(); if (!deviceId) throw new Error('Enter the authorized device ID.');
-  const args = { device_id: deviceId, ...extra };
+  // Device ID is selected by this UI, never overridden by a nested tool
+  // argument. All requests still cross HostDeck's authenticated policy gate.
+  const args = { ...extra, device_id: deviceId };
   if (client) {
     const result: any = await client.callTool({ name, arguments: args });
     if (result.isError) throw new Error(result.content?.map((part: any) => part.text ?? '').join('\n') || 'HostDeck request failed.');
@@ -231,7 +238,39 @@ $('#connect').addEventListener('click', async () => {
 });
 $('#disconnect').addEventListener('click', async () => { await client?.close().catch(() => {}); client = undefined; transport = undefined; accessToken = undefined; connected = false; connection.hidden = false; status.textContent = 'Disconnected. Token cleared from memory.'; });
 if (window.parent !== window) {
-  void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => { connected = true; connection.hidden = true; status.textContent = 'Connected to HostDeck. Enter the authorized device ID.'; }).catch(() => { status.textContent = 'HostDeck MCP App connection unavailable.'; });
+  // Register MCP Apps SDK notifications BEFORE connect(). A host may send
+  // tool input/result during the ui/initialize handshake. Neither notification
+  // is trusted as identity, authorization, a grant, or an effect receipt.
+  const applyHostContext = () => {
+    const applied = applyManagerHostContext(pendingManagerContext, hostConnected, (deviceId, view) => {
+      device.value = deviceId;
+      device.readOnly = true; // Hosted manager device is chosen by a scoped tool.
+      currentView = view;
+      render(); // Calls inside render still use the authenticated facade.
+    });
+    if (applied) status.textContent = 'HostDeck manager context loaded. Device authorization is enforced by each tool call.';
+  };
+  app.ontoolinput = params => {
+    pendingManagerInput = parseManagerHostInput(params);
+    pendingManagerContext = null;
+    if (!pendingManagerInput) status.textContent = 'Invalid manager tool input. No device or view selected.';
+  };
+  app.ontoolresult = result => {
+    pendingManagerContext = parseManagerHostResult(result, pendingManagerInput);
+    if (!pendingManagerContext) {
+      status.textContent = 'Manager tool result rejected. No device or view selected.';
+      return;
+    }
+    applyHostContext();
+  };
+  void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => {
+    hostConnected = true;
+    connected = true;
+    connection.hidden = true;
+    if (!pendingManagerContext) status.textContent =
+      'Connected to HostDeck. Open the manager tool to select an authorized device.';
+    applyHostContext();
+  }).catch(() => { status.textContent = 'HostDeck MCP App connection unavailable.'; });
 } else {
   connection.hidden = false;
   if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') { $('#token').closest('label')!.hidden = true; $('#connect').textContent = 'Connect with Cloudflare Access'; status.textContent = 'Use the Cloudflare Access session for this protected HostDeck page.'; }
