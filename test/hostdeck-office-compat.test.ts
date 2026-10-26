@@ -251,6 +251,16 @@ test('openpyxl date1904 correctly shifts epoch without changing date-typed respo
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('publicError carries finite typed Office guard codes but suppresses arbitrary details', () => {
+  let observed: unknown;
+  try {
+    validateOfficeStructure(
+      '<w:document xmlns:w="urn:unrelated"><w:body/></w:document>', 'document');
+  } catch (error) { observed = error; }
+  assert.equal(publicError(observed), 'DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE');
+  assert.equal(publicError(new Error('private filename: SECRET_FIXTURE.docx')), 'IO_ERROR');
+});
+
 test('ExcelJS 4.4.0 formula values distinguish missing caches from existing cached primitives', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-formula-'));
   try {
@@ -420,7 +430,11 @@ test('shared and array formula targets are rejected before staging, but unrelate
     for (const target of ['C1', 'C2']) {
       await assert.rejects(adapter.handle('hostdeck_edit_document', { path: file,
         change: { kind: 'table_range', sheet: 'Sheet1', range: target, cells: [['broken']] } }),
-        /XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED/, target);
+        (error: unknown) => {
+          assert.match((error as Error).message, /XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED/);
+          assert.equal(publicError(error), 'XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED');
+          return true;
+        }, target);
       assert.deepEqual(await readFile(file), original);
     }
     const staged = await adapter.handle('hostdeck_edit_document', { path: file,
