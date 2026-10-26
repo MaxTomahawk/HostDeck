@@ -4,6 +4,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ExcelFileHandler } from '../utils/files/excel.js';
 import { DocxFileHandler, pizzipPackage } from '../utils/files/docx.js';
+import { replaceVisibleDocxXml } from './office-xml.js';
+import { isOpenpyxlCommentLayout, readOpenpyxlCommentWorkbook, editOpenpyxlCommentWorkbook } from './office-xlsx.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024;
@@ -71,6 +73,31 @@ async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): P
     if (!zip.file('word/document.xml')) throw new Error('DOCUMENT_INVALID_DOCX');
   }
   return buffer;
+}
+
+function replaceDocxBytes(input: Buffer, before: string, after: string, expected: number): Buffer {
+  if (!Number.isInteger(expected) || expected < 1 || expected > 10000) {
+    throw new Error('DOCX_EXPECTED_REPLACEMENTS_INVALID');
+  }
+  const zip = new (pizzipPackage.load())(input);
+  const names = Object.keys(zip.files)
+    .filter(name => /^word\/(?:document|header\d+|footer\d+)\.xml$/.test(name))
+    .sort((a, b) => a === 'word/document.xml' ? -1 : b === 'word/document.xml' ? 1 : a.localeCompare(b));
+  if (!names.includes('word/document.xml')) throw new Error('DOCUMENT_INVALID_DOCX');
+  const edits: Array<{ name: string; xml: string }> = [];
+  let actual = 0;
+  for (const name of names) {
+    const entry = zip.file(name);
+    if (!entry) continue;
+    const result = replaceVisibleDocxXml(entry.asText(), before, after);
+    actual += result.count;
+    if (result.count) edits.push({ name, xml: result.xml });
+  }
+  if (actual !== expected) {
+    throw new Error('Expected ' + expected + ' occurrence(s) but found ' + actual);
+  }
+  for (const edit of edits) zip.file(edit.name, edit.xml);
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
 
 function pdfLibrary(): { PDFDocument: any; StandardFonts: Record<string, string> } {
@@ -245,10 +272,19 @@ export class DocumentAdapter {
       await checkOfficeArchive(file, '.docx');
       const result = await new DocxFileHandler().read(file, { offset: 0, length: 1000 });
       if (result.content.length > 2_000_000) throw new Error('DOCUMENT_READ_LIMIT');
-      return { content: result.content, mimeType: 'text/plain', metadata: result.metadata };
+      const out = result.content.replace(
+        '\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.', '');
+      return { content: out + '\nFor literal visible-text replacements use hostdeck_edit_document with change.kind="text_replace", old_text, new_text and expected_replacements. This retains untouched DOCX parts; replacement text inherits the first affected run style.', mimeType: 'text/plain', metadata: result.metadata };
     }
     if (ext === '.xlsx' || ext === '.xlsm') {
       const buffer = await checkOfficeArchive(file, '.xlsx');
+      if (isOpenpyxlCommentLayout(buffer)) {
+        const data = readOpenpyxlCommentWorkbook(buffer, args.sheet as string | undefined, args.range as string | undefined);
+        return { content: data.data, mimeType: 'application/json',
+          metadata: { isExcelFile: true, sheets: data.sheetNames.map(name => ({ name })),
+            selectedSheet: data.sheetName, fileSize: buffer.length, commentPartsRetained: true,
+            compatibilityRead: 'Existing cell/formula values only; comment and visual layout are not rendered.' } };
+      }
       const result = await new ExcelFileHandler().read(file, { sheet: args.sheet as string | undefined, range: args.range as string | undefined, offset: 0, length: 1000 });
       const raw = String(result.content);
       const split = raw.lastIndexOf('\n\n');
@@ -294,14 +330,20 @@ export class DocumentAdapter {
       if (!change || typeof change.kind !== 'string') throw new Error('DOCUMENT_CHANGE_INVALID');
       if (ext === '.docx' && change.kind === 'text_replace') {
         if (typeof change.old_text !== 'string' || typeof change.new_text !== 'string') throw new Error('DOCUMENT_CHANGE_INVALID');
-        const handler = new DocxFileHandler();
-        const result = await handler.editRange(temp, '', { oldStr: escapeXmlText(change.old_text), newStr: escapeXmlText(change.new_text), expectedReplacements: change.expected_replacements });
-        if (!result.success) throw new Error(result.errors?.[0]?.error ?? 'DOCUMENT_EDIT_FAILED');
+        const edited = replaceDocxBytes(sourceBytes, change.old_text, change.new_text,
+          Number(change.expected_replacements ?? 1));
+        await fs.writeFile(temp, edited);
       } else if ((ext === '.xlsx' || ext === '.xlsm') && change.kind === 'table_range') {
         if (ext === '.xlsm') throw new Error('XLSM_EDIT_UNSUPPORTED_MACROS_PRESERVED');
         if (!Array.isArray(change.cells)) throw new Error('DOCUMENT_CHANGE_INVALID');
-        const range = `${String(change.sheet)}!${String(change.range)}`;
-        await new ExcelFileHandler().editRange(temp, range, change.cells);
+        if (isOpenpyxlCommentLayout(sourceBytes)) {
+          const edited = editOpenpyxlCommentWorkbook(sourceBytes, String(change.sheet),
+            String(change.range), change.cells as unknown[][]);
+          await fs.writeFile(temp, edited);
+        } else {
+          const range = `${String(change.sheet)}!${String(change.range)}`;
+          await new ExcelFileHandler().editRange(temp, range, change.cells);
+        }
       } else if (ext === '.pdf' && change.kind.startsWith('pdf_')) {
         const bytes = await this.editPdfBytes(sourceBytes, change);
         await fs.writeFile(temp, bytes);
