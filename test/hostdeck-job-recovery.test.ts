@@ -14,7 +14,9 @@ const submission={command:'Write-Output fixture-only',working_directory:'.',
   idempotency_key:'resume-never-fixture',timeout_seconds:20};
 
 async function reserved(root:string, status:'running'|'cancelling'='cancelling') {
-  const first=StateServices.create(options(root));
+  // Job metadata records native protocol at reservation, even when the fixture
+  // suppresses process launch. No executable is called here.
+  const first=StateServices.create({...options(root),desktopWorkerExecutable:path.join(root,'unused-native.exe')});
   const accepted=await first.handle('submit_job',submission,context) as {job_id:string;status:string};
   assert.equal(accepted.status,'queued','launchJobs:false never spawns a command');
   await first.close();
@@ -223,4 +225,118 @@ test('real Windows native cancel contains its own delayed descendant, not unrela
     if(contained||!jobId)await rm(root,{recursive:true,force:true});
     else t.diagnostic('Owned-job containment unconfirmed; isolated fixture preserved, never clear raw receipt or unrelated processes.');
   }
+});
+
+
+test('HD-B007-NATIVE-RECEIPT-SHAPE-001 damaged native receipt cannot downgrade on reopen',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-native-protocol-'));
+  let state:StateServices|undefined;
+  try{
+    // launchJobs:false: only private durable metadata and a simulated receipt.
+    const files=await reserved(root,'running');
+    const db=new DatabaseSync(path.join(root,'state.sqlite'));
+    try{
+      const row=db.prepare("SELECT payload FROM records WHERE kind='job' AND id=?").get(files.id) as {payload:string};
+      assert.equal(JSON.parse(row.payload).runnerProtocol,'native-job-object-v1',
+        'trusted protocol is persisted before any runner is launched');
+    }finally{db.close()}
+    const damaged={exitCode:0,stdout:'',stderr:''};
+    await emitReceipt(files,damaged);
+    state=StateServices.create({...options(root),desktopWorkerExecutable:path.join(root,'unused-native.exe')});
+    const got=await state.handle('read_job',{job_id:files.id},context) as
+      {job_id:string;status:string;message?:string;descendants_contained?:boolean;
+        stdout_artifact_id?:string;stderr_artifact_id?:string};
+    assert.equal(got.status,'uncertain','damaged native receipt must not be reported succeeded');
+    assert.notEqual(got.descendants_contained,true);
+    assert.match(got.message??'',/Native runner receipt is missing/);
+    assert.equal(got.stdout_artifact_id,undefined);
+    assert.equal(got.stderr_artifact_id,undefined);
+    assert.deepEqual(JSON.parse(await readFile(files.receipt,'utf8')),damaged,
+      'raw untrusted native receipt remains exactly available');
+    assert.equal(await readFile(files.stdout,'utf8'),'known stdout bytes');
+    assert.equal(await readFile(files.stderr,'utf8'),'known stderr bytes');
+    assert.equal(await state.handle('read_job',{job_id:files.id},
+      {...context,ownerId:'another_owner'}),null,'owner binding remains strict');
+    const repeat=await state.handle('submit_job',submission,context) as {job_id:string;status:string};
+    assert.equal(repeat.job_id,files.id,'existing key must not launch a new command');
+    assert.equal(repeat.status,'uncertain');
+    await state.close();state=undefined;
+    // Runtime configuration may have changed; the original job protocol cannot.
+    state=StateServices.create(options(root));
+    const reopened=await state.handle('read_job',{job_id:files.id},context) as
+      {status:string;message?:string};
+    assert.equal(reopened.status,'uncertain');
+    assert.equal(existsSync(files.receipt),true,'reopen cannot erase ambiguous effect evidence');
+  }finally{await state?.close();await rm(root,{recursive:true,force:true})}
+});
+
+test('known legacy job keeps exit semantics across reopen without claiming containment',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-known-legacy-'));
+  let first:StateServices|undefined,reopened:StateServices|undefined;
+  try{
+    first=StateServices.create(options(root));
+    const job=await first.handle('submit_job',submission,context) as {job_id:string;status:string};
+    assert.equal(job.status,'queued');
+    await first.close();first=undefined;
+    const db=new DatabaseSync(path.join(root,'state.sqlite'));
+    try{
+      const old=db.prepare("SELECT payload FROM records WHERE kind='job' AND id=?").get(job.job_id) as {payload:string};
+      const j=JSON.parse(old.payload);
+      assert.equal(j.runnerProtocol,'legacy-powershell-v1');
+      j.status='running';
+      db.prepare("UPDATE records SET payload=? WHERE kind='job' AND id=?")
+        .run(JSON.stringify(j),job.job_id);
+    }finally{db.close()}
+    const fileRoot=path.join(root,'receipts');
+    const receipt=path.join(fileRoot,job.job_id+'.json');
+    const stdout=path.join(fileRoot,job.job_id+'.out');
+    const stderr=path.join(fileRoot,job.job_id+'.err');
+    const raw={exitCode:0,timedOut:false,stdout:'',stderr:''};
+    await writeFile(receipt,JSON.stringify(raw),{flag:'wx'});
+    await writeFile(stdout,'actual legacy stdout',{flag:'wx'});
+    await writeFile(stderr,'',{flag:'wx'});
+    // Even a different current runtime selection may not reinterpret legacy
+    // metadata as a native receipt or fabricate descendant containment.
+    reopened=StateServices.create({...options(root),desktopWorkerExecutable:path.join(root,'unused-native.exe')});
+    const result=await reopened.handle('read_job',{job_id:job.job_id},context) as
+      {status:string;exit_code?:number;message?:string;descendants_contained?:boolean;stdout_artifact_id?:string};
+    assert.equal(result.status,'succeeded');
+    assert.equal(result.exit_code,0);
+    assert.equal(result.descendants_contained,undefined);
+    assert.match(result.message??'',/no verified descendant-containment/);
+    assert.ok(result.stdout_artifact_id);
+    const artifact=await reopened.handle('read_artifact',{artifact_id:result.stdout_artifact_id},context) as {data_base64:string};
+    assert.equal(Buffer.from(artifact.data_base64,'base64').toString(),'actual legacy stdout');
+    const repeat=await reopened.handle('submit_job',submission,context) as {job_id:string};
+    assert.equal(repeat.job_id,job.job_id);
+  }finally{
+    await reopened?.close();await first?.close();
+    await rm(root,{recursive:true,force:true});
+  }
+});
+
+test('historic protocol-less job stays uncertain and keeps private receipt bytes',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-unknown-protocol-'));
+  let state:StateServices|undefined;
+  try{
+    const files=await reserved(root,'running');
+    const db=new DatabaseSync(path.join(root,'state.sqlite'));
+    try{
+      const old=db.prepare("SELECT payload FROM records WHERE kind='job' AND id=?").get(files.id) as {payload:string};
+      const saved=JSON.parse(old.payload);
+      delete saved.runnerProtocol;  // Simulates a pre-metadata persisted job, not an automatic migration.
+      db.prepare("UPDATE records SET payload=? WHERE kind='job' AND id=?")
+        .run(JSON.stringify(saved),files.id);
+    }finally{db.close()}
+    const raw={exitCode:0,stdout:'',stderr:''};
+    await emitReceipt(files,raw);
+    state=StateServices.create({...options(root),desktopWorkerExecutable:path.join(root,'unused-native.exe')});
+    const result=await state.handle('read_job',{job_id:files.id},context) as {status:string;message?:string};
+    assert.equal(result.status,'uncertain');
+    assert.match(result.message??'',/Persisted runner protocol is unavailable/);
+    assert.deepEqual(JSON.parse(await readFile(files.receipt,'utf8')),raw);
+    assert.equal(await readFile(files.stdout,'utf8'),'known stdout bytes');
+    const repeated=await state.handle('submit_job',submission,context) as {job_id:string};
+    assert.equal(repeated.job_id,files.id);
+  }finally{await state?.close();await rm(root,{recursive:true,force:true})}
 });
