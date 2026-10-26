@@ -139,17 +139,23 @@ test('standalone panel keeps inputs during result updates and treats hostile too
     await step('connect MCP with fixture token', async () => {
       await page.locator('#token').fill('short-lived-fixture-token');
       await page.locator('#connect').click();
-      await page.waitForFunction(() => document.querySelector('#status')?.textContent
-        ?.includes('Enter the authorized device ID'));
+      try {
+        await page.waitForFunction(() => document.querySelector('#status')?.textContent
+          ?.includes('Enter the authorized device ID'));
+      } catch {
+        const message = await page.$eval('#status', element => element.textContent ?? 'Connection failed')
+          .catch(() => 'Connection failed: status unavailable');
+        assert.fail(message);
+      }
       assert.equal(authorization, 'Bearer short-lived-fixture-token');
-      assert.equal(await page.$eval('#token', (element: HTMLInputElement) => element.value), '');
+      assert.equal(await page.$eval('#token', element => (element as HTMLInputElement).value), '');
     });
 
     await step('authorized device and overview', async () => {
       await page.locator('#device').fill('fixture-device');
       await page.locator('#refresh').click();
       await page.waitForFunction(() => document.querySelector('#recent-jobs')?.textContent?.includes('Recent jobs'));
-      assert.equal(await page.$eval('#device', (element: HTMLInputElement) => element.value), 'fixture-device');
+      assert.equal(await page.$eval('#device', element => (element as HTMLInputElement).value), 'fixture-device');
     });
 
     await step('jobs page preserves escaped hostile tool text', async () => {
@@ -196,7 +202,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
 
     await step('function preference reflects saved Everything choice', async () => {
       await page.locator('.manager-tabs button:nth-of-type(2)').click();
-      assert.equal(await page.$eval('#provider-preference', (element: HTMLSelectElement) => element.value),
+      assert.equal(await page.$eval('#provider-preference', element => (element as HTMLSelectElement).value),
         'everything');
     });
 
@@ -208,7 +214,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
       await page.waitForFunction(() => document.querySelector('#preference-feedback')?.textContent
         ?.includes('changed externally'));
       assert.equal(preferenceWrites, 0, 'preflight conflict prevents a write');
-      assert.equal(await page.$eval('#provider-preference', (element: HTMLSelectElement) => element.value),
+      assert.equal(await page.$eval('#provider-preference', element => (element as HTMLSelectElement).value),
         'direct');
     });
 
@@ -236,7 +242,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
         .find(button => button.textContent === 'Read text file')?.click());
       await page.waitForFunction(() => (document.querySelector('#file-editor') as HTMLTextAreaElement | null)
         ?.value.includes('<script>'));
-      assert.equal(await page.$eval('#file-path', (element: HTMLInputElement) => element.value), 'notes.txt');
+      assert.equal(await page.$eval('#file-path', element => (element as HTMLInputElement).value), 'notes.txt');
       assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
     });
   } catch (error) {
