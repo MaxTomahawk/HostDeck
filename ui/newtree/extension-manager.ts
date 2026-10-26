@@ -144,6 +144,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   let limit = 30, busy = false, saving = false;
   let lastChange: { capability: string; preference: string | null; outcome: string; readback: string } | null = null;
   let requestedSerial = 0;
+  let snapshotDevice = '';
 
   function switchTab(target: 'library' | 'functions' | 'changes'): void {
     tab = target;
@@ -288,6 +289,12 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
       saving = true; apply.disabled = true; preference.disabled = true; fnSelect.disabled = true;
       refreshButton.disabled = true;
       const target = connection.deviceId();
+      if (!snapshotDevice || target !== snapshotDevice) {
+        saving = false; apply.disabled = false; preference.disabled = false; fnSelect.disabled = false;
+        refreshButton.disabled = false;
+        feedback.textContent = 'Device changed since provider inspection. Refresh live providers first; no write sent.';
+        return;
+      }
       lastChange = { capability: fn.capability, preference: desired, outcome: 'Preflight',
         readback: 'Not yet verified. Backend does not offer atomic revision preconditions or a durable manager receipt.' };
       feedback.textContent = 'Checking latest saved preference before any change…';
@@ -344,11 +351,11 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     try {
       const value = assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
       if (!current() || connection.deviceId() !== deviceAtStart || ordinal !== requestedSerial) return;
-      snapshot = value; entries = mergeManagerCatalog(value);
+      snapshot = value; snapshotDevice = deviceAtStart; entries = mergeManagerCatalog(value);
       liveStatus.textContent = 'Live status read from HostDeck for this device. Research-only candidates remain unknown.';
     } catch (error) {
       if (!current() || ordinal !== requestedSerial) return;
-      snapshot = null; entries = mergeManagerCatalog({ providers: [], functions: [] });
+      snapshot = null; snapshotDevice = ''; entries = mergeManagerCatalog({ providers: [], functions: [] });
       liveStatus.textContent = 'Live status unavailable: ' +
         (error instanceof Error ? error.message.slice(0, 180) : 'unknown error') +
         '. Research catalogue remains available without invented runtime observations.';
