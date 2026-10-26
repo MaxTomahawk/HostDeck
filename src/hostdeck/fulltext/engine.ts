@@ -276,6 +276,8 @@ export class FullTextEngine {
     await this.auth(c,'scan',task.root,task.path);
     const dir = await safeRealpath(task.path);
     if (!within(task.root,dir)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+    if(await excludedByFileAttributes(dir,this.config.includeHidden))
+      throw new Error('FULLTEXT_SCAN_ROOT_BECAME_HIDDEN');
     let count = 0, incomplete = false;
     const handle = await fs.opendir(dir);
     try {
@@ -520,6 +522,8 @@ export class FullTextEngine {
         await this.auth(c,'snippet',row.root,row.path);
         const canonical = await safeRealpath(row.path);
         if (!within(row.root,canonical)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+        if(await excludedByFileAttributes(canonical,this.config.includeHidden))
+          throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
       } catch { authorizationGaps=true; continue; }
       const body = this.db.prepare('SELECT body FROM docs_fts WHERE rowid=?').get(row.id) as {body:string}|undefined;
       if (!body || !satisfiesHanSubstrings(body.body,parsed.hanRuns)) continue;
@@ -559,6 +563,7 @@ export class FullTextEngine {
       if(isExcludedSource(this.config,row.path)){hiddenByAcl=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
+        if(await excludedByFileAttributes(row.path,this.config.includeHidden))throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
         const format=path.extname(row.path).toLowerCase() as FullTextFormat;
         const entry=coverage.get(format);
         if (row.state==='indexed') {
