@@ -277,6 +277,10 @@ export class FullTextEngine {
         // No unauthorized filenames or counts enter the durable queue.
         try { await this.auth(c,'scan',task.root,child); }
         catch { incomplete = true; continue; }
+        // Authorization may yield control; verify directory identity again
+        // before committing any discovered child name to the durable queue.
+        await this.verifyRoot(task.root);
+        await safeRealpath(dir);
         if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
         this.db.prepare('INSERT OR IGNORE INTO queue(path,root,depth,kind,run_id) VALUES(?,?,?,?,?)')
           .run(child,task.root,task.depth+1,kind,task.run_id);
