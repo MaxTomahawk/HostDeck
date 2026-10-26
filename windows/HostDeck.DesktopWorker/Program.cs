@@ -18,6 +18,19 @@ internal static class Program
     {
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
+        if (args.Length == 1 && args[0] == "--everything") {
+            try {
+                var ipcLine = Console.In.ReadLine();
+                if (ipcLine is null || ipcLine.Length > 65536) throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
+                using var request = JsonDocument.Parse(ipcLine);
+                Console.Out.WriteLine(JsonSerializer.Serialize(new { result = EverythingIpc.Execute(request.RootElement) }));
+            } catch (Exception error) {
+                var code = error is WorkerError known && known.Message.StartsWith("EVERYTHING_", StringComparison.Ordinal)
+                    ? known.Message : "EVERYTHING_UNAVAILABLE";
+                Console.Out.WriteLine(JsonSerializer.Serialize(new { error = code }));
+            }
+            return;
+        }
         // The launching user executor owns both pipe ends. No TCP listener or
         // service-side desktop injection is available in this process.
         if (args.Length == 2 && args[0] == "--job-status") {
@@ -397,7 +410,11 @@ internal static class Native
     internal static string LogonId()
     {
         if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0008, out var token)) return "unavailable";
-        try {
+        try { return TokenLogonId(token); }
+        finally { CloseHandle(token); }
+    }
+    internal static string TokenLogonId(nint token)
+    {
             var size = Marshal.SizeOf<TokenStatistics>();
             var buffer = Marshal.AllocHGlobal(size);
             try {
@@ -405,7 +422,6 @@ internal static class Native
                 var value = Marshal.PtrToStructure<TokenStatistics>(buffer);
                 return $"{value.AuthenticationId.HighPart:x8}{value.AuthenticationId.LowPart:x8}";
             } finally { Marshal.FreeHGlobal(buffer); }
-        } finally { CloseHandle(token); }
     }
     internal static string Integrity()
     {

@@ -4,23 +4,30 @@ import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseToolArguments } from './contracts.js';
+import {RuntimeError} from './runtime-error.js';
+import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
+import type {EverythingClient} from './everything.js';
 
 const execFile = promisify(execFileCallback);
-const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes'] as const;
+const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference'] as const;
 const MAX_TRAVERSAL_ENTRIES = 100_000;
 const MAX_SEARCH_MATCHES = 10_000;
 const MAX_SEARCH_RESULT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_FILE_BYTES = 1024 * 1024;
 const SEARCH_RETENTION_MS = 10 * 60_000;
 
-export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; }
+export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; sessionId?:number;sessionIds?:readonly number[]; }
 export type Reauthorize = (name: string, args: Record<string, unknown>) => Promise<void>;
-interface SearchMatch { path: string; kind: 'file' | 'content'; line?: number; text?: string; }
+interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback'; }
 interface SearchJob {
   id: string; owner: FileOwnerContext; root: string; pattern: string; mode: 'files' | 'content'; regex?: RegExp;
   includeHidden: boolean; deadline: number; resultLimit: number; matches: SearchMatch[]; bytes: number;
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
+  provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
+  provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
+  coverageTruncated:boolean;rootIsFile:boolean;
 }
+interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;}
 
 function inside(root: string, value: string): boolean {
   const relative = path.relative(root, value);
@@ -47,12 +54,12 @@ function psQuote(value: string): string { return `'${value.replace(/'/g, "''")}'
 export class FileAdapter {
   readonly implementedTools = new Set<string>(TOOL_NAMES);
   private readonly searches = new Map<string, SearchJob>();
-  private constructor(private readonly workspace: string, private readonly reauthorize?: Reauthorize) {}
+  private constructor(private readonly workspace: string, private readonly reauthorize?: Reauthorize,private readonly options?:FileOptions) {}
 
-  static async create(options: { workspace: string; reauthorize?: Reauthorize }): Promise<FileAdapter> {
+  static async create(options: FileOptions): Promise<FileAdapter> {
     if (!path.isAbsolute(options.workspace)) throw new Error('FILES_WORKSPACE_MUST_BE_ABSOLUTE');
     await fs.mkdir(options.workspace, { recursive: true });
-    return new FileAdapter(await fs.realpath(options.workspace), options.reauthorize);
+    return new FileAdapter(await fs.realpath(options.workspace), options.reauthorize,options);
   }
 
   private async guardPath(input: unknown, allowMissing = false): Promise<{ absolute: string; stat?: import('node:fs').Stats }> {
@@ -103,6 +110,14 @@ export class FileAdapter {
       case 'hostdeck_search_results': return this.searchResults(args, context);
       case 'hostdeck_stop_search': return this.stopSearch(args, context);
       case 'hostdeck_list_processes': return this.listProcesses(args);
+      case 'hostdeck_list_providers': return this.listProviders(context);
+      case 'hostdeck_set_provider_preference': {
+        if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
+        if(!this.reauthorize)throw new RuntimeError('DENIED');
+        await this.authorize(name,args);
+        await this.options.providers.set(context,args.capability as SearchCapability,args.provider as SearchProvider|null);
+        return {capability:args.capability,preference:args.provider,scope:'owner_device_function',updated:true};
+      }
       default: throw new Error('UNKNOWN_FILE_OPERATION');
     }
   }
@@ -239,22 +254,88 @@ export class FileAdapter {
     for (const [id, job] of this.searches) if (job.done) this.searches.delete(id);
   }
 
+  private async listProviders(context:FileOwnerContext):Promise<unknown> {
+    let everything:unknown={installed:null,enabled:false,running:null,compatible:null,healthy:false,reason:'not_configured',qualified:'not_independently_accepted'};
+    if(this.options?.everything)try{this.authorizeEverythingSession(context);everything=await this.options.everything.status();}
+    catch(e){everything={installed:null,enabled:true,running:null,compatible:null,healthy:false,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
+    return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true},
+      {id:'everything',capabilities:['files.name'],...(everything as object)}],functions:await Promise.all((['files.name','files.content'] as const).map(async capability=>({
+        capability,preference:await this.options?.providers?.preference(context,capability)??null,default:'direct',selected:await this.options?.providers?.select(context,capability)??'direct'})))};
+  }
+
+  private authorizeEverythingSession(context:FileOwnerContext):void {
+    if(!this.options?.everything||!context.sessionIds?.includes(this.options.everything.sessionId)
+      ||context.sessionId!==undefined&&context.sessionId!==this.options.everything.sessionId)throw new RuntimeError('EVERYTHING_WRONG_SESSION');
+  }
+
   private async startSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     this.pruneSearches();
     if (this.searches.size >= 100) throw new Error('SEARCH_CAPACITY_REACHED');
     const root = await this.guardPath(args.path);
     const pattern = args.pattern as string;
     const literal = args.literal as boolean;
+    const capability=args.mode==='content'?'files.content':'files.name';
+    const provider=await this.options?.providers?.select(context,capability,args.provider as SearchProvider|undefined)??args.provider as SearchProvider|undefined??'direct';
+    if(provider==='everything'&&capability!=='files.name')throw new RuntimeError('PROVIDER_CAPABILITY_UNSUPPORTED');
+    if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
+    if(provider==='everything')this.authorizeEverythingSession(context);
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
       regex: safePattern(pattern, literal), includeHidden: args.include_hidden as boolean,
       deadline: Date.now() + (args.timeout_ms as number), resultLimit: Math.min(args.limit as number, MAX_SEARCH_MATCHES),
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
+      provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
+      coverageTruncated:false,rootIsFile:root.stat?.isFile()===true,
     };
     this.searches.set(job.id, job);
-    void this.runSearch(job);
-    return { search_id: job.id, state: 'running', result_limit: job.resultLimit };
+    void (provider==='everything'?this.runEverything(job):this.runSearch(job));
+    return { search_id: job.id, state: 'running', result_limit: job.resultLimit,provider,retention_ms:SEARCH_RETENTION_MS };
+  }
+
+  private async runEverything(job:SearchJob):Promise<void> {
+    try {
+      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal);
+      job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
+      const seen=new Set<string>();
+      for(const candidate of result.paths){
+        if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
+        // Do not expose engine counts or unchecked paths, even on malformed replies.
+        if(!inside(job.root,candidate)||!inside(this.workspace,candidate))continue;
+        let safe:Awaited<ReturnType<FileAdapter['guardPath']>>;
+        try{safe=await this.guardPath(candidate);}catch{continue;}
+        if(!safe.stat||(!safe.stat.isFile()&&!safe.stat.isDirectory()))continue;
+        const fromRoot=path.relative(job.root,safe.absolute);
+        if(!job.rootIsFile&&fromRoot==='')continue;
+        const components=fromRoot?fromRoot.split(path.sep):[];
+        if(components.length>21){job.coverageTruncated=true;continue;}
+        const relative=this.relative(safe.absolute);
+        if(seen.has(relative))continue;seen.add(relative);
+        if(!job.includeHidden&&components.some(p=>p.startsWith('.')))continue;
+        job.visited++;
+        await this.inspectSearchEntry(job,safe.absolute,safe.stat);
+      }
+      job.truncated ||= result.truncated;
+    }catch(e){if(!job.stopped||e instanceof RuntimeError&&e.code==='EVERYTHING_TERMINATION_UNCERTAIN')job.error=e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE';}
+    finally{this.finishSearch(job);}
+  }
+
+  private finishSearch(job:SearchJob):void {
+    job.truncated ||= job.coverageTruncated;
+    if(job.sort)job.matches.sort((a,b)=>{
+      const key=(m:SearchMatch)=>job.sort==='name'?path.basename(m.path):m.path;
+      const x=key(a),y=key(b);return x<y?-1:x>y?1:a.path<b.path?-1:a.path>b.path?1:0;
+    });
+    job.done=true;job.touchedAt=Date.now();
+  }
+
+  private async inspectSearchEntry(job:SearchJob,file:string,stat:import('node:fs').Stats):Promise<void> {
+    if(job.mode==='content'){if(stat.isFile())await this.inspectSearchFile(job,file,stat.size,MAX_CONTENT_FILE_BYTES);return;}
+    if(stat.isDirectory()&&job.entryType==='files'||stat.isFile()&&job.entryType==='directories')return;
+    if(!stat.isDirectory()&&!stat.isFile())return;
+    const relative=this.relative(file);
+    if(job.regex!.test(path.basename(file))||job.regex!.test(relative))this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
+      ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),metadata_source:'filesystem_readback' as const}:{})});
   }
 
   private async runSearch(job: SearchJob): Promise<void> {
@@ -278,17 +359,20 @@ export class FileAdapter {
             const full = path.join(current.target, entry.name);
             const childStat = await fs.lstat(full);
             if (isReparseOrLink(childStat)) continue;
-            if (childStat.isDirectory() && current.level < maxDepth) queue.push({ target: full, level: current.level + 1 });
-            else if (childStat.isFile()) await this.inspectSearchFile(job, full, childStat.size, maxFile);
+            if (childStat.isDirectory()) {
+              if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
+              else job.coverageTruncated=true;
+            }
+            await this.inspectSearchEntry(job,full,childStat);
             if (job.stopped || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline) { job.truncated ||= !job.stopped && (job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline); break; }
           }
         } else if (currentStat.isFile()) {
           job.visited++;
-          await this.inspectSearchFile(job, current.target, currentStat.size, maxFile);
+          await this.inspectSearchEntry(job,current.target,currentStat);
         }
       }
     } catch (error) { job.error = error instanceof Error ? error.message : 'SEARCH_FAILED'; }
-    finally { job.done = true; job.touchedAt = Date.now(); }
+    finally { this.finishSearch(job); }
   }
 
   private async inspectSearchFile(job: SearchJob, file: string, size: number, maxFile: number): Promise<void> {
@@ -318,7 +402,9 @@ export class FileAdapter {
 
   private searchFor(id: string, context: FileOwnerContext): SearchJob {
     const job = this.searches.get(id);
-    if (!job || !ownerMatches(job.owner, context)) throw new Error('SEARCH_NOT_OWNED');
+    if (!job || !ownerMatches(job.owner, context)) throw new RuntimeError('SEARCH_NOT_OWNED');
+    if(job.provider==='everything')this.authorizeEverythingSession(context);
+    if(job.done&&Date.now()-job.touchedAt>SEARCH_RETENTION_MS){this.searches.delete(id);throw new RuntimeError('SEARCH_EXPIRED');}
     job.touchedAt = Date.now();
     return job;
   }
@@ -326,13 +412,17 @@ export class FileAdapter {
   private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     const job = this.searchFor(args.search_id as string, context);
     const offset = args.offset as number; const limit = args.limit as number;
-    return { search_id: job.id, items: job.matches.slice(offset, offset + limit), offset, total_results: job.matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.stopped ? 'stopped' : job.error ? 'failed' : 'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit, job.matches.length) };
+    // Sorted snapshots are published only when sealed, so page offsets cannot shift.
+    const matches=job.sort&&!job.done?[]:job.matches;
+    const items:SearchMatch[]=[];
+    for(const match of matches.slice(offset,offset+limit))try{await this.guardPath(match.path);items.push(match);}catch{/* Changed targets never become extra read authority. */}
+    return { search_id: job.id,provider:job.provider,...(job.provenance?{provenance:job.provenance}:{}), items, offset, total_results:matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':job.stopped ? 'stopped' : job.error ? 'failed' : job.truncated?'partial':'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit,matches.length),snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS };
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     const job = this.searchFor(args.search_id as string, context);
     if (job.done) return { search_id: job.id, stopped: false, complete: true };
-    job.stopped = true; job.touchedAt = Date.now();
+    job.stopped = true; job.abort.abort(); job.touchedAt = Date.now();
     return { search_id: job.id, stopped: true, complete: false };
   }
 

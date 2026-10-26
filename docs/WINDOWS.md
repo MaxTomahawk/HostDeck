@@ -1,5 +1,9 @@
 # Windows lifecycle and desktop adapter
 
+The optional Everything provider uses a bounded `--everything` one-request native child in the authorized user session. It never starts or controls the vendor app/service. Configuration pins the existing executable, SHA-256, exact file version and named/default instance. Each observation checks the worker's eligible medium user/session/logon context and the target process's executable, SID, session, token elevation and authentication/logon ID before local IPC2 traffic. Each query has its own reply window and child lifetime; cancellation affects only that child. Only an escaped authorized root enters the vendor query; original HostDeck matching, path checks and metadata readback remain in the file adapter. No vendor DLL or extra network service is required. Exact-tuple local tests do not qualify other versions, lifecycle or ordinary ChatGPT.
+
+Filtered user execution includes an action-local `PATHEXT=.COM;.EXE;.BAT;.CMD`. This makes Windows PowerShell native invocation wait for the actual child and preserve its stdout and exit code; machine-wide environment settings are untouched.
+
 The native JSON-lines channel and PowerShell command output use UTF-8. HostDeck
 suppresses PowerShell progress records; interactive output keeps decoder state
 across pipe chunks. Unicode PDF creation/insertion uses the configured Chromium

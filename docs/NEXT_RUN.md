@@ -1,5 +1,70 @@
 # HostDeck next run
 
+## Active execution plan — 2026-10-26 / HD-DELIVERY-B007
+
+**Goal:** HD-GOAL-COMPLETE-WINDOWS-001. Deliver the complete existing product and extension support, with a genuinely usable Everything integration first. This plan supersedes the old next-action ordering below; historical failures and acceptance limits remain intact.
+Everything is an internal build dependency, not a separate stopping or handoff milestone. Continue the remaining authorized product work after its integration.
+
+**Inputs:** private research commit `e1353f01e48140bcafa12866c99e414b8844137f`, `docs/delivery/CODEX_START.md`, the seven linked delivery documents, all 140 requirement mappings, eight policy clauses, 79 candidate dispositions and 18 Everything criteria. B005 decisions govern their exact clauses; fallback and the additional Windows entry point remain parked. Private evidence and configuration stay outside tracked source.
+
+**Source:** candidate `03a63cc90872d02618d473db74d4565f04e46eb2`, isolated branch `codex/everything-b007`. Main remains `4f9ebe8d3358ebfbc8ab6278ad97a4774d3df114`; PRs 9/11/12/13 remain an unmerged stack. Existing untracked test fixtures are preserved in the original checkout. Use the existing Operator W5 integration task with a valid lease/fence; W2 retains Windows lifecycle ownership. Task completion is not acceptance.
+
+### Verified baseline and evidence boundaries
+
+- Windows 11 x64 build 26220; the local executor is an unelevated, eligible medium-integrity user in session 1. HostDeck service runs automatically as LocalService; tray and desktop workers exist in the user session. No lifecycle transition was tested in this baseline.
+- HD-B007-BASELINE-001 checked all 22,997 installed manifest entries: no mismatches. The installed stdio runtime discovers 53 tools, reports ready, and exposes three prompts and four resource templates. Local health returns 200; unauthenticated MCP returns 403. Current grants are unexpired. This proves installed-manifest consistency, not complete source/build equivalence or independent ChatGPT acceptance.
+- Local `npm ci --ignore-scripts --no-fund --no-audit`, `npm run build:hostdeck`, and focused file/contract tests pass (14 tests). Required build commands were inspected; inherited setup, telemetry and release hooks were not invoked.
+- Everything executable metadata reports 1.5.0.1423b. Registry also retains a 1.4 entry; only one installation directory was found in the inspected machine installation roots. Only the indexing service is currently observed, in session 0. No query-ready user instance or installed ES client is established. Index configuration and startup observations are retained privately; absence of a query app is not an empty index.
+- Preserve R04-B003 failures, particularly URL validation after the newer schema, native child execution/environment, document runs/formulas/comments, OCR/PDF ordering, stale GUI references and cancel uncertainty. The browser issue cannot be closed by repeating the old cache explanation.
+
+**Current local evidence:** the existing Everything app was started unelevated in the selected session with `-startup`; its original INI hash remains unchanged. After an observed loading interval, the actual default instance became query-ready. Native IPC/HostDeck fixture tests passed exact Unicode/NFC/NFD names, metadata, owner paging, rename/modify/delete, literal operator-like input, readback and exact cleanup. Candidate MCP run HD-B007-MCP-003 passed 31 calls using the release native worker and existing grants/enrollment; 51 discovery names exclude the deliberately unconfigured administration adapter. HD-B007-MCP-001's path-notation failure is retained and linked to a native regression. One independent source review found six boundary defects; focused red/green tests now cover volume-root matching, target-token logon, depth siblings, explicit hidden roots, cancelled-child exit acknowledgement and current-session page authorization. The subsequent integrated local Windows run passed 26 tests with no skips; native root/token boundary checks also passed.
+
+**Installed effect:** an exact 20-target update with protected byte/ACL rollback was applied through the existing signed broker. Separate readback verified target hashes/ACLs and preserved grants, enrollment, previous package and Everything INI. The user agent stopped gracefully and restarted; local health is 200 and unauthenticated MCP is 403. HD-B007-INSTALLED-MCP-001 passed 31 actual installed calls and discovers 55 tools, including both new provider operations. The connected App reports the device ready. This is installed local evidence; current-chat tool caching, independent ordinary-ChatGPT Everything acceptance, representative measurement and lifecycle remain open. Continue the retained complete-product work below.
+
+### First build round: HD-WP-01/02/03
+
+**Architecture:** keep the authorized facade and current search handles. Add a small provider registry and an instance-bound Everything adapter within the user execution boundary. Existing filename/content search remains the named direct provider. Provider observations, qualification and selection remain separate. Preferences bind owner/device/function and survive provider unavailability and competitor registration.
+
+**Technical route:** inspect the vendor ES and SDK/IPC contracts against the actual installation. Qualify local IPC without adding a network server or bundling an unreviewed vendor binary; compare an ES route only if an exact usable client is available or separately approved. Record correctness, session binding, dependency and measured invocation costs. SDK reference bytes and provenance remain private until their exact redistribution use is reviewed.
+
+1. [x] **HD-WP-00 / W5:** read the pinned canon and source/security documents, preserve worktree changes, inspect Windows/install/grants/Everything, and establish this single plan. Keep runtime fingerprints and raw receipts private. Review the complete 140/8/79/18 maps without changing their historical verdicts.
+2. [ ] **Native execution prerequisite / W5 with W2 follow-up:** reproduce native stdout, UTF-8 and nonzero exit behavior under the actual filtered environment; inspect `src/hostdeck/main.ts`, `user-processes.ts`, and `windows/HostDeck.DesktopWorker/{InteractiveProcesses,JobRunner}.cs`. Correct only the demonstrated layer. Verify a real native child and descendant cleanup; wrapper exit zero alone is insufficient. Link HD-REQ-0034/0035/0043 and R04-B003-F008.
+3. [ ] **Provider foundation / W5:** add `src/hostdeck/providers.ts` and focused provider tests; extend `contracts.ts`, `files.ts` and `main.ts` with explicit provider selection, compact provider status and authorized preference management. Persist only HostDeck-owned preferences outside the workspace. Stable direct defaults, temporary overrides, other-owner/device/function isolation, unavailable preference preservation and no competitor override must pass. Link HD-REQ-0064/0066/0078/0092–0100/0104 and policies 0002/0003/0005/0006.
+4. [ ] **Everything adapter / W5:** add `src/hostdeck/everything.ts` and the minimal native IPC component in `windows/HostDeck.DesktopWorker`. Bind exact executable, hash/version, instance, PID/start identity and eligible SID/session; distinguish service, app, compatibility, DB readiness and health. Fail on ambiguous/missing/wrong-session instances. Use bounded request/reply sizes, deadlines, cancel and owned process handles. No automatic install, restart or fallback. Link HD-REQ-0007/0095–0097/0101 and criteria 01/02/12/13.
+5. [ ] **Search integration / W5:** preserve existing file/content semantics and root authorization; add only explicit file/folder and metadata/sort options with documented defaults. Escape provider query syntax, enforce canonical/reparse boundaries before paths/metadata/counts, and keep owner-bound immutable page prefixes/snapshots, generation and expiry. Recheck current access at page read. Link HD-REQ-0016/0019/0021/0025/0064/0078/0080 and criteria 03–11.
+6. [ ] **Real local effect / W5:** run an exact owned fixture corpus with collisions, folders, Unicode/NFC/NFD, apostrophes, operator-like input, excluded scope, metadata, paging, create/rename/modify/delete and separate content-mode controls. Compare exact paths/values against an independent filesystem manifest; read/hash an authorized hit. Exercise absent/loading/timeout/cancel/error and cleanup without killing ordinary apps. Preserve failed attempts with retest links. Criteria 01–14/18 retain separate case verdicts.
+7. [ ] **Bounded activation/install diff / W5 with W2:** prepare exact candidate file hashes, app/instance invocation, own integration config, preconditions, config preservation, rollback and effect checks before any installed change. Reuse existing signed administration only where necessary and currently healthy. Do not alter Everything index scope, update channel, grants, remote infrastructure or shared startup implicitly. A new consequential system choice blocks only its dependent action. Criteria 14/16; installed/source equivalence remains explicit.
+8. [ ] **Measurement and independent delivery / W5:** sample finite idle and active workloads separately; record native invocation and total MCP duration, bytes/calls, CPU/RAM/process I/O and network attribution limits. No invented budget or token/performance PASS. Prepare an exact independent ordinary-ChatGPT acceptance handoff for criteria 17 and relevant earlier failures; source/stdio results do not close E4. Desktop, hosted App and mobile variants remain distinct. Run one integrated local acceptance pass after changed paths pass; review the branch once, then exact-file public-source screening before a commit/PR. No Actions or stable release.
+
+### Retained complete product work
+
+| Package / owner | Remaining delivery and next step |
+|---|---|
+| HD-WP-01 / W5, W2 desktop | Repair remaining document, browser connector, input/clipboard/OCR, process/job uncertainty and management registration defects using their original failure oracles. Preserve files, documents, terminals, jobs, artifacts, events, browser, desktop and all 54 source contracts. |
+| HD-WP-04 / W5, W4 source | Extend the existing management surface with library/categories/search/filter/sort/group/details, separate installation/runtime/qualification/health axes, provider preferences and reviewable lifecycle actions. Compact conversation; full manager on request. Real supported host rendering and accessibility require acceptance. |
+| HD-WP-05 / W5 | Document full-text on explicitly chosen locations remains planned; obtain the concrete corpus/types/resource/freshness choices before indexing. Do not infer an engine, semantic model or whole-drive content index. |
+| HD-WP-06 / W2, W5 integration | Current broker health and exact receipts; intended-client binding beyond same-SID signing; auth renewal/revocation, installer/service/tray, logoff/logon/crash/reboot, job recovery and actual upgrade/rollback. Prepare disruptive transitions individually under their concrete mandate. |
+| HD-WP-07 / W5 | Keep all 79 catalogued candidates and their existing dispositions/provenance. Qualify and build chosen integrations by exact version/capability/context; no bulk installation or silent rejection. PowerToys entry/fallback remain parked. |
+| HD-WP-08 / independent evaluator, W5 integration | Independent ordinary-ChatGPT and composed product scenarios, all applicable 140 requirements/eight policies/17 quality gates, privacy/licensing/history disposition, reviewed tested main and real release lifecycle. None is closed by this first search delivery. |
+
+### Nine atomic gaps: explicit owners and next oracles
+
+| Requirement | Owner / next concrete criterion |
+|---|---|
+| HD-REQ-0015 | W2 supplies startup dependency/CPU/RAM samples; W5 verifies a finite idle baseline and active comparison against the same process identities. |
+| HD-REQ-0123 | W5 checks each bounded admin intent includes the broader authorized goal before submission. |
+| HD-REQ-0124 | W5 tests a valid administrative request without project context; missing project is not missing authority. |
+| HD-REQ-0125 | W5 verifies the receipt identifies the exact action, separate from goal prose. |
+| HD-REQ-0126 | W5 records measurable expected effects and independent poststate, including no-effect/failure variants. |
+| HD-REQ-0127 | W5 verifies UTC audit timestamps and Europe/Amsterdam display across the DST boundary. |
+| HD-REQ-0128 | W5 checks initiating surface and available chat identifier are retained honestly; unavailable identity is explicit. |
+| HD-REQ-0129 | W5 links bounded repair iterations to one existing mandate and reconciles uncertain effects without replay. |
+| HD-REQ-0132 | W2/W5 record finite disk/network/polling/background observations and attribution limits alongside CPU/RAM; no zero-overhead inference. |
+
+Evidence format: requirement/revision → decision/policy → Operator task → source/build/config/provider tuple → testcase/run → actual input/expected/observed/readback/UTC timestamps/cleanup → verdict and limitations → separate independent retest. Raw records stay private; public changes contain only reviewed safe summaries. Existing failures remain immutable. No new automation, watcher or upstream monitor.
+
+## Historical checkpoints (retain evidence; not the active plan)
+
 ## Checkpoint — 2026-10-22
 
 The owner's independent ordinary-ChatGPT retest accepts the installed Unicode PDF/insert, UIA value readback, interactive output, owned process inventory, durable Unicode job/artifact integrity, stale-element and edit-conflict results, and exact empty-directory cleanup. This is targeted evidence, not full product acceptance. Do not rerun those unchanged paths or replay completed jobs.

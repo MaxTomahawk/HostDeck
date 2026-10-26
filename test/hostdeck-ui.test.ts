@@ -28,6 +28,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
         const name = message.params.name;
         const value = name === 'hostdeck_device_status' ? { sessions: [{ session_id: 12, eligible: true }], executor_id: 'fixture-executor' }
           : name === 'hostdeck_list_jobs' ? { jobs: [{ job_id: 'job1', state: 'running', command: '<img src=x onerror=window.pwned=1>' }] }
+            : name === 'hostdeck_list_providers' ? {providers:[{id:'direct',installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true},{id:'everything',installed:true,enabled:true,running:true,compatible:true,healthy:false,reason:'loading',qualified:'not_independently_accepted'}],functions:[{capability:'files.name',preference:'everything',default:'direct',selected:'everything'},{capability:'files.content',preference:null,default:'direct',selected:'direct'}]}
             : name === 'hostdeck_read_file' ? { content: '<script>window.pwned=2</script>' }
               : name === 'hostdeck_list_directory' ? { entries: [{ path: 'safe.txt', type: 'file' }] } : {};
         result = { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
@@ -52,6 +53,10 @@ test('standalone panel keeps inputs during result updates and treats hostile too
     await page.locator('nav button[data-view="jobs"]').click();
     await page.waitForFunction(() => document.querySelector('#content')?.textContent?.includes('<img src=x onerror=window.pwned=1>'));
     assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
+    await page.locator('nav button[data-view="providers"]').click();
+    await page.waitForFunction(() => document.querySelector('#provider-status')?.textContent?.includes('loading'));
+    assert.match(await page.$eval('#provider-status',element=>element.textContent??''),/not_independently_accepted/);
+    assert.equal(await page.$eval('#provider-preference',(element:any)=>element.value),'everything');
     await page.locator('nav button[data-view="files"]').click();
     await page.locator('#file-path').fill('notes.txt'); await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Read text file')?.click());
     await page.waitForFunction(() => (document.querySelector('#file-editor') as HTMLTextAreaElement | null)?.value.includes('<script>'));

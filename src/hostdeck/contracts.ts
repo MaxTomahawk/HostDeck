@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export const contractVersion = '1.0.0';
+export const contractVersion = '1.1.0';
 export type Domain = 'user' | 'desktop' | 'browser' | 'service' | 'management';
 export type Effect = 'read' | 'write' | 'execute' | 'control' | 'manage';
 export interface ToolContract {
@@ -87,7 +87,9 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('move_file', 'Move an authorized file without implicit overwrite.', { source: path, destination: path, overwrite: z.boolean().default(false) }, ['files:write'], 'user', 'write'),
   tool('delete_path', 'Delete or recycle an explicitly authorized path.', { path, recursive: z.boolean().default(false), recycle: z.boolean().default(true) }, ['files:write'], 'user', 'write'),
   tool('apply_artifact', 'Apply an owned artifact to a local destination after integrity checks.', { artifact_id: id, path, overwrite: z.boolean().default(false) }, ['artifacts:read', 'files:write'], 'user', 'write'),
-  tool('search_files', 'Start an owned bounded file/content search.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000) }, ['files:read'], 'user', 'read'),
+  tool('search_files', 'Start an owned bounded file/content search. Explicit provider selection never silently falls back.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000), provider:z.enum(['direct','everything']).optional(), entry_type:z.enum(['files','directories','all']).default('files'), sort:z.enum(['path','name']).optional(), metadata:z.boolean().default(false) }, ['files:read'], 'user', 'read'),
+  tool('list_providers', 'Inspect search providers and current owner/device/function preferences. Does not activate software.', {}, ['files:read'], 'user', 'read'),
+  tool('set_provider_preference', 'Set or clear this owner/device/function search preference; null restores the stable direct default. Does not install or start software.', {capability:z.enum(['files.name','files.content']),provider:z.enum(['direct','everything']).nullable()}, ['files:write'], 'user', 'write'),
   tool('search_results', 'Read an owned search page: nonnegative zero-based result offset; limit counts results.', { search_id: id, offset: integer.min(0).default(0), limit: count.default(100) }, ['files:read'], 'user', 'read'),
   tool('stop_search', 'Stop an owned search.', { search_id: id }, ['files:read'], 'user', 'control'),
   tool('start_process', 'Start a user command with a bounded initial observation; durable work uses jobs.', { command: text.min(1), shell: z.enum(['powershell', 'cmd', 'wsl']).default('powershell'), working_directory: path.optional(), timeout_ms: timeout.default(10_000) }, ['process:execute'], 'user', 'execute'),

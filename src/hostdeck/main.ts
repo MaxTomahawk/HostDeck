@@ -25,6 +25,8 @@ import {RuntimeError} from './runtime-error.js';
 import {loadOAuthMetadata} from './oauth-metadata.js';
 import {loadBackendTls} from './tls.js';
 import {PrivilegeAdapter} from './privilege.js';
+import {ProviderRegistry} from './providers.js';
+import {EverythingClient} from './everything.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -34,6 +36,7 @@ const configuration=z.object({
   version:z.literal(1),device_id:identifier,executor_id:identifier,expected_user_sid:z.string().regex(/^S-1-5-[0-9-]+$/),
   workspace:absolute,state_directory:absolute,desktop_worker:absolute,browser_executable:absolute.optional(),grants_file:absolute,
   installed:z.boolean().default(false),enrollment_file:absolute.optional(),
+  everything:z.object({executable:absolute,sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),version:z.string().regex(/^1\.[45]\.\d+\.\d+b?$/),instance:z.string().regex(/^[A-Za-z0-9_. -]{0,64}$/)}).strict().optional(),
   privilege_broker:z.object({enabled:z.boolean(),allow_remote:z.boolean().default(false),powershell_executable:absolute,
     submit_script:absolute,submit_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),receipt_script:absolute,receipt_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),
     verification_script:absolute,verification_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),signer_thumbprint:z.string().regex(/^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/),
@@ -125,12 +128,16 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const shell=path.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
   if(config.privilege_broker&&path.resolve(config.privilege_broker.powershell_executable).toLowerCase()!==path.resolve(shell).toLowerCase())throw new RuntimeError('PRIVILEGE_CONFIGURATION_INVALID');
   environment.PATH=[path.join(systemRoot,'System32'),systemRoot,path.dirname(shell),path.dirname(process.execPath)].join(path.delimiter);
+  // PowerShell 5.1 otherwise treats native executables as shell-open targets.
+  environment.PATHEXT='.COM;.EXE;.BAT;.CMD';
   const state=StateServices.create({root:path.join(config.state_directory,'state'),deviceId:config.device_id,workspace,shellExecutable:shell,
     environment,desktopWorkerExecutable:config.desktop_worker});
   let facade:HostDeckFacade;
   const reauthorize=(name:string,args:Readonly<Record<string,unknown>>)=>facade.reauthorize(name,args);
   const committer=await SafeCommitter.create({workspace,reauthorize});
-  const files=await FileAdapter.create({workspace,reauthorize});
+  const providers=await ProviderRegistry.open(path.join(config.state_directory,'provider-preferences.sqlite'));
+  const everything=config.everything?new EverythingClient({worker:config.desktop_worker,...config.everything,identity}):undefined;
+  const files=await FileAdapter.create({workspace,reauthorize,providers,everything});
   const documents=await DocumentAdapter.create({workspace,browserExecutable:config.browser_executable});
   const desktop=await DesktopAdapter.create({executable:config.desktop_worker,expectedSid:config.expected_user_sid,identity,
     reauthorize,storeArtifact:(context,bytes,name,mime)=>state.storeArtifact(context,Buffer.from(bytes),name,mime),
