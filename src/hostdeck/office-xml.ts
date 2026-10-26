@@ -161,7 +161,13 @@ export function validateOfficeStructure(xml: string, kind: OfficePart): void {
       if (roots !== 1 || tag.local !== requiredName || tag.uri !== requiredUri ||
           tag.prefix !== requiredPrefix) throw new Error('DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE');
     }
+    if (parent && tag.local === requiredName && tag.uri === requiredUri) {
+      throw new Error('DOCUMENT_INVALID_XML_NESTING');
+    }
     if (word) {
+      if (parent && tag.uri === WORD_NS && ['document', 'hdr', 'ftr'].includes(tag.local)) {
+        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+      }
       if ((tag.prefix === 'w' && tag.uri !== WORD_NS) ||
           (tag.uri === WORD_NS && tag.prefix !== 'w')) {
         throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
