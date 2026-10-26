@@ -89,7 +89,12 @@ function replaceDocxBytes(input: Buffer, before: string, after: string, expected
   for (const name of names) {
     const entry = zip.file(name);
     if (!entry) continue;
-    const result = replaceVisibleDocxXml(entry.asText(), before, after);
+    const xml = entry.asText();
+    const root = name === 'word/document.xml' ? 'document' : name.startsWith('word/header') ? 'hdr' : 'ftr';
+    if (!new RegExp('<w:' + root + '\\b').test(xml) || !xml.includes('</w:' + root + '>')) {
+      throw new Error('DOCUMENT_INVALID_DOCX');
+    }
+    const result = replaceVisibleDocxXml(xml, before, after);
     actual += result.count;
     if (result.count) edits.push({ name, xml: result.xml });
   }
