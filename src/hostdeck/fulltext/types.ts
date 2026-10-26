@@ -52,6 +52,10 @@ export interface FullTextConfig {
   formats: FullTextFormat[];
   budgets?: Partial<FullTextBudgets>;
   includeHidden?: boolean;
+  /** Additional owner-selected absolute exclusion subtrees. */
+  excludedRoots?: string[];
+  /** Explicit opt-in for exact selected Windows FIXED volume roots, never inferred. */
+  fixedVolumeRoots?: string[];
 }
 
 export type DocumentCoverage =
@@ -82,6 +86,8 @@ export interface FullTextPreview {
   digest: string;
   roots: string[];
   formats: FullTextFormat[];
+  excludedRoots: string[];
+  fixedVolumeRoots: string[];
   budgets: FullTextBudgets;
   machine: { logicalCpus: number; totalMemoryMiB: number; freeMemoryMiB: number; gpuUsed: false };
   indexFile: string;
