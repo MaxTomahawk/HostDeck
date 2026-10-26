@@ -206,7 +206,8 @@ export function groupManagerEntries(entries: readonly ManagerEntry[], groupBy: s
   return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, items]) => ({ name, entries: items }));
 }
 export function supportedPreferenceOptions(capability: string): Array<{ id: string | null; label: string }> {
-  // Exact B007 source contract; no lifecycle or arbitrary candidate controls.
+  // Exact B007 source contract; unknown future functions remain read-only.
+  if (capability !== 'files.name' && capability !== 'files.content') return [];
   return [
     { id: null, label: 'Automatic · stable direct default' },
     { id: 'direct', label: 'HostDeck direct filesystem' },
