@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { constants as fsConstants } from 'node:fs';
 import { extractDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
+import {excludedByFileAttributes} from './windows-attributes.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
 import { authorize, normalizeConfig, previewFullText, safeRealpath, within } from './policy.js';
 import type {
@@ -290,6 +291,9 @@ export class FullTextEngine {
         // No unauthorized filenames or counts enter the durable queue.
         try { await this.auth(c,'scan',task.root,child); }
         catch { incomplete = true; continue; }
+        // Windows Hidden/System are file attributes, not dot-prefixes.
+        // Check before queuing any child path or reading its content.
+        if(await excludedByFileAttributes(child,this.config.includeHidden))continue;
         // Authorization may yield control; verify directory identity again
         // before committing any discovered child name to the durable queue.
         await this.verifyRoot(task.root);
@@ -316,6 +320,9 @@ export class FullTextEngine {
     const run = this.runById(task.run_id);
     const stat = await fs.lstat(file);
     if (!stat.isFile()) return 'skipped';
+    // A queued file may have gained +H after the containing directory was
+    // enumerated. Do not open its bytes when includeHidden=false.
+    if(await excludedByFileAttributes(file,this.config.includeHidden))return 'skipped';
     if (run.read_bytes + stat.size > this.config.budgets.maxTotalSourceBytes)
       throw new Error('FULLTEXT_SOURCE_BUDGET_EXCEEDED');
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as {n:number}).n;
@@ -332,6 +339,8 @@ export class FullTextEngine {
     await this.auth(c,'index',task.root,file);
     await this.verifyRoot(task.root);
     await safeRealpath(file);
+    if(await excludedByFileAttributes(file,this.config.includeHidden))
+      throw new Error('FULLTEXT_SOURCE_BECAME_HIDDEN');
     if (!sameIdentity(sourceIdentity,await identity(file)))
       throw new Error('FULLTEXT_SOURCE_IDENTITY_CHANGED');
     const postHash=await boundedPinnedHash(file,sourceIdentity,this.config.budgets.maxFileBytes);
