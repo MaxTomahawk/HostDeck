@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ExcelFileHandler } from '../utils/files/excel.js';
 import { DocxFileHandler, pizzipPackage } from '../utils/files/docx.js';
-import { replaceVisibleDocxXml } from './office-xml.js';
+import { replaceVisibleDocxXml, validateOfficeStructure, type OfficePart } from './office-xml.js';
 import { isOpenpyxlCommentLayout, readOpenpyxlCommentWorkbook, editOpenpyxlCommentWorkbook } from './office-xlsx.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -90,10 +90,9 @@ function replaceDocxBytes(input: Buffer, before: string, after: string, expected
     const entry = zip.file(name);
     if (!entry) continue;
     const xml = entry.asText();
-    const root = name === 'word/document.xml' ? 'document' : name.startsWith('word/header') ? 'hdr' : 'ftr';
-    if (!new RegExp('<w:' + root + '\\b').test(xml) || !xml.includes('</w:' + root + '>')) {
-      throw new Error('DOCUMENT_INVALID_DOCX');
-    }
+    const root: OfficePart = name === 'word/document.xml' ? 'document'
+      : name.startsWith('word/header') ? 'hdr' : 'ftr';
+    validateOfficeStructure(xml, root);
     const result = replaceVisibleDocxXml(xml, before, after);
     actual += result.count;
     if (result.count) edits.push({ name, xml: result.xml });
@@ -276,6 +275,7 @@ export class DocumentAdapter {
     if (ext === '.docx') {
       await checkOfficeArchive(file, '.docx');
       const result = await new DocxFileHandler().read(file, { offset: 0, length: 1000 });
+      if (typeof result.content !== 'string') throw new Error('DOCUMENT_READ_CONTENT_INVALID');
       if (result.content.length > 2_000_000) throw new Error('DOCUMENT_READ_LIMIT');
       const out = result.content.replace(
         '\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.', '');
