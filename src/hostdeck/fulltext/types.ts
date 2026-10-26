@@ -73,7 +73,7 @@ export interface FullTextSearchPage {
   truncated: boolean;
   coverage: 'complete_bounded_scan' | 'partial_or_unverified';
   actualFreshness: 'not_monitored';
-  querySemantics: 'unicode61_terms_and_exact_han_bigram_substrings';
+  querySemantics: 'unicode61_remove_diacritics_2_plus_exact_han';
 }
 
 export interface FullTextPreview {
