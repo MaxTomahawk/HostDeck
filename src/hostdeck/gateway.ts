@@ -133,7 +133,7 @@ const publicAdapterErrors=new Set(['STALE_WINDOW','STALE_ELEMENT','STALE_MONITOR
   'FULLTEXT_SCAN_ALREADY_ACTIVE','FULLTEXT_SCAN_BUSY','FULLTEXT_NOT_RUNNING',
   'FULLTEXT_NOT_RESUMABLE','FULLTEXT_NOT_CANCELLABLE','FULLTEXT_RUN_NOT_OWNED',
   'FULLTEXT_QUERY_INVALID','FULLTEXT_QUERY_LIMIT','FULLTEXT_HAN_MIN_TWO',
-  'FULLTEXT_ROOT_IDENTITY_CHANGED','FULLTEXT_REPARSE_DENIED','FULLTEXT_SOURCE_CHANGED']);
+  'FULLTEXT_ROOT_IDENTITY_CHANGED','FULLTEXT_REPARSE_DENIED','FULLTEXT_SOURCE_CHANGED','FULLTEXT_SESSION_UNQUALIFIED']);
 export function publicError(error: unknown): string {
   if ((error instanceof RuntimeError || error instanceof ContractError) && /^[A-Z][A-Z_]{1,64}$/.test(error.code)) return error.code;
   if(error instanceof Error&&publicAdapterErrors.has(error.message))return error.message;
