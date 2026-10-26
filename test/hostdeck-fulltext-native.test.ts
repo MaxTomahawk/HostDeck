@@ -1,0 +1,201 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { execFile as execFileCallback } from 'node:child_process';
+import { existsSync, createReadStream } from 'node:fs';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import {
+  FullTextNativeBridge, type FullTextNativeIdentity,
+} from '../src/hostdeck/fulltext-native-bridge.js';
+
+const execFile = promisify(execFileCallback);
+const fixtureWorker = process.env.HOSTDECK_TEST_FULLTEXT_NATIVE_WORKER ??
+  path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
+const available = process.platform === 'win32' && existsSync(fixtureWorker);
+
+async function identity(): Promise<FullTextNativeIdentity> {
+  const { stdout } = await execFile(fixtureWorker, ['--identity'], {
+    windowsHide: true, shell: false, timeout: 3000, maxBuffer: 8192, encoding: 'utf8',
+  });
+  const value = JSON.parse(stdout) as Record<string, unknown>;
+  assert.equal(typeof value.sid, 'string');
+  assert.match(String(value.logon_id), /^[0-9a-fA-F]{16}$/);
+  assert.equal(typeof value.session_id, 'number');
+  return { sid: String(value.sid), logonId: String(value.logon_id),
+    sessionId: Number(value.session_id) };
+}
+async function sha(file: string): Promise<string> {
+  const h = createHash('sha256');
+  for await (const data of createReadStream(file)) h.update(data);
+  return h.digest('hex');
+}
+async function bridge(id: FullTextNativeIdentity): Promise<FullTextNativeBridge> {
+  const instance = new FullTextNativeBridge({
+    workerExecutable: fixtureWorker, workerSha256: await sha(fixtureWorker),
+    expectedExecutor: id, timeoutMs: 3000,
+  });
+  await instance.open();
+  return instance;
+}
+
+test('Windows GetFileAttributesW handles Unicode file and many paths with one persistent owned IPC process', {
+  skip: !available ? 'Actual Windows DesktopWorker executable unavailable; native Unicode test NOT_RUN' : false,
+  timeout: 16000,
+}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-ft-native-unicode-'));
+  let client: FullTextNativeBridge | undefined;
+  try {
+    const filenames = ['België_日本語_中文.txt',
+      ...Array.from({ length: 23 }, (_, i) => 'owned-' + i + '.txt')];
+    for (const name of filenames) await writeFile(path.join(root, name), 'fixture-only');
+    client = await bridge(await identity());
+    const pid = (client as unknown as {child?: {pid?: number}}).child?.pid;
+    assert.ok(Number.isSafeInteger(pid) && pid! > 0, 'single owned helper must have a real PID');
+    const paths = filenames.map(name => path.join(root, name));
+    const first = await client.attributes(paths.slice(0, 12), async () => true);
+    const second = await client.attributes(paths.slice(12), async () => true);
+    assert.equal((client as unknown as {child?: {pid?: number}}).child?.pid, pid,
+      'no process-per-file or process-per-batch allowed');
+    assert.equal(first[0].status, 'ok', 'Unicode path is not an OEM/locale echo');
+    assert.deepEqual([first[0].hidden, first[0].system, first[0].reparse],
+      [false, false, false]);
+    assert.ok([...first, ...second].every(item => item.status === 'ok'));
+    assert.equal(first.length + second.length, filenames.length);
+    assert.ok(!JSON.stringify([...first, ...second]).includes('België_'),
+      'no paths returned to caller');
+  } finally {
+    await client?.close();
+    await rm(root, {recursive:true,force:true});
+  }
+});
+
+test('native metadata reports true Hidden/System flags using fixture-only attrib changes', {
+  skip: !available ? 'Actual Windows worker unavailable; attribute test NOT_RUN' : false,
+  timeout: 14000,
+}, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-ft-native-attrs-'));
+  const file = path.join(root, 'België_日本語_中文.txt');
+  let client: FullTextNativeBridge | undefined;
+  let changed = false;
+  try {
+    await writeFile(file, 'disposable fixture');
+    const sysRoot = process.env.SystemRoot ?? process.env.windir;
+    if (!sysRoot) {t.skip('Windows SystemRoot unavailable; fixture attributes NOT_RUN');return;}
+    const attr = path.win32.join(sysRoot,'System32','attrib.exe');
+    try {
+      await execFile(attr, ['+H', '+S', file], {
+        windowsHide:true,shell:false,timeout:3000,maxBuffer:4096,
+      });
+      changed = true;
+    } catch {
+      t.skip('Fixture user cannot set own Hidden/System attributes; no claim');
+      return;
+    }
+    client = await bridge(await identity());
+    const [result] = await client.attributes([file],async()=>true);
+    assert.equal(result.status, 'ok');
+    assert.equal(result.hidden, true);
+    assert.equal(result.system, true);
+    assert.equal(result.hidden_component, true);
+    assert.equal(result.system_component, true);
+  } finally {
+    await client?.close();
+    if (changed) {
+      const rootPath = process.env.SystemRoot ?? process.env.windir;
+      if (rootPath) await execFile(path.win32.join(rootPath,'System32','attrib.exe'),
+        ['-H','-S',file], {windowsHide:true,shell:false,timeout:3000,maxBuffer:4096})
+        .catch(()=>t.diagnostic('Fixture attribute rollback failed; fixture cleanup will still be attempted'));
+    }
+    await rm(root,{recursive:true,force:true});
+  }
+});
+
+test('fulltext native IPC denies unapproved paths and malformed batch without scanning or process effects', {
+  skip: !available ? 'Actual Windows worker unavailable; guard test NOT_RUN' : false,
+  timeout: 14000,
+}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(),'hostdeck-ft-native-bounds-'));
+  let client:FullTextNativeBridge|undefined;
+  try {
+    const owned = path.join(root, 'owned.txt');
+    await writeFile(owned,'owned fixture');
+    client = await bridge(await identity());
+    let approvals = 0;
+    await assert.rejects(client.attributes([owned],async()=>{approvals++;return false;}),
+      /FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED/);
+    assert.equal(approvals,1);
+    await assert.rejects(client.attributes(Array.from({length:65},()=>owned),async()=>true),
+      /FULLTEXT_NATIVE_BATCH_LIMIT/);
+    for(const bad of ['\\\\remote\\share\\x.txt',
+      path.win32.parse(owned).root+'somewhere:alternate']) {
+      await assert.rejects(client.attributes([bad],async()=>true),
+        /FULLTEXT_NATIVE_PATH_DENIED/);
+    }
+    const good = await client.attributes([owned],async()=>true);
+    assert.equal(good[0].status,'ok', 'worker stays usable after denied requests');
+  } finally { await client?.close(); await rm(root,{recursive:true,force:true}); }
+});
+
+test('real AccessCheck rejects writable user-owned config and approval; does not change ACLs', {
+  skip: !available ? 'Actual Windows worker unavailable; ACL negative NOT_RUN' : false,
+  timeout: 16000,
+}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(),'hostdeck-ft-native-acl-'));
+  let client:FullTextNativeBridge|undefined;
+  try {
+    const config = path.join(root, 'config');
+    const index = path.join(root, 'index');
+    await mkdir(config);await mkdir(index);
+    const selectionFile = path.join(config, 'fulltext-selection.json');
+    const approvalFile = path.join(config, 'fulltext-approval.json');
+    await writeFile(selectionFile,'{"fixture":true}');
+    await writeFile(approvalFile,'{"fixture":true}');
+    client=await bridge(await identity());
+    await assert.rejects(client.verifyProtectedOwnerAcl({
+      protectedDirectory:config,selectionFile,approvalFile,indexDirectory:index,
+    }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
+    'ordinary writeable fixture must never qualify as protected owner config');
+    await assert.rejects(client.verifyProtectedOwnerAcl({
+      protectedDirectory:config,selectionFile,approvalFile,indexDirectory:config,
+    }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
+    'overlap between protected and writable SQLite trees must fail');
+  } finally {await client?.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('current-token identity must match trusted executor; no caller identity overrides', {
+  skip: !available ? 'Actual Windows worker unavailable; token binding test NOT_RUN' : false,
+  timeout: 14000,
+}, async () => {
+  const actual = await identity();
+  const bad = new FullTextNativeBridge({
+    workerExecutable:fixtureWorker, workerSha256:await sha(fixtureWorker),
+    expectedExecutor:{...actual,logonId:'ffffffffffffffff'},
+  });
+  try {await assert.rejects(bad.open(),/FULLTEXT_NATIVE_EXECUTOR_UNQUALIFIED/);}
+  finally {await bad.close();}
+});
+
+test('existing external admin-protected source plus separate writable index qualifies only when opt-in fixture exists', {
+  skip: !available || !process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_DIR ||
+    !process.env.HOSTDECK_TEST_FULLTEXT_INDEX_DIR
+    ? 'Positive admin-protected fixture unavailable; physical positive NOT_RUN' : false,
+  timeout: 16000,
+}, async () => {
+  // The fixture must already exist, be deliberately admin-protected and
+  // independently owned. This test never creates, edits or chmods it.
+  const protectedDirectory = process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_DIR!;
+  const indexDirectory = process.env.HOSTDECK_TEST_FULLTEXT_INDEX_DIR!;
+  let client:FullTextNativeBridge|undefined;
+  try {
+    client=await bridge(await identity());
+    await client.verifyProtectedOwnerAcl({
+      protectedDirectory,
+      selectionFile:path.join(protectedDirectory,'fulltext-selection.json'),
+      approvalFile:path.join(protectedDirectory,'fulltext-approval.json'),
+      indexDirectory,
+    });
+  } finally { await client?.close(); }
+});
