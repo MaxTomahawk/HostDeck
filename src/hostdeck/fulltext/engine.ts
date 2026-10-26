@@ -48,6 +48,7 @@ function stableErr(error: unknown): string {
  * integration supplies current grants, protected index storage and UI consent.
  */
 export class FullTextEngine {
+  private stepping = false;
   private constructor(
     private readonly db: DatabaseSync, private readonly config: Config,
     private readonly principal: Scope, private readonly check: FullTextAuthorizer,
@@ -151,11 +152,11 @@ export class FullTextEngine {
   /** Explicit new scan. Earlier results stay, marked last_scan_only, until complete. */
   async start(c: FullTextPrincipal): Promise<{runId: string; state: 'running'}> {
     await this.rootsAllowed(c, 'scan');
-    const previous = this.active();
-    if (previous && !['complete','cancelled'].includes(previous.state)) throw new Error('FULLTEXT_SCAN_ALREADY_ACTIVE');
     const id = randomUUID(), time = now();
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const previous = this.active();
+      if (previous && !['complete','cancelled'].includes(previous.state)) throw new Error('FULLTEXT_SCAN_ALREADY_ACTIVE');
       this.db.prepare('DELETE FROM queue').run();
       this.db.prepare('INSERT INTO runs(id,state,created_at,updated_at) VALUES(?,?,?,?)').run(id,'running',time,time);
       for (const root of this.config.roots)
@@ -318,6 +319,9 @@ export class FullTextEngine {
   }
 
   async step(c: FullTextPrincipal, runId: string, requestedOperations?: number): Promise<FullTextScanReceipt> {
+    if (this.stepping) throw new Error('FULLTEXT_SCAN_BUSY');
+    this.stepping=true;
+    try {
     await this.rootsAllowed(c,'scan');
     const row = this.runById(runId);
     if (row.state !== 'running') throw new Error('FULLTEXT_NOT_RUNNING');
@@ -370,6 +374,7 @@ export class FullTextEngine {
       coverage: next.state === 'complete' && next.incomplete === 0 ? 'bounded_complete' : 'partial',
       ...(reason?{reason}:{}),
     };
+    } finally { this.stepping=false; }
   }
 
   /** Per-document authorization before metadata, snippets and any visible count. */
