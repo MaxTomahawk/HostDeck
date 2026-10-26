@@ -72,7 +72,7 @@ export class HostDeckFacade {
     const server = new Server({ name: 'HostDeck', version: '0.3.0' }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
     server.setRequestHandler('tools/list', async () => {
       const tools=discoverTools(await this.visible(principal())).map(tool => ({ ...tool, inputSchema:{...tool.inputSchema,type:'object' as const},
-        ...(this.options.appHtml ? { _meta: { ui: {resourceUri: 'ui://hostdeck/management'}, 'openai/outputTemplate': 'ui://hostdeck/management' } } : {}) }));
+        ...(this.options.appHtml && tool.name === 'hostdeck_open_manager' ? { _meta: { ui: {resourceUri: 'ui://hostdeck/management'}, 'openai/outputTemplate': 'ui://hostdeck/management' } } : {}) }));
       diagnose(this.options.diagnostic,{stage:'discovery',toolCount:tools.length});
       return {tools};
     });

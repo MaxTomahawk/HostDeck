@@ -26,7 +26,7 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   const diagnostic=(event:{stage:string;status?:number;toolCount?:number})=>{diagnostics.push(event);};
   let facade:HostDeckFacade;
   runtime=await UserRuntime.create({workspace:directory,deviceId:'device',environment:{},shells:{},authorize:async(name,args)=>{await facade.reauthorize(name,args);return true;}});
-  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,diagnostic,adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)},
+  facade=new HostDeckFacade({deviceId:'device',executorId:'executor',gate,diagnostic,appHtml:'<main>Owned management fixture</main>',adapters:[{implementedTools:runtime.implementedTools,handle:(name,args)=>runtime.invoke(name,args)},
     {implementedTools:new Set(['hostdeck_device_status']),handle:async()=>({status:'ready'})},
     {implementedTools:new Set(['hostdeck_privileged_requests']),handle:async()=>({requests:[]})}]});
   const allowedHosts:string[]=[];
@@ -49,6 +49,11 @@ test('actual HTTP MCP dispatch enforces signed tokens, current grants, strict co
   };
   const listed=await rpc('tools/list');
   assert.equal(listed.status,200);
+  // Data calls must not instantiate another full manager iframe per result.
+  assert.ok(listed.data.result.tools.filter((tool:{name:string})=>tool.name!=='hostdeck_open_manager')
+    .every((tool:{_meta?:{ui?:{resourceUri?:string};'openai/outputTemplate'?:string}})=>
+      !tool._meta?.ui?.resourceUri && !tool._meta?.['openai/outputTemplate']),
+    'ordinary data tools must not automatically render the management App');
   assert.ok(diagnostics.some(event=>event.stage==='discovery'&&event.toolCount!>0));
   assert.ok(listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_write_file'));
   assert.ok(!listed.data.result.tools.some((x:{name:string})=>x.name==='hostdeck_start_process'));
