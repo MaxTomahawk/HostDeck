@@ -127,6 +127,7 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('cancel_job', 'Cancel owned job work with truthful descendant/effect status.', { job_id: id }, ['jobs:control'], 'service', 'control'),
   tool('read_artifact', 'Read owned raw artifact bytes and integrity metadata: nonnegative zero-based byte offset and byte length.', { artifact_id: id, offset: integer.min(0).default(0), length: positive.max(1_048_576).default(65536) }, ['artifacts:read'], 'service', 'read'),
   tool('read_events', 'Read events with sequence strictly greater than nonnegative after (0 starts the retained stream); limit counts events.', { after: integer.min(0).default(0), limit: positive.max(1000).default(100) }, ['devices:read', 'jobs:read'], 'service', 'read'),
+  tool('open_manager', 'Open the HostDeck extension manager for one authorized device. Read-only UI discovery; no installation, configuration or lifecycle effects.', {}, ['devices:read'], 'service', 'read'),
   tool('device_status', 'Read health and eligible session metadata for the granted device.', {}, ['devices:read'], 'service', 'read'),
   tool('diagnostics', 'Create a sanitized owner-scoped diagnostic artifact.', { include_jobs: z.boolean().default(false) }, ['devices:read', 'jobs:read'], 'service', 'read'),
   tool('manage_host', 'Request only a registered bounded management action; protected approval remains separate.', { action_id: z.string().min(1).max(256), intent_id: id }, ['host:manage'], 'management', 'manage'),
