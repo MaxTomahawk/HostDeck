@@ -114,7 +114,7 @@ test('Han query semantics are explicit; never claim general CJK substring recall
   assert.ok(satisfiesHanSubstrings('中文文件',['中文']));
   assert.equal(satisfiesHanSubstrings('中文别处文件',['中文文件']),false);
   assert.throws(()=>parseFullTextQuery('中'),/FULLTEXT_QUERY_INVALID|FULLTEXT_HAN_MIN_TWO/);
-  assert.throws(()=>parseFullTextQuery('http://'),/FULLTEXT_QUERY_INVALID|FULLTEXT_QUERY_LIMIT/);
+  assert.throws(()=>parseFullTextQuery('x'.repeat(257)),/FULLTEXT_QUERY_INVALID/);
 });
 
 test('no automatic indexing of a volume root; symlinks cannot leave own corpus',async t=>{
