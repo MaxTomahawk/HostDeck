@@ -328,7 +328,7 @@ test('shared and array formula targets are rejected before staging, but unrelate
       '<c r="C1"><f t="shared" si="4" ref="C1:C2">B1*2</f><v/></c>'
     ).replace(
       '</row></sheetData>',
-      '<c r="C2"><f t="shared" si="4"/><v/></c></row></sheetData>'
+      '</row><row r="2"><c r="C2"><f t="shared" si="4"/><v/></c></row></sheetData>'
     );
     const parts = { ...workbookParts, 'xl/worksheets/sheet1.xml': grouped };
     const original = fixture(parts), file = path.join(root, 'shared.xlsx');
