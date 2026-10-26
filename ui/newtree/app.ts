@@ -3,7 +3,7 @@ import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { mountExtensionManager } from './extension-manager.js';
-import { parseManagerHostInput, parseManagerHostResult, applyManagerHostContext,
+import { parseManagerHostInput, parseManagerHostResult, createManagerHostContextApplier,
   type ManagerToolInput, type ManagerHostContext } from './manager-host-context.js';
 
 const app = new App({ name: 'HostDeck Management', version: '1.1.0' }, {});
@@ -18,6 +18,8 @@ let currentView = 'overview';
 let pendingManagerInput: ManagerToolInput | null = null;
 let pendingManagerContext: ManagerHostContext | null = null;
 let hostConnected = false;
+// Persist across SDK notification replays and user navigation within this iframe.
+const applyManagerContextOnce = createManagerHostContextApplier();
 let client: Client | undefined;
 let transport: StreamableHTTPClientTransport | undefined;
 let activeSession = '';
@@ -242,7 +244,7 @@ if (window.parent !== window) {
   // tool input/result during the ui/initialize handshake. Neither notification
   // is trusted as identity, authorization, a grant, or an effect receipt.
   const applyHostContext = () => {
-    const applied = applyManagerHostContext(pendingManagerContext, hostConnected, (deviceId, view) => {
+    const applied = applyManagerContextOnce(pendingManagerContext, hostConnected, (deviceId, view) => {
       device.value = deviceId;
       device.readOnly = true; // Hosted manager device is chosen by a scoped tool.
       currentView = view;
@@ -253,14 +255,13 @@ if (window.parent !== window) {
   app.ontoolinput = params => {
     pendingManagerInput = parseManagerHostInput(params);
     pendingManagerContext = null;
-    if (!pendingManagerInput) status.textContent = 'Invalid manager tool input. No device or view selected.';
+    // Invalid host hints clear pending state but must not mutate visible UI.
+    if (!pendingManagerInput) return;
   };
   app.ontoolresult = result => {
     pendingManagerContext = parseManagerHostResult(result, pendingManagerInput);
-    if (!pendingManagerContext) {
-      status.textContent = 'Manager tool result rejected. No device or view selected.';
-      return;
-    }
+    // A malformed/mismatched replay has no display or request side effect.
+    if (!pendingManagerContext) return;
     applyHostContext();
   };
   void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => {
