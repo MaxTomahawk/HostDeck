@@ -9,6 +9,7 @@ const executable = process.env.HOSTDECK_TEST_BROWSER_EXECUTABLE;
 
 test('standalone panel keeps inputs during result updates and treats hostile tool output as text', { skip: !executable ? 'Set HOSTDECK_TEST_BROWSER_EXECUTABLE to run the local UI browser fixture.' : false }, async () => {
   const root = process.cwd(); let authorization = '';
+  let savedProvider: string | null = 'everything'; let preferenceWrites = 0;
   const server = createServer(async (request, response) => {
     if (request.url === '/ui' || request.url === '/ui/') { response.writeHead(302, { location: '/ui/index.html' }).end(); return; }
     if (request.url?.startsWith('/ui/')) {
@@ -28,7 +29,22 @@ test('standalone panel keeps inputs during result updates and treats hostile too
         const name = message.params.name;
         const value = name === 'hostdeck_device_status' ? { sessions: [{ session_id: 12, eligible: true }], executor_id: 'fixture-executor' }
           : name === 'hostdeck_list_jobs' ? { jobs: [{ job_id: 'job1', state: 'running', command: '<img src=x onerror=window.pwned=1>' }] }
-            : name === 'hostdeck_list_providers' ? {providers:[{id:'direct',installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true},{id:'everything',installed:true,enabled:true,running:true,compatible:true,healthy:false,reason:'loading',qualified:'not_independently_accepted'}],functions:[{capability:'files.name',preference:'everything',default:'direct',selected:'everything'},{capability:'files.content',preference:null,default:'direct',selected:'direct'}]}
+            : name === 'hostdeck_list_providers' ? {providers:[
+                {id:'direct',installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true,
+                  capabilities:['files.name','files.content']},
+                {id:'everything',installed:true,enabled:true,running:true,compatible:true,healthy:false,
+                  reason:'loading <img src=x onerror=window.pwned=3>',qualified:'not_independently_accepted',
+                  capabilities:['files.name'],version:'1.5.0-fixture'}
+              ],functions:[{capability:'files.name',preference:savedProvider,default:'direct',selected:savedProvider??'direct'},
+                {capability:'files.content',preference:null,default:'direct',selected:'direct'}]}
+            : name === 'hostdeck_set_provider_preference' ? (() => {
+                const args = message.params.arguments;
+                if (args.capability !== 'files.name' || ![null,'direct','everything'].includes(args.provider)) {
+                  return {updated:false,capability:args.capability,preference:savedProvider};
+                }
+                preferenceWrites++; savedProvider = args.provider;
+                return {updated:true,capability:args.capability,preference:savedProvider,scope:'owner_device_function'};
+              })()
             : name === 'hostdeck_read_file' ? { content: '<script>window.pwned=2</script>' }
               : name === 'hostdeck_list_directory' ? { entries: [{ path: 'safe.txt', type: 'file' }] } : {};
         result = { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
@@ -54,9 +70,38 @@ test('standalone panel keeps inputs during result updates and treats hostile too
     await page.waitForFunction(() => document.querySelector('#content')?.textContent?.includes('<img src=x onerror=window.pwned=1>'));
     assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
     await page.locator('nav button[data-view="providers"]').click();
-    await page.waitForFunction(() => document.querySelector('#provider-status')?.textContent?.includes('loading'));
-    assert.match(await page.$eval('#provider-status',element=>element.textContent??''),/not_independently_accepted/);
+    await page.waitForFunction(() => document.querySelector('#provider-status')?.textContent?.includes('Live status read'));
+    assert.match(await page.$eval('#extension-count',element=>element.textContent??''),/80 entries.*79 research/);
+    await page.locator('#extension-search').fill('Everything');
+    await page.waitForFunction(() => document.querySelector('#extension-count')?.textContent?.startsWith('1 matching'));
+    await page.locator('#extension-results button[aria-label="Details for Everything"]').click();
+    const detail = await page.$eval('#extension-detail', element => element.textContent??'');
+    assert.match(detail,/Owner delivery priority/);
+    assert.match(detail,/Installed.*Yes/s);
+    assert.match(detail,/Qualification.*Not independently accepted/s);
+    assert.match(detail,/loading <img src=x onerror=window.pwned=3>/);
+    assert.equal(await page.evaluate(() => (window as any).pwned), undefined);
+    const lifecycleButtons = await page.$eval('#content button', buttons => buttons
+      .filter(button => /^(Install|Start|Stop|Update|Uninstall|Rollback)$/i.test(button.textContent??'')).length);
+    assert.equal(lifecycleButtons,0,'unsupported actions are not clickable');
+    await page.locator('.manager-secondary').click();
+    await page.waitForFunction(() => document.querySelector('#extension-count')?.textContent?.startsWith('80 matching'));
+    await page.locator('.manager-tabs button:nth-child(2)').click();
     assert.equal(await page.$eval('#provider-preference',(element:any)=>element.value),'everything');
+    // The server changes the saved preference in another client after the first render.
+    savedProvider='direct';
+    await page.select('#provider-preference','direct');
+    await page.locator('#provider-apply').click();
+    await page.waitForFunction(() => document.querySelector('#preference-feedback')?.textContent?.includes('changed externally'));
+    assert.equal(preferenceWrites,0,'preflight conflict prevents a write');
+    assert.equal(await page.$eval('#provider-preference',(element:any)=>element.value),'direct');
+    await page.select('#provider-preference','everything');
+    await page.locator('#provider-apply').click();
+    await page.waitForFunction(() => document.querySelector('#preference-feedback')?.textContent?.includes('Preference verified on readback'));
+    assert.equal(preferenceWrites,1,'exactly one scoped preference write');
+    assert.equal(savedProvider,'everything');
+    await page.locator('.manager-tabs button:nth-child(3)').click();
+    assert.match(await page.$eval('.manager-section[aria-label="Change evidence in this page session"]', element=>element.textContent??''), /Readback confirmed/);
     await page.locator('nav button[data-view="files"]').click();
     await page.locator('#file-path').fill('notes.txt'); await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Read text file')?.click());
     await page.waitForFunction(() => (document.querySelector('#file-editor') as HTMLTextAreaElement | null)?.value.includes('<script>'));
