@@ -434,7 +434,8 @@ export class FullTextEngine {
     if (initialPressure) {
       this.state(runId,'resource_paused');
       return {state:'resource_paused',runId,processedThisStep:0,indexedThisStep:0,changedThisStep:0,
-        renamedThisStep:0,skippedThisStep:0,removedAtCompletion:0,coverage:'partial',reason:initialPressure};
+        renamedThisStep:0,skippedThisStep:0,removedAtCompletion:0,coverage:'partial',
+        traversalCoverage:'partial',reason:initialPressure};
     }
     const deadline = Date.now() + limits.maxStepMilliseconds;
     let processed = 0, indexed = 0, changed = 0, renamed = 0, skipped = 0, removed = 0;
@@ -476,6 +477,7 @@ export class FullTextEngine {
       indexedThisStep:indexed, changedThisStep:changed, renamedThisStep:renamed,
       skippedThisStep:skipped, removedAtCompletion:removed,
       coverage: next.state === 'complete' && next.incomplete === 0 ? 'bounded_complete' : 'partial',
+      traversalCoverage: next.state === 'complete' && next.traversal_incomplete === 0 ? 'bounded_complete' : 'partial',
       ...(reason?{reason}:{}),
     };
     } finally { this.stepping=false; }
@@ -524,6 +526,7 @@ export class FullTextEngine {
 
   async status(c: FullTextPrincipal): Promise<{
     state: string; coverage: 'partial_or_unverified'|'complete_bounded_scan';
+    traversalCoverage: 'partial_or_unverified'|'complete_bounded_scan';
     visibleDocuments: number; visibleCountTruncated: boolean;
     actualFreshness: 'not_monitored'; configuredRoots: number;
     visibleFormatCoverage: Array<{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>;
@@ -561,6 +564,9 @@ export class FullTextEngine {
     return {
       state:run?.state??'unstarted',
       coverage:run?.state==='complete' && run.incomplete===0 && !hiddenByAcl && rows.length <= this.config.budgets.maxQueryCandidates
+        ? 'complete_bounded_scan':'partial_or_unverified',
+      traversalCoverage:run?.state==='complete' && run.traversal_incomplete===0 && !hiddenByAcl &&
+        rows.length <= this.config.budgets.maxQueryCandidates
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
