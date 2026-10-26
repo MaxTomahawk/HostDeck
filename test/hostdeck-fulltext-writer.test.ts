@@ -52,15 +52,17 @@ function receive(child:ChildProcessWithoutNullStreams,pattern:RegExp,ms=12_000):
       if (line)finish(undefined,line);
       if (stdout.length>8192)finish(new Error('FIXTURE_OUTPUT_LIMIT'));
     };
-    const onExit=(code:number|null)=>finish(new Error('FIXTURE_EXIT_BEFORE_EXPECTED_LINE_'+code));
+    // Child 'exit' can precede a final stdout pipe data event. 'close'
+    // runs only after the pipe streams have fully closed.
+    const onClose=(code:number|null)=>finish(new Error('FIXTURE_CLOSED_BEFORE_EXPECTED_LINE_'+code));
     function finish(error?:Error,result?:string){
       clearTimeout(timeout);
       child.stdout.off('data',onData);
-      child.off('exit',onExit);
+      child.off('close',onClose);
       error?reject(error):resolve(result!);
     }
     child.stdout.on('data',onData);
-    child.once('exit',onExit);
+    child.once('close',onClose);
   });
 }
 async function awaitExit(child:ChildProcessWithoutNullStreams):Promise<void>{
