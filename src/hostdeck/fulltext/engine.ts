@@ -311,7 +311,11 @@ export class FullTextEngine {
       }
       this.db.prepare('UPDATE runs SET processed=processed+1,read_bytes=read_bytes+?,updated_at=? WHERE id=?')
         .run(document.bytes,stamp,task.run_id);
-      if (document.status !== 'indexed') this.markPartial(task.run_id);
+      // Structured document text is a bounded extract, not complete Office
+      // presentation/graphics or guaranteed OCR of every PDF page. Keep the
+      // scan's recall claim partial even when indexed text is searchable.
+      if (document.status !== 'indexed' || ['.docx','.xlsx','.pdf'].includes(format))
+        this.markPartial(task.run_id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     return document.status !== 'indexed' ? 'skipped' : movedId !== undefined ? 'renamed' : old ? 'unchanged' : previous ? 'changed' : 'indexed';
@@ -466,7 +470,11 @@ export class FullTextEngine {
         const entry=coverage.get(format);
         if (row.state==='indexed') {
           visible++;
-          if(entry)entry.indexed++;
+          if(entry) {
+            entry.indexed++;
+            if (['.docx','.xlsx','.pdf'].includes(format))
+              entry.reasons['structured_text_layer_only']=(entry.reasons['structured_text_layer_only']??0)+1;
+          }
         } else if (entry) {
           entry.unqualified++;
           entry.reasons[row.state]=(entry.reasons[row.state]??0)+1;
