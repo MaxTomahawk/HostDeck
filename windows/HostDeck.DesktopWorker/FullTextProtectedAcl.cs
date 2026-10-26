@@ -14,8 +14,6 @@ namespace HostDeck.DesktopWorker;
 /// </summary>
 internal static class FullTextProtectedAcl
 {
-    private sealed record AclResult(bool verified, string status, string code,
-        string reason, int components_checked, string scope);
 
     private const uint TokenQuery = 0x0008, TokenDuplicate = 0x0002, TokenImpersonate = 0x0004;
     private const uint ReadControl = 0x00020000, ReadAttributes = 0x0080;
