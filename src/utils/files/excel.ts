@@ -469,7 +469,17 @@ ${JSON.stringify(data)}`;
                 if (cell.value !== null && cell.value !== undefined) {
                     if (typeof cell.value === 'object') {
                         // Handle formula results, rich text, etc.
-                        if ('result' in cell.value) {
+                        if ('formula' in cell.value || 'sharedFormula' in cell.value) {
+                            const computed = cell.value as { formula?: string; sharedFormula?: string; result?: unknown };
+                            if (computed.result !== undefined && computed.result !== null) {
+                                // Preserve existing useful cached primitives; never recalculate a workbook.
+                                value = computed.result;
+                            } else if (typeof computed.formula === 'string') {
+                                value = { formula: '=' + computed.formula, calculated: false, cachedResultAvailable: false };
+                            } else {
+                                value = { sharedFormulaReference: computed.sharedFormula, calculated: false, cachedResultAvailable: false };
+                            }
+                        } else if ('result' in cell.value) {
                             value = cell.value.result ?? null;
                         } else if ('richText' in cell.value) {
                             value = (cell.value as any).richText.map((rt: any) => rt.text).join('');
