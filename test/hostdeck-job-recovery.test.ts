@@ -36,8 +36,8 @@ async function reserved(root:string, status:'running'|'cancelling'='cancelling')
 }
 async function emitReceipt(files:Awaited<ReturnType<typeof reserved>>,value:unknown){
   await writeFile(files.receipt,JSON.stringify(value),{flag:'wx'});
-  await writeFile(files.stdout,Buffer.from('known stdout bytes',{encoding:'utf8'}),{flag:'wx'});
-  await writeFile(files.stderr,Buffer.from('known stderr bytes',{encoding:'utf8'}),{flag:'wx'});
+  await writeFile(files.stdout,Buffer.from('known stdout bytes','utf8'),{flag:'wx'});
+  await writeFile(files.stderr,Buffer.from('known stderr bytes','utf8'),{flag:'wx'});
 }
 
 test('R04-B003-F015 confirmed cancellation clears obsolete uncertainty and retains owned artifacts',async()=>{
