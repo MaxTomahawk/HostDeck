@@ -21,8 +21,11 @@ function equalPath(a:string,b:string):boolean{
   return process.platform==='win32'?left.toLowerCase()===right.toLowerCase():left===right;
 }
 function p(context:ExecutionContext):FullTextPrincipal{
+  // No proven multisession read-only sharing or cross-session scan ownership.
+  if(context.sessionIds.length!==1||!Number.isSafeInteger(context.sessionIds[0])||context.sessionIds[0]<1)
+    throw new Error('FULLTEXT_SESSION_UNQUALIFIED');
   return {ownerId:context.ownerId,deviceId:context.deviceId,executorId:context.executorId,
-    ...(context.sessionId===undefined?{}:{sessionId:context.sessionId})};
+    sessionId:context.sessionIds[0]};
 }
 type Reauthorize=(name:string,args:Readonly<Record<string,unknown>>)=>Promise<void>;
 
@@ -52,10 +55,11 @@ export class FullTextAdapter implements Adapter {
     });
   }
 
-  private async pathReadable(candidate:string):Promise<void>{
+  private async pathReadable(candidate:string,requireFile=false):Promise<void>{
     const canonical=await safeRealpath(candidate);
     const stat=await fs.lstat(canonical);
     if(stat.isDirectory()){
+      if(requireFile)throw new Error('FULLTEXT_DENIED');
       // A real directory handle checks the current Windows user token.
       const dir=await fs.opendir(canonical);await dir.close();return;
     }
@@ -91,7 +95,7 @@ export class FullTextAdapter implements Adapter {
     await this.pathReadable(req.root);
     if(!within(req.root,req.path))throw new Error('FULLTEXT_DENIED');
     if(equalPath(req.root,req.path))return true;
-    try{await this.pathReadable(req.path);}
+    try{await this.pathReadable(req.path,req.action==='metadata'||req.action==='snippet'||req.action==='index');}
     catch(error){
       const missing=(error as NodeJS.ErrnoException)?.code==='ENOENT';
       // An actual missing file can only be handled for index maintenance
