@@ -101,5 +101,7 @@ export interface FullTextScanReceipt {
   renamedThisStep: number;
   removedAtCompletion: number;
   coverage: 'partial' | 'bounded_complete';
+  /** Proves directory enumeration only; OCR/Office coverage is independent. */
+  traversalCoverage: 'partial' | 'bounded_complete';
   reason?: string;
 }
