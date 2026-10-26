@@ -37,6 +37,7 @@ export interface ManagerEntry {
 export interface ManagerFilters {
   search?: string; category?: string; presence?: string; qualification?: string;
   selected?: string; capability?: string; sort?: string;
+  enabled?: string; running?: string; healthy?: string; compatible?: string; onDemand?: string;
 }
 const builtinDirect: ExtensionCandidate = Object.freeze({
   id: 'HOSTDECK-INTERNAL-DIRECT', name: 'HostDeck direct filesystem',
@@ -158,6 +159,13 @@ export function filterManagerEntries(entries: readonly ManagerEntry[], options: 
         states.qualified !== options.qualification) return false;
     if (options.selected && options.selected !== 'all' &&
         states.selected !== options.selected) return false;
+    for (const [key, state] of [
+      ['enabled', states.enabled], ['running', states.running],
+      ['healthy', states.healthy], ['compatible', states.compatible],
+      ['onDemand', states.onDemand],
+    ] as const) {
+      if (options[key] && options[key] !== 'all' && options[key] !== state) return false;
+    }
     if (options.capability && options.capability !== 'all' &&
         !entry.actualCapabilities.includes(options.capability) &&
         !candidate.capabilityHints.includes(options.capability)) return false;
@@ -183,10 +191,17 @@ export function groupManagerEntries(entries: readonly ManagerEntry[], groupBy: s
   if (groupBy === 'none') return [{ name: 'All matching entries', entries: [...entries] }];
   const groups = new Map<string, ManagerEntry[]>();
   for (const entry of entries) {
-    const key = groupBy === 'installed' ? entry.states.installed
-      : groupBy === 'qualification' ? entry.states.qualified
-      : entry.candidate.category;
-    const group = groups.get(key) ?? []; group.push(entry); groups.set(key, group);
+    const names = groupBy === 'capability'
+      ? (entry.actualCapabilities.length ? entry.actualCapabilities
+        : entry.candidate.capabilityHints.length
+          ? entry.candidate.capabilityHints.map(value => value + ' · research hint')
+          : ['Not mapped'])
+      : [groupBy === 'installed' ? entry.states.installed
+        : groupBy === 'qualification' ? entry.states.qualified
+        : entry.candidate.category];
+    for (const name of names) {
+      const group = groups.get(name) ?? []; group.push(entry); groups.set(name, group);
+    }
   }
   return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, items]) => ({ name, entries: items }));
 }
