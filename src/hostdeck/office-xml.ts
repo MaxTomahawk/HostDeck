@@ -1,4 +1,5 @@
 import { SaxesParser } from 'saxes';
+import { RuntimeError } from './runtime-error.js';
 
 /** Preserve OOXML structures while editing only ordinary visible text nodes. */
 export function escapeOfficeXml(value: string): string {
@@ -6,7 +7,7 @@ export function escapeOfficeXml(value: string): string {
     const n = char.codePointAt(0)!;
     if (n === 0 || (n < 32 && n !== 9 && n !== 10 && n !== 13) ||
         (n >= 0xd800 && n <= 0xdfff) || n === 0xfffe || n === 0xffff) {
-      throw new Error('DOCUMENT_XML_CHARACTER_DENIED');
+      throw new RuntimeError('DOCUMENT_XML_CHARACTER_DENIED');
     }
   }
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -15,7 +16,7 @@ export function escapeOfficeXml(value: string): string {
 
 export function decodeOfficeXml(value: string): string {
   if (/&(?!(?:amp|lt|gt|quot|apos|#(?:[0-9]+|x[0-9a-fA-F]+));)/.test(value)) {
-    throw new Error('DOCUMENT_UNSUPPORTED_XML_ENTITY');
+    throw new RuntimeError('DOCUMENT_UNSUPPORTED_XML_ENTITY');
   }
   return value.replace(/&(?:amp|lt|gt|quot|apos|#(?:[0-9]+|x[0-9a-fA-F]+));/g, entity => {
     const named: Record<string, string> = { '&amp;': '&', '&lt;': '<',
@@ -24,14 +25,14 @@ export function decodeOfficeXml(value: string): string {
     const hex = entity.startsWith('&#x');
     const n = Number.parseInt(entity.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
     if (!Number.isInteger(n) || n < 1 || n > 0x10ffff ||
-        (n >= 0xd800 && n <= 0xdfff)) throw new Error('DOCUMENT_XML_CHARACTER_DENIED');
+        (n >= 0xd800 && n <= 0xdfff)) throw new RuntimeError('DOCUMENT_XML_CHARACTER_DENIED');
     return String.fromCodePoint(n);
   });
 }
 
 export function requireSafeOfficeXml(xml: string): void {
   if (/<!(?:DOCTYPE|ENTITY)\b/i.test(xml) || /<\?xml-stylesheet\b/i.test(xml) || /<!\[CDATA\[|<!--/.test(xml)) {
-    throw new Error('DOCUMENT_UNSAFE_XML');
+    throw new RuntimeError('DOCUMENT_UNSAFE_XML');
   }
 }
 
@@ -79,7 +80,7 @@ function rewriteParagraph(xml: string, oldText: string, newText: string): { xml:
         if (stop <= upper) { last = i; endAt = stop - accumulated; break; }
         accumulated = upper;
       }
-      if (first < 0 || last < first) throw new Error('DOCX_TEXT_RANGE_INVALID');
+      if (first < 0 || last < first) throw new RuntimeError('DOCX_TEXT_RANGE_INVALID');
       if (first === last) {
         const value = current[first].after;
         current[first].after = value.slice(0, beginAt) + newText + value.slice(endAt);
@@ -111,7 +112,7 @@ function rewriteParagraph(xml: string, oldText: string, newText: string): { xml:
 
 export function replaceVisibleDocxXml(xml: string, oldText: string, newText: string): { xml: string; count: number } {
   requireSafeOfficeXml(xml);
-  if (!oldText) throw new Error('DOCX_SEARCH_EMPTY');
+  if (!oldText) throw new RuntimeError('DOCX_SEARCH_EMPTY');
   escapeOfficeXml(oldText);
   escapeOfficeXml(newText);
   let out = '', position = 0, count = 0;
@@ -150,96 +151,96 @@ export function validateOfficeStructure(xml: string, kind: OfficePart): void {
   const stack: OfficeElement[] = [];
   const parser = new SaxesParser<{ xmlns: true }>({ xmlns: true });
   let roots = 0, bodyCount = 0, sheetDataCount = 0;
-  parser.on('doctype', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
-  parser.on('processinginstruction', () => { throw new Error('DOCUMENT_UNSAFE_XML'); });
-  parser.on('error', () => { throw new Error('DOCUMENT_INVALID_XML'); });
+  parser.on('doctype', () => { throw new RuntimeError('DOCUMENT_UNSAFE_XML'); });
+  parser.on('processinginstruction', () => { throw new RuntimeError('DOCUMENT_UNSAFE_XML'); });
+  parser.on('error', () => { throw new RuntimeError('DOCUMENT_INVALID_XML'); });
   parser.on('opentag', tag => {
     const parent = stack[stack.length - 1];
     const current: OfficeElement = { local: tag.local, prefix: tag.prefix, uri: tag.uri };
     if (!parent) {
       roots++;
       if (roots !== 1 || tag.local !== requiredName || tag.uri !== requiredUri ||
-          tag.prefix !== requiredPrefix) throw new Error('DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE');
+          tag.prefix !== requiredPrefix) throw new RuntimeError('DOCUMENT_INVALID_XML_ROOT_OR_NAMESPACE');
     }
     if (parent && tag.local === requiredName && tag.uri === requiredUri) {
-      throw new Error('DOCUMENT_INVALID_XML_NESTING');
+      throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
     }
     if (word) {
       if (parent && tag.uri === WORD_NS && ['document', 'hdr', 'ftr'].includes(tag.local)) {
-        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
       }
       if ((tag.prefix === 'w' && tag.uri !== WORD_NS) ||
           (tag.uri === WORD_NS && tag.prefix !== 'w')) {
-        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NAMESPACE');
       }
       if (tag.uri === WORD_NS && tag.local === 'body') {
         if (kind !== 'document' || !parent || parent.local !== 'document' ||
-            parent.uri !== WORD_NS) throw new Error('DOCUMENT_INVALID_XML_NESTING');
+            parent.uri !== WORD_NS) throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         bodyCount++;
       }
       if (tag.uri === WORD_NS && tag.local === 'p') {
         if (stack.some(element => element.local === 'p' && element.uri === WORD_NS)) {
-          throw new Error('DOCUMENT_UNSUPPORTED_NESTED_PARAGRAPH');
+          throw new RuntimeError('DOCUMENT_UNSUPPORTED_NESTED_PARAGRAPH');
         }
         if (kind === 'document' &&
             !stack.some(element => element.local === 'body' && element.uri === WORD_NS)) {
-          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         }
       }
       if (tag.uri === WORD_NS && tag.local === 't' &&
           (!parent || parent.local !== 'r' || parent.uri !== WORD_NS ||
             !stack.some(element => element.local === 'p' && element.uri === WORD_NS))) {
-        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
       }
     } else if (relation) {
       if ((tag.local === 'Relationship' || tag.local === 'Relationships') &&
           (tag.uri !== PACKAGE_REL_NS || tag.prefix !== '')) {
-        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NAMESPACE');
       }
       if (tag.local === 'Relationship' &&
           (!parent || parent.local !== 'Relationships' || parent.uri !== PACKAGE_REL_NS)) {
-        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
       }
     } else {
       if (SHEET_ELEMENTS.has(tag.local) && (tag.uri !== SHEET_NS || tag.prefix !== '')) {
-        throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NAMESPACE');
       }
       if (kind === 'workbook') {
         if (tag.local === 'sheets' &&
             (!parent || parent.local !== 'workbook' || parent.uri !== SHEET_NS)) {
-          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         }
         if (tag.local === 'sheet') {
           if (!parent || parent.local !== 'sheets' || parent.uri !== SHEET_NS) {
-            throw new Error('DOCUMENT_INVALID_XML_NESTING');
+            throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
           }
           const relationshipId = tag.attributes['r:id'];
           if (!relationshipId || relationshipId.uri !== OFFICE_REL_NS) {
-            throw new Error('DOCUMENT_INVALID_XML_NAMESPACE');
+            throw new RuntimeError('DOCUMENT_INVALID_XML_NAMESPACE');
           }
         }
       } else if (kind === 'worksheet') {
         if (tag.local === 'sheetData') {
           if (!parent || parent.local !== 'worksheet' || parent.uri !== SHEET_NS) {
-            throw new Error('DOCUMENT_INVALID_XML_NESTING');
+            throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
           }
           sheetDataCount++;
         }
         if (tag.local === 'row' &&
             (!parent || parent.local !== 'sheetData' || parent.uri !== SHEET_NS)) {
-          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         }
         if (tag.local === 'c' &&
             (!parent || parent.local !== 'row' || parent.uri !== SHEET_NS)) {
-          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         }
         if (['f', 'v', 'is'].includes(tag.local) &&
             (!parent || parent.local !== 'c' || parent.uri !== SHEET_NS)) {
-          throw new Error('DOCUMENT_INVALID_XML_NESTING');
+          throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
         }
       } else if (kind === 'sst' && tag.local === 'si' &&
           (!parent || parent.local !== 'sst' || parent.uri !== SHEET_NS)) {
-        throw new Error('DOCUMENT_INVALID_XML_NESTING');
+        throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
       }
     }
     stack.push(current);
@@ -249,6 +250,6 @@ export function validateOfficeStructure(xml: string, kind: OfficePart): void {
   if (roots !== 1 || stack.length !== 0 ||
       (kind === 'document' && bodyCount !== 1) ||
       (kind === 'worksheet' && sheetDataCount !== 1)) {
-    throw new Error('DOCUMENT_INVALID_XML_NESTING');
+    throw new RuntimeError('DOCUMENT_INVALID_XML_NESTING');
   }
 }
