@@ -4,7 +4,7 @@ import {constants as fsFlags} from 'node:fs';
 import type {Adapter} from '../gateway.js';
 import type {ExecutionContext} from '../security.js';
 import {FullTextPort,FULLTEXT_PROVIDER_ID,FULLTEXT_ENGINE_ID} from './wiring.js';
-import {FullTextSelectionStore} from './selection-store.js';
+import {FullTextSelectionStore,type FullTextProtectedAclVerifier} from './selection-store.js';
 import {safeRealpath,within} from './policy.js';
 import type {FullTextCheck,FullTextPrincipal,FullTextAction} from './types.js';
 
@@ -32,6 +32,10 @@ type Reauthorize=(name:string,args:Readonly<Record<string,unknown>>)=>Promise<vo
 export interface FullTextAdapterOptions{
   stateDirectory:string;
   workspace:string;
+  /** Admin/SYSTEM-owned config/approval directory, disjoint from SQLite. */
+  protectedOwnerDirectory?:string;
+  /** Mandatory trusted native effective-ACL verifier. NOT a caller boolean. */
+  verifyProtectedOwnerAcl?:FullTextProtectedAclVerifier;
   /** Must be bound to HostDeckFacade.reauthorize and active ALS context. */
   reauthorize:Reauthorize;
   /** Optional MORE restrictive local policy; true never bypasses native checks. */
@@ -47,7 +51,11 @@ export class FullTextAdapter implements Adapter {
   readonly store:FullTextSelectionStore;
   private readonly port:FullTextPort;
   constructor(private readonly options:FullTextAdapterOptions){
-    this.store=new FullTextSelectionStore(options.stateDirectory,options.workspace);
+    this.store=new FullTextSelectionStore(
+      options.protectedOwnerDirectory??
+        path.join(path.dirname(options.stateDirectory),'FullTextOwnerProtection-Unqualified'),
+      options.workspace,options.stateDirectory,options.verifyProtectedOwnerAcl,
+    );
     this.port=new FullTextPort({
       loadSelectedConfig:c=>this.store.selected(c),
       isOwnerConfirmed:(c,digest)=>this.store.confirmed(c,digest),
