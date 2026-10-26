@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { constants as fsConstants } from 'node:fs';
 import { extractDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
@@ -13,6 +14,25 @@ import type {
 } from './types.js';
 
 type Scope = { ownerId: string; deviceId: string; executorId: string; sessionId?: number };
+type FsIdentity = {dev: bigint; ino: bigint};
+function sameIdentity(a: FsIdentity, b: FsIdentity): boolean {return a.dev===b.dev && a.ino===b.ino;}
+async function identity(file: string): Promise<FsIdentity> {
+  const stat = await fs.lstat(file,{bigint:true});
+  if (stat.isSymbolicLink()) throw new Error('FULLTEXT_REPARSE_DENIED');
+  if (stat.ino === 0n) throw new Error('FULLTEXT_FILE_IDENTITY_UNAVAILABLE');
+  return {dev:stat.dev,ino:stat.ino};
+}
+async function boundedPinnedHash(file:string,expected:FsIdentity,maxBytes:number): Promise<string|undefined> {
+  const handle=await fs.open(file,fsConstants.O_RDONLY|(fsConstants.O_NOFOLLOW??0));
+  try {
+    const st=await handle.stat({bigint:true});
+    if (!sameIdentity(st,expected)) throw new Error('FULLTEXT_SOURCE_IDENTITY_CHANGED');
+    if (st.size>BigInt(maxBytes)) return undefined;
+    const bytes=await handle.readFile();
+    if (bytes.length>maxBytes) throw new Error('FULLTEXT_SOURCE_SIZE_CHANGED');
+    return createHash('sha256').update(bytes).digest('hex');
+  } finally {await handle.close();}
+}
 type Config = ReturnType<typeof normalizeConfig>;
 type Task = { path: string; root: string; depth: number; kind: 'dir' | 'file'; run_id: string };
 type Doc = {
@@ -54,6 +74,7 @@ export class FullTextEngine {
     private readonly db: DatabaseSync, private readonly config: Config,
     private readonly principal: Scope, private readonly check: FullTextAuthorizer,
     private readonly writer: FullTextWriterLock,
+    private readonly roots: ReadonlyMap<string,FsIdentity>,
   ) {}
 
   static preview(config: FullTextConfig, principal: FullTextPrincipal, check: FullTextAuthorizer): Promise<FullTextPreview> {
@@ -70,11 +91,13 @@ export class FullTextEngine {
     const owner = validPrincipal(principal);
     if (!c.roots.length || !c.formats.length || confirmedDigest !== c.digest)
       throw new Error('FULLTEXT_SELECTION_NOT_CONFIRMED');
+    const rootIdentities=new Map<string,FsIdentity>();
     for (const root of c.roots) {
       await authorize(check, owner, 'configure', root, root);
       const actual = await safeRealpath(root);
       if (actual !== root && actual.toLowerCase() !== root.toLowerCase()) throw new Error('FULLTEXT_ROOT_MOVED');
       if (!(await fs.lstat(actual)).isDirectory()) throw new Error('FULLTEXT_ROOT_NOT_DIRECTORY');
+      rootIdentities.set(root,await identity(root));
     }
     // The state directory must already exist and be protected by the caller's
     // installer/profile ACL. Never invent a location or mkdir in user drives.
@@ -123,7 +146,7 @@ export class FullTextEngine {
       // A prior process might have stopped midstep. Do not claim completion
       // or continue an interrupted scan without a new explicit resume.
       db.prepare("UPDATE runs SET state='interrupted',updated_at=? WHERE state IN ('running','resource_paused')").run(now());
-      return new FullTextEngine(db, c, owner, check, writer);
+      return new FullTextEngine(db, c, owner, check, writer,rootIdentities);
     } catch (error) {
       try { db?.close(); }
       finally { writer.release(); }
@@ -138,11 +161,17 @@ export class FullTextEngine {
     this.guard(c);
     await authorize(this.check, this.principal, action, root, file);
   }
+  private async verifyRoot(root:string):Promise<void>{
+    await safeRealpath(root); // all components must still be non-reparse
+    const pinned=this.roots.get(root);
+    if (!pinned || !sameIdentity(await identity(root),pinned))
+      throw new Error('FULLTEXT_ROOT_IDENTITY_CHANGED');
+  }
   private async rootsAllowed(c: FullTextPrincipal, action: Parameters<FullTextAuthorizer>[0]['action']): Promise<void> {
     this.guard(c);
     for (const root of this.config.roots) {
       await this.auth(c, action, root, root);
-      await safeRealpath(root); // fail closed if root disappears or becomes a reparse
+      await this.verifyRoot(root);
     }
   }
 
@@ -265,6 +294,8 @@ export class FullTextEngine {
     if (!within(task.root,file)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
     const format = path.extname(file).toLowerCase() as FullTextFormat;
     if (!formatSet.has(format) || !this.config.formats.includes(format)) return 'skipped';
+    await this.verifyRoot(task.root);
+    const sourceIdentity=await identity(file);
     const run = this.runById(task.run_id);
     const stat = await fs.lstat(file);
     if (!stat.isFile()) return 'skipped';
@@ -274,14 +305,21 @@ export class FullTextEngine {
     const previous = this.db.prepare('SELECT * FROM docs WHERE path=?').get(file) as Doc|undefined;
     if (!previous && count >= this.config.budgets.maxDocuments)
       throw new Error('FULLTEXT_DOCUMENT_BUDGET_EXCEEDED');
+    // Pin an authorized file identity/hash before the parser's path-based
+    // extraction. Structured Office/PDF parsers currently reopen by path:
+    // reject *any* different source/hash before SQLite commit.
+    const trustedHash=await boundedPinnedHash(file,sourceIdentity,this.config.budgets.maxFileBytes);
     const document = await extractDocument(file,task.root,this.config.budgets);
-    // Verify authorization and source bytes immediately before the commit.
+    // The authorizer can be asynchronous and a root/file can change while
+    // extracting: re-check BOTH the pinned root and the final file identity.
     await this.auth(c,'index',task.root,file);
-    if (document.sha256) {
-      const current = await fs.readFile(file);
-      if (createHash('sha256').update(current).digest('hex') !== document.sha256)
-        throw new Error('FULLTEXT_SOURCE_CHANGED');
-    }
+    await this.verifyRoot(task.root);
+    await safeRealpath(file);
+    if (!sameIdentity(sourceIdentity,await identity(file)))
+      throw new Error('FULLTEXT_SOURCE_IDENTITY_CHANGED');
+    const postHash=await boundedPinnedHash(file,sourceIdentity,this.config.budgets.maxFileBytes);
+    if (trustedHash!==postHash || (document.sha256!=='' && document.sha256!==trustedHash))
+      throw new Error('FULLTEXT_SOURCE_CHANGED');
     if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
     if (!document.sha256) this.markPartial(task.run_id);
     const old = previous?.sha256 === document.sha256 && previous?.state === document.status;
