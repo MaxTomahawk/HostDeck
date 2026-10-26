@@ -96,6 +96,7 @@ const state:FixtureState={
       unexpectedRequests:[...state.unexpectedRequests],
       totalDomNodes:doc.querySelectorAll('*').length,
       device:(doc.querySelector('#device') as HTMLInputElement|null)?.value,
+      visibleStatus:doc.querySelector('#status')?.textContent??null,
       fileInput:(doc.querySelector('#file-path') as HTMLInputElement|null)?.value??null,
       managerCount:doc.querySelectorAll('#content .manager').length,
       heapBytes:(performance as Performance & {memory?:{usedJSHeapSize:number}})
