@@ -8,7 +8,7 @@
  */
 import path from 'node:path';
 import { pizzipPackage } from '../utils/files/docx.js';
-import { decodeOfficeXml, escapeOfficeXml, requireSafeOfficeXml } from './office-xml.js';
+import { decodeOfficeXml, escapeOfficeXml, requireSafeOfficeXml, validateOfficeStructure } from './office-xml.js';
 
 function open(buffer: Buffer): any { return new (pizzipPackage.load())(buffer); }
 function part(zip: any, name: string): string {
@@ -73,6 +73,23 @@ function inline(contents: string): string {
 function cellValue(cell: Cell, shared: string[]): unknown {
   const type = attribute(cell.attrs, 't');
   const formula = tag(cell.inner, 'f'), raw = tag(cell.inner, 'v');
+  const formulaTag = /<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/.exec(cell.inner);
+  if (formulaTag && formulaTag[1].trim()) {
+    // Shared/array/dataTable and other attributed formula groups cannot be
+    // expanded or recalculated by this bounded reader. Never emit null as a
+    // seemingly successful value for a shared-formula dependent without cache.
+    const formulaType = attribute(formulaTag[1], 't') ?? 'unsupported';
+    const cachedResultAvailable = raw !== undefined && raw !== '';
+    return {
+      formulaType,
+      formula: formula === undefined || formula === '' ? null : '=' + formula,
+      calculated: false,
+      cachedResultAvailable,
+      status: 'UNSUPPORTED_FORMULA_GROUP',
+      ...(cachedResultAvailable ? { cachedResult: type === 'b' ? raw === '1'
+        : type === 'str' || type === 'e' ? raw : Number.isFinite(Number(raw)) ? Number(raw) : raw } : {}),
+    };
+  }
   if (formula !== undefined && (raw === undefined || raw === '')) {
     return { formula: '=' + formula, calculated: false, cachedResultAvailable: false };
   }
@@ -92,10 +109,8 @@ function cellValue(cell: Cell, shared: string[]): unknown {
 function sheetDetails(zip: any, selected?: string): { name: string; file: string; names: string[] } {
   const workbook = part(zip, 'xl/workbook.xml');
   const refs = part(zip, 'xl/_rels/workbook.xml.rels');
-  if (!/<workbook\b[^>]*>/.test(workbook) || !workbook.includes('</workbook>') ||
-      !/<Relationships\b[^>]*>/.test(refs) || !refs.includes('</Relationships>')) {
-    throw new Error('XLSX_INVALID_WORKBOOK_ROOT');
-  }
+  validateOfficeStructure(workbook, 'workbook');
+  validateOfficeStructure(refs, 'relationships');
   const available: Array<{ name: string; rel: string }> = [];
   for (const m of workbook.matchAll(/<sheet\b[^>]*\/?>/g)) {
     const name = attribute(m[0], 'name'), rel = attribute(m[0], 'r:id');
@@ -131,12 +146,11 @@ export function readOpenpyxlCommentWorkbook(input: Buffer, sheet?: string, range
 } {
   const zip = open(input), info = sheetDetails(zip, sheet);
   const worksheet = part(zip, info.file);
-  if (!/<worksheet\b[^>]*>/.test(worksheet) || !worksheet.includes('</worksheet>')) {
-    throw new Error('XLSX_INVALID_WORKSHEET_ROOT');
-  }
+  validateOfficeStructure(worksheet, 'worksheet');
   let shared: string[] = [];
   if (zip.file('xl/sharedStrings.xml')) {
     const strings = part(zip, 'xl/sharedStrings.xml');
+    validateOfficeStructure(strings, 'sst');
     shared = [...strings.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map(m => inline(m[1]));
   }
   const values = new Map<string, unknown>();
@@ -190,9 +204,7 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
   if (!modifications.size) throw new Error('XLSX_EMPTY_EDIT');
   const zip = open(input), info = sheetDetails(zip, sheet);
   let xml = part(zip, info.file);
-  if (!/<worksheet\b[^>]*>/.test(xml) || !xml.includes('</worksheet>')) {
-    throw new Error('XLSX_INVALID_WORKSHEET_ROOT');
-  }
+  validateOfficeStructure(xml, 'worksheet');
   const existing = cells(xml);
   const seen = new Set<string>();
   const changes: Array<{ start: number; end: number; content: string }> = [];
@@ -200,6 +212,13 @@ export function editOpenpyxlCommentWorkbook(input: Buffer, sheet: string, range:
     if (!modifications.has(cell.name)) continue;
     if (seen.has(cell.name)) throw new Error('XLSX_DUPLICATE_CELL');
     seen.add(cell.name);
+    // Never delete a shared/array/dataTable formula master or dependent. Even
+    // replacing only one member invalidates the group's si/ref references.
+    // Reject every attributed <f> conservatively (including unknown kinds).
+    const formulaElement = /<f\b([^>]*?)(?:\/>|>)/.exec(cell.inner);
+    if (formulaElement && formulaElement[1].trim()) {
+      throw new Error('XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED');
+    }
     // Reject unsupported cell-owned markup rather than deleting it silently.
     const remainder = cell.inner.replace(/<f\b[^>]*>[\s\S]*?<\/f>|<f\b[^>]*\/>|<v\b[^>]*>[\s\S]*?<\/v>|<v\s*\/>|<is\b[^>]*>[\s\S]*?<\/is>/g, '').trim();
     if (remainder || /\s(?:cm|vm|ph)\s*=/.test(cell.attrs)) {
