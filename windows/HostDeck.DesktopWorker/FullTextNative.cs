@@ -126,7 +126,7 @@ internal static class FullTextNative
             throw new WorkerError("FULLTEXT_NATIVE_PATH_DENIED");
         // Reject path aliases, alternate data streams and volume remapping.
         var parts = input.Substring(3).Split('\\', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Any(x => x is "." or ".." || x.Contains(':') ||
+        if (parts.Any(x => x == "." || x == ".." || x.Contains(':') ||
             x.EndsWith('.') || x.EndsWith(' ')))
             throw new WorkerError("FULLTEXT_NATIVE_PATH_DENIED");
         var full = Path.GetFullPath(input);
