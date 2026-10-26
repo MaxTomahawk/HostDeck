@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { extractDocument } from './extract.js';
+import { FullTextWriterLock } from './writer-lock.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
 import { authorize, normalizeConfig, previewFullText, safeRealpath, within } from './policy.js';
 import type {
@@ -52,6 +53,7 @@ export class FullTextEngine {
   private constructor(
     private readonly db: DatabaseSync, private readonly config: Config,
     private readonly principal: Scope, private readonly check: FullTextAuthorizer,
+    private readonly writer: FullTextWriterLock,
   ) {}
 
   static preview(config: FullTextConfig, principal: FullTextPrincipal, check: FullTextAuthorizer): Promise<FullTextPreview> {
@@ -82,6 +84,12 @@ export class FullTextEngine {
       throw new Error('FULLTEXT_INDEX_STORAGE_REPARSE');
     await authorize(check, owner, 'storage', storageParent, c.indexFile);
     try { await safeRealpath(c.indexFile); } catch (error) { if (!isMissing(error)) throw error; }
+    // Acquire the OS-backed companion lock *before* even opening main SQLite.
+    // A second live writer must not alter runs, queue, schema or metadata.
+    const companion = c.indexFile + '.writerlock.sqlite';
+    await authorize(check, owner, 'storage', storageParent, companion);
+    try { await safeRealpath(companion); } catch (error) { if (!isMissing(error)) throw error; }
+    const writer=FullTextWriterLock.acquire(c.indexFile);
     let db: DatabaseSync | undefined;
     try {
       db = new DatabaseSync(c.indexFile);
@@ -115,9 +123,10 @@ export class FullTextEngine {
       // A prior process might have stopped midstep. Do not claim completion
       // or continue an interrupted scan without a new explicit resume.
       db.prepare("UPDATE runs SET state='interrupted',updated_at=? WHERE state IN ('running','resource_paused')").run(now());
-      return new FullTextEngine(db, c, owner, check);
+      return new FullTextEngine(db, c, owner, check, writer);
     } catch (error) {
-      db?.close();
+      try { db?.close(); }
+      finally { writer.release(); }
       throw error;
     }
   }
@@ -499,5 +508,9 @@ export class FullTextEngine {
     };
   }
 
-  close(): void { this.db.close(); }
+  close(): void {
+    // Never release exclusive ownership while main DB still has live work.
+    try { this.db.close(); }
+    finally { this.writer.release(); }
+  }
 }
