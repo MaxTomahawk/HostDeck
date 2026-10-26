@@ -32,6 +32,7 @@ test('invalid input/result, wrong device/view and extra authority fields do not 
   for(const input of invalidInputs) assert.equal(parseManagerHostInput(input),null);
   const badResults = [
     {}, {isError:true,structuredContent:{result:{device_id:'device_01',view:'providers'}}},
+    {isError:'false',structuredContent:{result:{device_id:'device_01',view:'providers'}}},
     {structuredContent:{result:{device_id:'other',view:'providers'}}},
     {structuredContent:{result:{device_id:'device_01',view:'jobs'}}},
     {structuredContent:{result:{device_id:'device_01',view:'extensions'}}},
