@@ -46,12 +46,16 @@ const state:FixtureState={
   sendInitial:async()=>{
     await bridge.sendToolInput(input);
     await bridge.sendToolResult(result);
+    // MCP ping is an ordering barrier: all prior PostMessage notifications
+    // from this bridge are processed before the fixture samples DOM/requests.
+    await bridge.ping();
   },
   sendRepeated:async count=>{
     for(let i=0;i<count;i++){
       await bridge.sendToolInput(input);
       await bridge.sendToolResult(result);
     }
+    await bridge.ping();
   },
   sendInvalid:async()=>{
     await bridge.sendToolInput({arguments:{device_id:'../invalid'}});
@@ -69,6 +73,7 @@ const state:FixtureState={
     await bridge.sendToolResult({
       isError:true,structuredContent:{result:{device_id:'fixture-device',view:'providers'}},
     });
+    await bridge.ping();
   },
   monitor:()=>{
     const root=frame.contentDocument!.querySelector<HTMLElement>('#content')!;
