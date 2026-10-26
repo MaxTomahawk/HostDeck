@@ -27,9 +27,12 @@ async function main():Promise<void> {
       // Releasing SQLite is not sufficient for process exit while stdin is
       // still in flowing mode and the parent keeps its pipe open.
       process.stdin.pause();
+      process.stdin.destroy();
       engine.close();
       engine=undefined;
-      process.stdout.write('CLOSED\n');
+      // This is a deliberately short-lived test helper. Exit explicitly
+      // after the observable receipt has been flushed to the parent pipe.
+      process.stdout.write('CLOSED\n',()=>process.exit(0));
     } else {
       process.stdout.write('OPENED '+state+'\n');
     }
