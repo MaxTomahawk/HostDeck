@@ -95,8 +95,13 @@ function rewriteParagraph(xml: string, oldText: string, newText: string): { xml:
   for (const node of nodes.reverse()) {
     if (node.after === node.before) continue;
     let open = node.open;
-    if (/^\s|\s$/u.test(node.after) && !/\bxml:space\s*=/.test(open)) {
-      open = open.slice(0, -1) + ' xml:space="preserve">';
+    if (/^\s|\s$/u.test(node.after)) {
+      if (/\bxml:space\s*=/.test(open)) {
+        // xml:space="default" strips the very whitespace just inserted.
+        open = open.replace(/\bxml:space\s*=\s*(["'])[\s\S]*?\1/, 'xml:space="preserve"');
+      } else {
+        open = open.slice(0, -1) + ' xml:space="preserve">';
+      }
     }
     result = result.slice(0, node.start) + open + escapeOfficeXml(node.after) +
       node.close + result.slice(node.end);
