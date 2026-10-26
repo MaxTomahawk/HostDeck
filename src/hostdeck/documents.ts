@@ -277,8 +277,13 @@ export class DocumentAdapter {
       const result = await new DocxFileHandler().read(file, { offset: 0, length: 1000 });
       if (typeof result.content !== 'string') throw new Error('DOCUMENT_READ_CONTENT_INVALID');
       if (result.content.length > 2_000_000) throw new Error('DOCUMENT_READ_LIMIT');
-      const out = result.content.replace(
-        '\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.', '');
+      // Only remove the two upstream tooltips in the outline header and its
+      // final Python tip. Never replace matching words in document body text.
+      const upstreamHead = /^DOCX Outline: ([^\r\n]*)\r?\nEdit with: edit_block\(file, old_string="<w:t>old text<\/w:t>", new_string="<w:t>new text<\/w:t>"\)\r?\nRaw XML: use read_file with offset=1 to see pretty-printed XML for advanced edits\.\r?\n/;
+      const bulkTip = '\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.';
+      const cleanHead = result.content.replace(upstreamHead, (_match, summary: string) => 'DOCX Outline: ' + summary + '\n');
+      const out = cleanHead.endsWith(bulkTip)
+        ? cleanHead.slice(0, -bulkTip.length) : cleanHead;
       return { content: out + '\nFor literal visible-text replacements use hostdeck_edit_document with change.kind="text_replace", old_text, new_text and expected_replacements. This retains untouched DOCX parts; replacement text inherits the first affected run style.', mimeType: 'text/plain', metadata: result.metadata };
     }
     if (ext === '.xlsx' || ext === '.xlsm') {
