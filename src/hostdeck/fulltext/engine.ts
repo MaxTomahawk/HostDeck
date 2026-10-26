@@ -214,6 +214,7 @@ export class FullTextEngine {
         // No unauthorized filenames or counts enter the durable queue.
         try { await this.auth(c,'scan',task.root,child); }
         catch { incomplete = true; continue; }
+        if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
         this.db.prepare('INSERT OR IGNORE INTO queue(path,root,depth,kind,run_id) VALUES(?,?,?,?,?)')
           .run(child,task.root,task.depth+1,kind,task.run_id);
       }
@@ -245,6 +246,7 @@ export class FullTextEngine {
     const current = await fs.readFile(file);
     if (createHash('sha256').update(current).digest('hex') !== document.sha256 && document.sha256)
       throw new Error('FULLTEXT_SOURCE_CHANGED');
+    if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
     if (!document.sha256) this.markPartial(task.run_id);
     const old = previous?.sha256 === document.sha256 && previous?.state === document.status;
     const stamp = now();
@@ -329,6 +331,7 @@ export class FullTextEngine {
     let processed = 0, indexed = 0, changed = 0, renamed = 0, skipped = 0, removed = 0;
     let reason: string|undefined;
     while (processed < maxOps && Date.now() < deadline) {
+      if (this.runById(runId).state !== 'running') { reason = 'FULLTEXT_STEP_STOPPED'; break; }
       const task = this.db.prepare('SELECT * FROM queue WHERE run_id=? ORDER BY path LIMIT 1').get(runId) as Task|undefined;
       if (!task) break;
       try {
@@ -345,15 +348,17 @@ export class FullTextEngine {
         // ACL changes, source conflicts and source budgets are not silently
         // converted into successful scan coverage or deleted from the queue.
         reason = stableErr(error);
-        this.markPartial(runId);
-        this.state(runId,'paused');
+        if (this.runById(runId).state === 'running') {
+          this.markPartial(runId);
+          this.state(runId,'paused');
+        }
         break;
       }
       this.db.prepare('DELETE FROM queue WHERE path=? AND run_id=?').run(task.path,runId);
       processed++;
     }
     const remaining = this.db.prepare('SELECT path FROM queue WHERE run_id=? LIMIT 1').get(runId);
-    if (!remaining && !reason) removed = await this.finish(c,runId);
+    if (!remaining && !reason && this.runById(runId).state === 'running') removed = await this.finish(c,runId);
     const next = this.runById(runId);
     return {
       runId, state: next.state as FullTextScanReceipt['state'], processedThisStep:processed,
