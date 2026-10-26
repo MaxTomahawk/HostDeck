@@ -9,7 +9,7 @@ import {
 } from './extension-catalog.js';
 
 export interface ManagerConnection {
-  call: (name: string, arguments?: Record<string, unknown>) => Promise<any>;
+  call: (name: string, args?: Record<string, unknown>) => Promise<any>;
   deviceId: () => string;
   isCurrent: () => boolean;
 }
