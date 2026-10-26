@@ -183,6 +183,26 @@ test('openpyxl comment + VML ZIP survives targeted A1 edit; B1/C1/D1 and styles 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('ExcelJS 4.4.0 formula values distinguish missing caches from existing cached primitives', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-formula-'));
+  try {
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1');
+    sheet.getCell('A1').value = 7;
+    sheet.getCell('B1').value = { formula: 'A1*2' };
+    sheet.getCell('C1').value = { formula: 'A1+1', result: 8 };
+    const file = path.join(root, 'formulas.xlsx');
+    await workbook.xlsx.writeFile(file);
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const read = await adapter.handle('hostdeck_read_document', {
+      path: file, sheet: 'Sheet1', range: 'A1:C1'
+    }) as { content: unknown[][] };
+    assert.deepEqual(read.content, [[7,
+      { formula: '=A1*2', calculated: false, cachedResultAvailable: false }, 8]]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('OOXML unsafe root/DTD guard rejects affected comment workbook with source retained', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-office-dtd-'));
   try {
