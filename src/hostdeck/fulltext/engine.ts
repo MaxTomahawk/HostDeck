@@ -194,7 +194,7 @@ export class FullTextEngine {
     this.db.prepare('UPDATE runs SET incomplete=1 WHERE id=?').run(runId);
   }
 
-  private async scanDirectory(task: Task, c: FullTextPrincipal): Promise<boolean> {
+  private async scanDirectory(task: Task, c: FullTextPrincipal, deadline: number): Promise<boolean> {
     await this.auth(c,'scan',task.root,task.path);
     const dir = await safeRealpath(task.path);
     if (!within(task.root,dir)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
@@ -202,6 +202,7 @@ export class FullTextEngine {
     const handle = await fs.opendir(dir);
     try {
       for await (const entry of handle) {
+        if (Date.now() >= deadline) { incomplete = true; break; }
         count++;
         if (count > this.config.budgets.maxEntriesPerDirectory) { incomplete = true; break; }
         if (!this.config.includeHidden && entry.name.startsWith('.')) continue;
@@ -243,9 +244,11 @@ export class FullTextEngine {
     const document = await extractDocument(file,task.root,this.config.budgets);
     // Verify authorization and source bytes immediately before the commit.
     await this.auth(c,'index',task.root,file);
-    const current = await fs.readFile(file);
-    if (createHash('sha256').update(current).digest('hex') !== document.sha256 && document.sha256)
-      throw new Error('FULLTEXT_SOURCE_CHANGED');
+    if (document.sha256) {
+      const current = await fs.readFile(file);
+      if (createHash('sha256').update(current).digest('hex') !== document.sha256)
+        throw new Error('FULLTEXT_SOURCE_CHANGED');
+    }
     if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
     if (!document.sha256) this.markPartial(task.run_id);
     const old = previous?.sha256 === document.sha256 && previous?.state === document.status;
@@ -336,7 +339,7 @@ export class FullTextEngine {
       if (!task) break;
       try {
         if (task.kind === 'dir') {
-          await this.scanDirectory(task,c);
+          await this.scanDirectory(task,c,deadline);
         } else {
           const action = await this.scanFile(task,c);
           if (action === 'indexed') indexed++;
