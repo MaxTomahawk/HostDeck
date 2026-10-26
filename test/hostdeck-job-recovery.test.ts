@@ -145,3 +145,59 @@ test('non-native runner kill acknowledgment remains outcome-uncertain (stub; no 
     assert.ok(!events.some(event=>event.type==='job_cancelled'));
   }finally{await state.close();await rm(root,{recursive:true,force:true})}
 });
+
+test('real Windows native cancel contains its own delayed descendant, not unrelated processes',async t=>{
+  if(process.platform!=='win32'||!process.env.SystemRoot){
+    t.skip('Windows native worker required');return;
+  }
+  const exe=path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
+  if(!existsSync(exe)){t.skip('Native worker has not been built for this fixture');return;}
+  const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-job-owned-tree-'));
+  const shell=path.join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
+  const marker=path.join(root,'owned-descendant-wrote.txt');
+  const startMarker=path.join(root,'owned-shell-started.txt');
+  const quoted=(s:string)=>s.replace(/'/g,"''");
+  const delayed="Start-Sleep -Seconds 3; [IO.File]::WriteAllText('"+quoted(marker)+"','late-output')";
+  const encoded=Buffer.from(delayed,'utf16le').toString('base64');
+  const command="Start-Process -FilePath '"+quoted(shell)+
+    "' -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand "+encoded+
+    "'; [IO.File]::WriteAllText('"+quoted(startMarker)+"','ready'); Start-Sleep -Seconds 12";
+  const native={...options(root),launchJobs:true,shellExecutable:shell,desktopWorkerExecutable:exe,
+    environment:{SystemRoot:process.env.SystemRoot,windir:process.env.windir,
+      TEMP:process.env.TEMP,TMP:process.env.TMP}};
+  const state=StateServices.create(native);
+  try{
+    const accepted=await state.handle('submit_job',{command,working_directory:'.',
+      idempotency_key:'own-descendant-cancel',timeout_seconds:25},context) as {job_id:string};
+    let started=false;
+    for(let i=0;i<150;i++){
+      if(existsSync(startMarker)){started=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,60));
+    }
+    assert.equal(started,true,'fixture started its own descendant before cancellation');
+    const requested=await state.handle('cancel_job',{job_id:accepted.job_id},context) as
+      {cancelled:boolean;status:string;outcome:string;descendants:string};
+    assert.equal(requested.cancelled,true);
+    assert.equal(requested.status,'cancelling');
+    assert.equal(requested.outcome,'uncertain');
+    let final: {status:string;message?:string;descendants_contained?:boolean}|undefined;
+    for(let i=0;i<150;i++){
+      final=await state.handle('read_job',{job_id:accepted.job_id},context) as typeof final;
+      if(final?.status==='cancelled')break;
+      await new Promise(resolve=>setTimeout(resolve,80));
+    }
+    assert.equal(final?.status,'cancelled');
+    assert.equal(final?.descendants_contained,true);
+    assert.ok(!final?.message?.includes('until its receipt is reconciled'));
+    await new Promise(resolve=>setTimeout(resolve,3400));
+    assert.equal(existsSync(marker),false,'cancelled tree cannot produce delayed descendant output');
+    const replay=await state.handle('submit_job',{command,working_directory:'.',
+      idempotency_key:'own-descendant-cancel',timeout_seconds:25},context) as {job_id:string};
+    assert.equal(replay.job_id,accepted.job_id,'resume:never / idempotency unchanged');
+  }finally{
+    await state.close();
+    // Only the disposable fixture root is deleted. Unrelated user apps/jobs
+    // are never addressed by name or PID in this test.
+    await rm(root,{recursive:true,force:true});
+  }
+});
