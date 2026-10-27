@@ -56,10 +56,14 @@ function validateZip(buffer: Buffer): void {
 }
 
 /** Shared bounded ZIP/package validator; full-text reuses it before parsing Office content. */
-export async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): Promise<Buffer> {
+export async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx', prebounded?: Buffer): Promise<Buffer> {
   const stat = await fs.stat(file);
   if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
-  const buffer = await fs.readFile(file);
+  // The full-text caller supplies its already bounded, hashed source buffer.
+  // Do not reopen and unboundedly read that pathname a second time. Existing
+  // document read/edit callers retain their original two-argument semantics.
+  const buffer = prebounded ?? await fs.readFile(file);
+  if (buffer.length > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   validateZip(buffer);
   if (extension === '.docx') {
     const zip = new (pizzipPackage.load())(buffer);
@@ -75,6 +79,23 @@ export async function checkOfficeArchive(file: string, extension: '.docx' | '.xl
     if (!zip.file('word/document.xml')) throw new RuntimeError('DOCUMENT_INVALID_DOCX');
   }
   return buffer;
+}
+
+/** Existing unpdf text-layer semantics, also usable on a prebounded buffer.
+ * No OCR, Arabic logical-order repair, or document editing changes. */
+export async function readPdfTextFromBuffer(bytes: Uint8Array): Promise<{text: string[]; totalPages: number}> {
+  if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
+  const { getDocumentProxy, extractText } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  try {
+    if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
+    const result = await extractText(pdf);
+    return { text: result.text, totalPages: result.totalPages };
+  } finally {
+    // Preserve the existing unpdf loading-task cleanup path.
+    try { await pdf.loadingTask.destroy(); }
+    catch { /* Cleanup must not mask the original PDF outcome. */ }
+  }
 }
 
 class OfficeReplacementCountError extends RuntimeError {
@@ -317,19 +338,11 @@ export class DocumentAdapter {
       const stat = await fs.stat(file);
       if (stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
       const bytes = await fs.readFile(file);
-      const { getDocumentProxy, extractText } = await import('unpdf');
-      const pdf = await getDocumentProxy(new Uint8Array(bytes));
-      try {
-        if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
-        const result = await extractText(pdf);
-        const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
-        if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
-        const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
-        return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
-      } finally {
-        // unpdf 1.8 removed PDFDocumentProxy.destroy(); the loading task owns worker cleanup in both supported shapes.
-        try { await pdf.loadingTask.destroy(); } catch { /* Cleanup must not mask the read result or original failure. */ }
-      }
+      const result = await readPdfTextFromBuffer(bytes);
+      const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
+      if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
+      const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
+      return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
     }
     throw new Error('DOCUMENT_FORMAT_UNSUPPORTED');
   }
