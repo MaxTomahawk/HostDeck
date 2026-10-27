@@ -171,7 +171,7 @@ export class ReadRootAccess {
     // Directory metadata also binds to the actual opened native directory
     // handle. Names returned by this private probe are discarded.
     try {
-      await this.native.directoryPage(scope.absolute, before.ino, 0, 1,
+      await this.native.directoryPage(scope.absolute, before.dev, before.ino, 0, 1,
         async filename => key(filename) === key(scope.absolute));
     } catch { changed(); }
     await this.assertScope(scope, owner, operation);
@@ -205,7 +205,7 @@ export class ReadRootAccess {
         if (!sameDirectory(before, now)) changed();
         let page: Awaited<ReturnType<NativeRead['directoryPage']>>;
         try {
-          page = await native.directoryPage(scope.absolute, before.ino,
+          page = await native.directoryPage(scope.absolute, before.dev, before.ino,
             offset, 192, async selected => key(selected) === key(scope.absolute));
         } catch { return changed(); }
         await access.assertScope(scope, owner, operation);
