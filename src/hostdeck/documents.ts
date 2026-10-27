@@ -386,7 +386,7 @@ export class DocumentAdapter {
       const selected = requested ?? result.text.map((_text, index) => index);
       if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
       const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
-      const coverageByPage = new Map(result.textOrderCoverage.map(item => [item.page_index, item]));
+      const coverageByPage = new Map<number, PdfPageTextOrder>(result.textOrderCoverage.map(item => [item.page_index, item]));
       return { content: pages, mimeType: 'application/json', metadata: {
         totalPages: result.totalPages,
         textOrderCoverage: selected.map(index => coverageByPage.get(index)),
