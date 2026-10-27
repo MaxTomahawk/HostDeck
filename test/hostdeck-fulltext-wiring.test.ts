@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtemp,mkdir,writeFile,rm,access, realpath} from 'node:fs/promises';
@@ -21,6 +22,7 @@ test('fulltext provider stays dormant and fails closed on unapproved/revoked sel
     loadSelectedConfig:async()=>selected,
     isOwnerConfirmed:async c=>approved&&c.ownerId===caller.ownerId,
     authorize:authorizer,
+    nativeAttributes:syntheticFullTextAttributes,
   });
   try{
     await writeFile(doc,'owner fixture sunflower');
