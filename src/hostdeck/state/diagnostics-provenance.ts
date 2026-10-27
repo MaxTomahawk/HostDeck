@@ -5,8 +5,8 @@
  * leave this module.
  */
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, open, realpath, type BigIntStats } from 'node:fs/promises';
+import { constants, type BigIntStats } from 'node:fs';
+import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 export const COMPONENT_IDS = [
@@ -134,6 +134,7 @@ async function inspectFile(
   }
   let rootStat: BigIntStats;
   let rootReal: string;
+  let fileRelativeBefore: string;
   try {
     rootStat = await lstat(root, { bigint: true });
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return unavailable('reparse');
@@ -151,6 +152,7 @@ async function inspectFile(
     }
     const resolved = await realpath(final);
     const relation = path.relative(rootReal, resolved);
+    fileRelativeBefore = relation;
     if (!relation || relation === '..' || relation.startsWith('..' + path.sep) ||
         path.isAbsolute(relation)) return unavailable('reparse');
   } catch (error) { return unavailable(fail(error)); }
@@ -191,7 +193,7 @@ async function inspectFile(
     const realAfter = await realpath(final);
     const relAfter = path.relative(rootReal, realAfter);
     if (!sameIdentity(before, after) || !sameIdentity(before, pathAfter) ||
-        !sameIdentity(rootStat, rootAfter) || relAfter !== path.relative(rootReal, await realpath(final))) {
+        !sameIdentity(rootStat, rootAfter) || relAfter !== fileRelativeBefore) {
       return unavailable('unstable');
     }
     if (relAfter === '..' || relAfter.startsWith('..' + path.sep) ||
