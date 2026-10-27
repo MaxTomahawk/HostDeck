@@ -223,3 +223,30 @@ test('replaced retained match suppresses both snippet and stale match count',asy
     assert.equal(next.total_results,0);
   }finally{await f.cleanup();}
 });
+
+
+test('Everything stays selected and enabled, but emits only authorized external hits',async()=>{
+  const f=await fixture();
+  try{
+    const fakeEverything={
+      sessionId:1,
+      status:async()=>({installed:true,enabled:true,running:true,compatible:true,
+        healthy:true,reason:'FIXTURE',version:'fixture',
+        instance:'fixture',session_id:1,qualified:'not_independently_accepted' as const}),
+      query:async()=>({paths:[f.source,path.join(f.separate,'other.txt'),
+        path.join(f.excluded,'private.txt')],truncated:false,version:'fixture',
+        instance:'fixture',session_id:1,runtime_id:'fixture'}),
+    };
+    const adapter=await FileAdapter.create({workspace:f.workspace,readRoots:f.access,
+      everything:fakeEverything,reauthorize:async name=>{f.calls.push(name);}});
+    const started=await adapter.handle('hostdeck_search_files',{
+      ...args(f.external),pattern:'owned',mode:'files',provider:'everything'},owner) as any;
+    const result=await finish(adapter,started.search_id);
+    assert.equal(result.provider,'everything');
+    assert.equal(result.root_scope,f.external);
+    assert.deepEqual(result.items.map((match:any)=>match.path),[f.source]);
+    assert.equal(result.total_results,1);
+    assert.ok(f.calls.includes('hostdeck_search_files'));
+    assert.ok(f.calls.includes('hostdeck_search_results'));
+  }finally{await f.cleanup();}
+});
