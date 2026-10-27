@@ -48,13 +48,20 @@ export function qualifiedBatch(
 ):boolean[]{
   if(paths.length!==result.length||paths.length<1||paths.length>64)
     throw new Error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+  // normalizeConfig() admits case-insensitive volume-root pairs on Windows.
+  // Compare only the exact selected fixed-volume anchor this way: never grant
+  // a Hidden/System exception to ordinary descendants or unrelated roots.
+  const key=(value:string)=>{
+    const resolved=path.resolve(value);
+    return process.platform==='win32'?resolved.toLowerCase():resolved;
+  };
   return paths.map((candidate,index)=>{
     const item=result[index];
     if(!item||item.index!==index||!within(root,candidate))
       throw new Error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
-    const fixedVolumeRoot=path.resolve(candidate)===path.resolve(root)&&
-      fixedVolumeRoots.some(fixed=>path.resolve(fixed)===path.resolve(root))&&
-      path.parse(root).root.toLowerCase()===path.resolve(root).toLowerCase();
+    const fixedVolumeRoot=key(candidate)===key(root)&&
+      fixedVolumeRoots.some(fixed=>key(fixed)===key(root))&&
+      key(path.parse(root).root)===key(root);
     return eligibleNativeLeaf(item,includeHidden,fixedVolumeRoot);
   });
 }
