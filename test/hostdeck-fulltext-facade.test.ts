@@ -4,12 +4,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
+import {createReadStream} from 'node:fs';
 import {generateKeyPair,exportJWK,SignJWT,createLocalJWKSet} from 'jose';
 import {toNodeHandler} from '@modelcontextprotocol/node';
 import {AuditLog,TokenAuthority,PolicyGate,type Grant} from '../src/hostdeck/security.js';
 import {HostDeckFacade,createHttpBoundary} from '../src/hostdeck/gateway.js';
 import {FullTextAdapter} from '../src/hostdeck/fulltext/adapter.js';
+import {FullTextNativeBridge} from '../src/hostdeck/fulltext-native-bridge.js';
+import {inspectDesktopIdentity} from '../src/hostdeck/desktop.js';
 import {FullTextSelectionStore} from '../src/hostdeck/fulltext/selection-store.js';
 import {normalizeConfig} from '../src/hostdeck/fulltext/policy.js';
 import {FULLTEXT_PROVIDER_ID,FULLTEXT_ENGINE_ID} from '../src/hostdeck/fulltext/wiring.js';
@@ -21,7 +24,7 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   const workspace=path.join(root,'workspace'),state=path.join(root,'writable-index-state'),protectedDir=path.join(root,'synthetic-protected-approvals');
   const corpus=path.join(root,'owner-selected-corpus'),other=path.join(root,'unselected');
   await Promise.all([workspace,state,protectedDir,corpus,other].map(dir=>fs.mkdir(dir)));
-  const marker=path.join(corpus,'owned.txt'),forbidden=path.join(corpus,'restricted.txt');
+  const marker=path.join(corpus,'België_日本語_中文.txt'),forbidden=path.join(corpus,'restricted.txt');
   await fs.writeFile(marker,'Sunflower Café België 中文文件 السلام');
   await fs.writeFile(forbidden,'Hiddensecret document contents');
   const audit=await AuditLog.open(path.join(root,'audit'));
@@ -46,17 +49,35 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   const syntheticBoundary=async()=>{
     if(!testOnlyBoundaryVerified)throw new Error('FULLTEXT_OWNER_ACL_UNQUALIFIED');
   };
+  // With HOSTDECK_TEST_FULLTEXT_NATIVE_WORKER on Windows, this HTTP fixture
+  // uses the real PR22 worker and Unicode filename. Protected owner approval
+  // remains a clearly synthetic fixture only; do not claim ACL-positive PASS.
+  const testNativeExecutable=process.env.HOSTDECK_TEST_FULLTEXT_NATIVE_WORKER;
+  let nativeBridge:FullTextNativeBridge|undefined;
+  if(testNativeExecutable){
+    assert.equal(process.platform,'win32','native HTTP test requires Windows');
+    const executable=path.resolve(testNativeExecutable);
+    const actual=await inspectDesktopIdentity(executable);
+    const hash=createHash('sha256');
+    for await(const piece of createReadStream(executable))hash.update(piece);
+    // Test-only observed hash. Production requires independently installer-pinned
+    // workerSha256, never the hash of the current file as its own trust anchor.
+    nativeBridge=new FullTextNativeBridge({
+      workerExecutable:executable,workerSha256:hash.digest('hex'),
+      expectedExecutor:{sid:actual.sid,logonId:actual.logon_id,sessionId:actual.session_id},
+    });
+    t.diagnostic('Real native Unicode attribute path enabled; protected owner ACL proof remains synthetic.');
+  }
+  const metadata=nativeBridge??{attributes:async(paths:readonly string[],authorize:(file:string)=>Promise<boolean>)=>{
+    for(const item of paths)if(await authorize(item)!==true)throw new Error('FULLTEXT_DENIED');
+    return paths.map((_,index)=>({index,status:'ok' as const,hidden:false,system:false,
+      reparse:false,hidden_component:false,system_component:false,directory:false}));
+  }};
   const adapter=new FullTextAdapter({
     stateDirectory:state,workspace,
     protectedOwnerDirectory:protectedDir,
     verifyProtectedOwnerAcl:syntheticBoundary,
-    // Synthetic metadata for the HTTP/PolicyGate oracle ONLY. Actual Windows
-    // attribute and executable-identity evidence is in the opt-in native test.
-    nativeAttributes:{attributes:async(paths,authorize)=>{
-      for(const item of paths)if(await authorize(item)!==true)throw new Error('FULLTEXT_DENIED');
-      return paths.map((_,index)=>({index,status:'ok' as const,hidden:false,system:false,
-        reparse:false,hidden_component:false,system_component:false,directory:false}));
-    }},
+    nativeAttributes:metadata,
     reauthorize:(name,args)=>facade.reauthorize(name,args),
     additionalReadDeny:async r=>extraDenied.has(r.path),
   });
@@ -71,7 +92,7 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   const port=(server.address() as {port:number}).port;
   allowedHosts.push('127.0.0.1:'+port);
   t.after(async()=>{
-    adapter.close();await boundary.close();
+    adapter.close();await nativeBridge?.close();await boundary.close();
     server.closeAllConnections();
     await new Promise<void>(resolve=>server.close(()=>resolve()));
     audit.close();await fs.rm(root,{recursive:true,force:true});
