@@ -138,6 +138,16 @@ export class FullTextPort {
       token.processed+=receipt.processedThisStep;
       token.state=receipt.state;
       if(receipt.reason)token.lastCode=receipt.reason;
+      // A running receipt without a dequeued task must not spin an endless
+      // setImmediate loop under a zero-progress or stalled traversal.
+      if(receipt.state==='running'&&receipt.processedThisStep===0){
+        token.lastCode='FULLTEXT_DRIVER_NO_PROGRESS';
+        token.state='interrupted';
+        token.stopped=true;
+        try{this.engine?.interruptDrivenRun(token.principal,token.runId);}
+        catch { /* Restored as interrupted on next explicit confirmed open. */ }
+        return;
+      }
       if(receipt.state==='running'&&!token.stopped)this.schedule(token);
       else token.stopped=true; // includes complete, resource_paused, pause, cancel
     }catch(error){
