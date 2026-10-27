@@ -20,7 +20,10 @@ const SEARCH_RETENTION_MS = 10 * 60_000;
 
 export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; sessionId?:number;sessionIds?:readonly number[]; }
 export type Reauthorize = (name: string, args: Record<string, unknown>) => Promise<void>;
-interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback'; }
+interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback';
+  /** Internal only; never serialize this with public result-page items. */
+  privateIdentity?:{dev:string;ino:string;mtimeNs:string;size:string};
+}
 interface SearchJob {
   id: string; owner: FileOwnerContext; root: string; pattern: string; mode: 'files' | 'content'; regex?: RegExp;
   includeHidden: boolean; deadline: number; resultLimit: number; matches: SearchMatch[]; bytes: number;
@@ -404,8 +407,14 @@ export class FileAdapter {
     if(stat.isDirectory()&&job.entryType==='files'||stat.isFile()&&job.entryType==='directories')return;
     if(!stat.isDirectory()&&!stat.isFile())return;
     const relative=this.displayRead(file,job.readScope);
-    if(job.regex!.test(path.basename(file))||job.regex!.test(relative))this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
-      ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),metadata_source:'filesystem_readback' as const}:{})});
+    if(job.regex!.test(path.basename(file))||job.regex!.test(relative)){
+      const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+      this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
+        ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+          mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{}),
+        ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),
+          metadata_source:'filesystem_readback' as const}:{})});
+    }
   }
 
   private async runSearch(job:SearchJob):Promise<void>{
@@ -474,18 +483,25 @@ export class FileAdapter {
   private async inspectSearchFile(job: SearchJob, file: string, size: number, maxFile: number): Promise<void> {
     const relative = this.displayRead(file,job.readScope);
     if (job.mode === 'files') {
-      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) this.addMatch(job, { path: relative, kind: 'file' });
+      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) {
+        const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+        this.addMatch(job,{path:relative,kind:'file',
+          ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+            mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{})});
+      }
       return;
     }
     if (size > maxFile || job.matches.length >= job.resultLimit) { if (size > maxFile) job.truncated = true; return; }
     let bytes:Buffer;
+    let privateIdentity:SearchMatch['privateIdentity'];
     if(job.readScope){
       const source=await this.guardReadPath(file,job.owner,'content_search');
       if(!source.readScope||
           source.readScope.digest!==job.readScope.digest||
           source.readScope.revision!==job.readScope.revision)return;
-      bytes=await this.options!.readRoots!.readBytes(source.readScope,job.owner,
-        'content_search',maxFile);
+      const opened=await this.options!.readRoots!.readBytesVerified(
+        source.readScope,job.owner,'content_search',maxFile);
+      bytes=opened.bytes;privateIdentity=opened.identity;
     }else bytes=await fs.readFile(file);
     if (bytes.includes(0)) return;
     const content = bytes.toString('utf8');
@@ -493,15 +509,18 @@ export class FileAdapter {
     for (let index = 0; index < lines.length; index++) {
       if (job.stopped || job.truncated || Date.now() > job.deadline || job.bytes >= MAX_SEARCH_RESULT_BYTES) break;
       const line = lines[index];
-      if (job.regex!.test(line)) this.addMatch(job, { path: relative, kind: 'content', line: index + 1, text: line.slice(0, 512) });
+      if (job.regex!.test(line)) this.addMatch(job, {path:relative,kind:'content',
+        line:index+1,text:line.slice(0,512),
+        ...(privateIdentity?{privateIdentity}:{})});
     }
   }
 
   private addMatch(job: SearchJob, match: SearchMatch): void {
     if (job.matches.length >= job.resultLimit) { job.truncated = true; return; }
-    const bytes = Buffer.byteLength(JSON.stringify(match));
-    if (job.bytes + bytes > MAX_SEARCH_RESULT_BYTES) { job.truncated = true; return; }
-    job.matches.push(match); job.bytes += bytes;
+    const {privateIdentity:_privateIdentity,...publicMatch}=match;
+    const bytes=Buffer.byteLength(JSON.stringify(publicMatch));
+    if(job.bytes+bytes>MAX_SEARCH_RESULT_BYTES){job.truncated=true;return;}
+    job.matches.push(match);job.bytes+=bytes;
   }
 
   private searchFor(id: string, context: FileOwnerContext): SearchJob {
@@ -529,9 +548,17 @@ export class FileAdapter {
         if(job.readScope&&(!checked.readScope||
             checked.readScope.digest!==job.readScope.digest||
             checked.readScope.revision!==job.readScope.revision))continue;
-        // Search snippets came only from handle-bound reads; current selected
-        // object/root must still be eligible on every disclosure.
-        items.push(match);
+        // Reject stale names/snippets after the object behind a retained path
+        // changes, even when the new file also sits in an approved root.
+        if(match.privateIdentity){
+          const current=await fs.stat(checked.absolute,{bigint:true});
+          const prior=match.privateIdentity;
+          if(current.dev.toString()!==prior.dev||current.ino.toString()!==prior.ino||
+             current.mtimeNs.toString()!==prior.mtimeNs||
+             current.size.toString()!==prior.size)continue;
+        }
+        const {privateIdentity:_privateIdentity,...publicItem}=match;
+        items.push(publicItem);
       }catch{/* Changed or revoked individual targets never authorize disclosure. */}
     }
     if(job.readScope)await access!.assertScope(job.readScope,context,operation);
