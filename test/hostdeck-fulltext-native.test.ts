@@ -211,43 +211,55 @@ test('current-token identity must match trusted executor; no caller identity ove
   finally {await bad.close();}
 });
 
-test('existing trusted Windows system binaries qualify as individual protected objects with no writes', {
-  skip: !available ? 'Actual native Windows worker unavailable; positive object probe NOT_RUN' : false,
+test('existing protected config is physical-ACL-positive while a user-writable file remains negative', {
+  skip: !available ? 'Actual native Windows worker unavailable; object contrast NOT_RUN' : false,
   timeout: 20000,
 }, async t => {
-  const systemRoot = process.env.SystemRoot ?? process.env.windir;
-  if (!systemRoot) {
-    t.skip('Windows SystemRoot unavailable; positive object probe NOT_RUN'); return;
+  // The real pre-existing protected source, not an admin ACL fabricated for
+  // testing. The environment override is an explicit local test input.
+  // Neither target paths nor protected contents are emitted in test output.
+  const target = process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_OBJECT ??
+    (process.env.ProgramFiles
+      ? path.win32.join(process.env.ProgramFiles, 'HostDeck', 'config', 'facade.json')
+      : undefined);
+  if (!target || !existsSync(target)) {
+    t.skip('Existing protected configuration object unavailable; real positive NOT_RUN');
+    return;
   }
-  // Two fixed OS-owned binaries. This read-only test does not open them with
-  // write access, create fake protected records or modify system ACLs.
-  const targets = ['kernel32.dll','ntdll.dll'].map(file =>
-    path.win32.join(systemRoot,'System32',file));
-  if (!targets.every(existsSync)) {
-    t.skip('Expected pre-existing Windows binaries unavailable; no mock-positive'); return;
-  }
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-ft-acl-contrast-'));
   let client: FullTextNativeBridge | undefined;
   try {
+    const writable = path.join(root, 'writable.txt');
+    await writeFile(writable, 'owned nonprivileged negative control only');
     client = await bridge(await identity());
-    for (const [i, target] of targets.entries()) {
-      const observation = await client.probeProtectedObjectAcl(target);
-      t.diagnostic('Existing protected object #' + (i+1) +
-        ': status=' + observation.status +
-        ', reason=' + (observation.reason ?? 'NONE') +
-        ', checked=' + observation.componentsChecked +
-        ', failedIndex=' + (observation.failedComponentIndex ?? 'NONE') +
-        ', failedRole=' + (observation.failedComponentRole ?? 'NONE'));
-      assert.equal(observation.verified, true,
-        'Expected actual Windows protected object to qualify; ' +
-        'failure indicates an exact ACL/token oracle, not an owner-boundary PASS. ' +
-        JSON.stringify(observation));
-      assert.equal(observation.code, 'FULLTEXT_NATIVE_ACL_VERIFIED');
-      assert.equal(observation.scope, 'physical_filesystem_snapshot_only');
-      assert.ok(observation.componentsChecked >= 3);
-      assert.ok(!JSON.stringify(observation).includes(target),
-        'native read-only probe must not expose host file paths');
-    }
-  } finally { await client?.close(); }
+
+    const negative = await client.probeProtectedObjectAcl(writable);
+    assert.equal(negative.verified, false, 'ordinary writable file cannot qualify');
+    assert.equal(negative.code, 'FULLTEXT_NATIVE_ACL_UNQUALIFIED');
+    assert.equal(negative.scope, 'physical_filesystem_snapshot_only');
+    assert.match(negative.reason ?? '', /^[A-Z][A-Z0-9_]+$/);
+    assert.ok(!JSON.stringify(negative).includes(writable),
+      'negative receipt must not disclose physical path');
+
+    const positive = await client.probeProtectedObjectAcl(target);
+    t.diagnostic('Existing object: status=' + positive.status +
+      ', components=' + positive.componentsChecked +
+      ', reason=' + (positive.reason ?? 'NONE') +
+      ', failedRole=' + (positive.failedComponentRole ?? 'NONE'));
+    assert.equal(positive.verified, true,
+      'pre-existing protected object must qualify by real AccessCheck, not a mock: ' +
+      JSON.stringify(positive));
+    assert.equal(positive.code, 'FULLTEXT_NATIVE_ACL_VERIFIED');
+    assert.equal(positive.scope, 'physical_filesystem_snapshot_only');
+    assert.ok(positive.componentsChecked >= 3);
+    assert.ok(!JSON.stringify(positive).includes(target),
+      'positive receipt must not disclose physical path or protected contents');
+    // A single physical positive never establishes selection, owner consent,
+    // approval presence, a protected writable-index tuple or live product use.
+  } finally {
+    await client?.close();
+    await rm(root, {recursive:true, force:true});
+  }
 });
 
 test('existing external admin-protected source plus separate writable index qualifies only when opt-in fixture exists', {
