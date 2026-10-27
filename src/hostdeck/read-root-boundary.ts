@@ -11,6 +11,7 @@
  * to the admitted root immediately before disclosing content/metadata.
  */
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { RuntimeError } from './runtime-error.js';
 import { safeRealpath, within, isExcludedSource } from './fulltext/policy.js';
 
@@ -79,7 +80,7 @@ async function protectedExclusion(input: string): Promise<string> {
   let cursor = path.resolve(input);
   while (true) {
     try {
-      await (await import('node:fs/promises')).lstat(cursor);
+      await fs.lstat(cursor);
       const parent = await safeRoot(cursor);
       return path.join(parent, ...missing.reverse());
     } catch (error) {
