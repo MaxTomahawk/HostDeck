@@ -156,6 +156,14 @@ test('real AccessCheck rejects writable user-owned config and approval; does not
     client=await bridge(await identity());
     const originalSelection = await readFile(selectionFile);
     const originalApproval = await readFile(approvalFile);
+    const ordinaryObject = await client.probeProtectedObjectAcl(selectionFile);
+    assert.equal(ordinaryObject.verified, false,
+      'ordinary user-owned writable file cannot be independently qualified as protected');
+    assert.equal(ordinaryObject.status, 'unqualified');
+    assert.match(ordinaryObject.reason ?? '', /^[A-Z][A-Z0-9_]+$/);
+    assert.equal(ordinaryObject.scope, 'physical_filesystem_snapshot_only');
+    assert.ok(!JSON.stringify(ordinaryObject).includes(selectionFile),
+      'read-only probe must never return a real local path');
     await assert.rejects(client.verifyProtectedOwnerAcl({
       protectedDirectory:config,selectionFile,approvalFile,indexDirectory:index,
     }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
@@ -203,24 +211,98 @@ test('current-token identity must match trusted executor; no caller identity ove
   finally {await bad.close();}
 });
 
-test('existing external admin-protected source plus separate writable index qualifies only when opt-in fixture exists', {
+test('existing protected config is physical-ACL-positive while a user-writable file remains negative', {
+  skip: !available ? 'Actual native Windows worker unavailable; object contrast NOT_RUN' : false,
+  timeout: 20000,
+}, async t => {
+  // The real pre-existing protected source, not an admin ACL fabricated for
+  // testing. The environment override is an explicit local test input.
+  // Neither target paths nor protected contents are emitted in test output.
+  const target = process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_OBJECT ??
+    (process.env.ProgramFiles
+      ? path.win32.join(process.env.ProgramFiles, 'HostDeck', 'config', 'facade.json')
+      : undefined);
+  if (!target || !existsSync(target)) {
+    t.skip('Existing protected configuration object unavailable; real positive NOT_RUN');
+    return;
+  }
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-ft-acl-contrast-'));
+  let client: FullTextNativeBridge | undefined;
+  try {
+    const writable = path.join(root, 'writable.txt');
+    await writeFile(writable, 'owned nonprivileged negative control only');
+    client = await bridge(await identity());
+
+    const negative = await client.probeProtectedObjectAcl(writable);
+    assert.equal(negative.verified, false, 'ordinary writable file cannot qualify');
+    assert.equal(negative.code, 'FULLTEXT_NATIVE_ACL_UNQUALIFIED');
+    assert.equal(negative.scope, 'physical_filesystem_snapshot_only');
+    assert.match(negative.reason ?? '', /^[A-Z][A-Z0-9_]+$/);
+    assert.ok(!JSON.stringify(negative).includes(writable),
+      'negative receipt must not disclose physical path');
+
+    const positive = await client.probeProtectedObjectAcl(target);
+    t.diagnostic('Existing object: status=' + positive.status +
+      ', components=' + positive.componentsChecked +
+      ', reason=' + (positive.reason ?? 'NONE') +
+      ', failedRole=' + (positive.failedComponentRole ?? 'NONE'));
+    assert.equal(positive.verified, true,
+      'pre-existing protected object must qualify by real AccessCheck, not a mock: ' +
+      JSON.stringify(positive));
+    assert.equal(positive.code, 'FULLTEXT_NATIVE_ACL_VERIFIED');
+    assert.equal(positive.scope, 'physical_filesystem_snapshot_only');
+    assert.ok(positive.componentsChecked >= 3);
+    assert.ok(!JSON.stringify(positive).includes(target),
+      'positive receipt must not disclose physical path or protected contents');
+    // A single physical positive never establishes selection, owner consent,
+    // approval presence, a protected writable-index tuple or live product use.
+  } finally {
+    await client?.close();
+    await rm(root, {recursive:true, force:true});
+  }
+});
+
+test('physical owner-boundary tuple uses only pre-existing qualified records and index', {
   skip: !available || !process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_DIR ||
     !process.env.HOSTDECK_TEST_FULLTEXT_INDEX_DIR
-    ? 'Positive admin-protected fixture unavailable; physical positive NOT_RUN' : false,
-  timeout: 16000,
-}, async () => {
-  // The fixture must already exist, be deliberately admin-protected and
-  // independently owned. This test never creates, edits or chmods it.
+    ? 'Existing protected records/index not configured; whole-boundary positive NOT_RUN' : false,
+  timeout: 20000,
+}, async t => {
+  // These are read-only physical observations, NOT owner consent or a
+  // selected product configuration. Never manufacture an admin ACL fixture.
   const protectedDirectory = process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_DIR!;
   const indexDirectory = process.env.HOSTDECK_TEST_FULLTEXT_INDEX_DIR!;
-  let client:FullTextNativeBridge|undefined;
+  const selectionFile = path.join(protectedDirectory,'fulltext-selection.json');
+  const approvalFile = path.join(protectedDirectory,'fulltext-approval.json');
+  if (![protectedDirectory,selectionFile,approvalFile,indexDirectory].every(existsSync)) {
+    t.skip('Required pre-existing selection, approval or index missing; whole-boundary positive NOT_RUN');
+    return;
+  }
+  let client: FullTextNativeBridge | undefined;
   try {
-    client=await bridge(await identity());
+    client = await bridge(await identity());
+    for (const [kind, object] of [
+      ['protected directory',protectedDirectory],
+      ['selection',selectionFile],
+      ['approval',approvalFile],
+    ] as const) {
+      const result = await client.probeProtectedObjectAcl(object);
+      t.diagnostic(kind + ': status=' + result.status +
+        ', components=' + result.componentsChecked +
+        ', reason=' + (result.reason ?? 'NONE'));
+      assert.equal(result.verified,true,
+        'pre-existing ' + kind + ' must independently qualify before tuple probe: ' +
+        JSON.stringify(result));
+      assert.equal(result.code,'FULLTEXT_NATIVE_ACL_VERIFIED');
+      assert.equal(result.scope,'physical_filesystem_snapshot_only');
+      assert.ok(result.componentsChecked >= 3);
+      assert.ok(!JSON.stringify(result).includes(object),
+        'native receipt must not expose protected physical path');
+    }
     await client.verifyProtectedOwnerAcl({
-      protectedDirectory,
-      selectionFile:path.join(protectedDirectory,'fulltext-selection.json'),
-      approvalFile:path.join(protectedDirectory,'fulltext-approval.json'),
-      indexDirectory,
+      protectedDirectory,selectionFile,approvalFile,indexDirectory,
     });
+    t.diagnostic('Read-only physical tuple qualified: 3 independent protected sources, ' +
+      'separate worker-writable index. Owner consent and full owner boundary NOT claimed.');
   } finally { await client?.close(); }
 });

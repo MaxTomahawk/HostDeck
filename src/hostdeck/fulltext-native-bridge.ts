@@ -42,6 +42,18 @@ export interface FullTextProtectedOwnerPaths {
   indexDirectory: string;
 }
 
+/** Read-only observation about ONE existing object, not owner-record acceptance. */
+export interface FullTextProtectedObjectProbe {
+  verified: boolean;
+  status: 'verified' | 'unqualified';
+  code: 'FULLTEXT_NATIVE_ACL_VERIFIED' | 'FULLTEXT_NATIVE_ACL_UNQUALIFIED';
+  reason?: string;
+  componentsChecked: number;
+  failedComponentIndex?: number;
+  failedComponentRole?: 'root' | 'ancestor' | 'target';
+  scope: 'physical_filesystem_snapshot_only';
+}
+
 interface Pending {
   id: string;
   resolve: (value: unknown) => void;
@@ -243,6 +255,59 @@ export class FullTextNativeBridge {
       }
       return item as FullTextNativeAttribute;
     });
+  }
+
+  /**
+   * Qualify only the existing object supplied by the trusted coordinator.
+   * Read-only, no owner records/index requirement and NO approval side effect.
+   * The result is normalized: native paths, SIDs and arbitrary fields never
+   * escape this bridge. A positive is NOT a verified owner_boundary.
+   */
+  async probeProtectedObjectAcl(file: string): Promise<FullTextProtectedObjectProbe> {
+    if (typeof file !== 'string' || file.length > 4096 ||
+        !/^[A-Za-z]:\\/.test(file)) throw error('FULLTEXT_NATIVE_BRIDGE_CONFIG_INVALID');
+    const raw = await this.queued('effective_acl', { path: file });
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    const value = raw as Record<string, unknown>;
+    if (value.scope !== 'physical_filesystem_snapshot_only' ||
+        !Number.isSafeInteger(value.components_checked) ||
+        (value.components_checked as number) < 0 ||
+        (value.components_checked as number) > 41)
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    const componentsChecked = value.components_checked as number;
+    if (value.verified === true && value.status === 'verified' &&
+        value.code === 'FULLTEXT_NATIVE_ACL_VERIFIED' &&
+        value.token_write_denied === true &&
+        value.trusted_owner_and_writers === true && componentsChecked > 0) {
+      return { verified: true, status: 'verified', code: 'FULLTEXT_NATIVE_ACL_VERIFIED',
+        componentsChecked, scope: 'physical_filesystem_snapshot_only' };
+    }
+    if (value.verified === false && value.status === 'unqualified' &&
+        value.code === 'FULLTEXT_NATIVE_ACL_UNQUALIFIED' &&
+        typeof value.reason === 'string' &&
+        /^[A-Z][A-Z0-9_]{0,79}$/.test(value.reason)) {
+      const failedComponentIndex = value.failed_component_index;
+      const failedComponentRole = value.failed_component_role;
+      if (!(failedComponentIndex == null ||
+            (Number.isSafeInteger(failedComponentIndex) &&
+            (failedComponentIndex as number) === componentsChecked)) ||
+          !(failedComponentRole == null ||
+            ['root', 'ancestor', 'target'].includes(String(failedComponentRole))) ||
+          (failedComponentRole == null) !== (failedComponentIndex == null)) {
+        throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+      }
+      return {
+        verified: false, status: 'unqualified', code: 'FULLTEXT_NATIVE_ACL_UNQUALIFIED',
+        reason: value.reason, componentsChecked,
+        ...(failedComponentIndex == null ? {} : {
+          failedComponentIndex: failedComponentIndex as number,
+          failedComponentRole: failedComponentRole as 'root' | 'ancestor' | 'target',
+        }),
+        scope: 'physical_filesystem_snapshot_only',
+      };
+    }
+    throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
   }
 
   /**
