@@ -200,7 +200,12 @@ export class FileAdapter {
           const full=path.join(current.dir,entry.name);
           let item:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
           try{item=await this.guardReadPath(full,context,'list_directory');}
-          catch{skippedLinks++;continue;}
+          catch{
+            // Rejected external entries must not leak their existence even via
+            // skipped/visited counters. Retain old workspace counter semantics.
+            if(!base.readScope)skippedLinks++;
+            continue;
+          }
           if(isReparseOrLink(item.stat)){skippedLinks++;continue;}
           if(base.readScope&&(!item.readScope||
               item.readScope.digest!==base.readScope.digest||
@@ -528,8 +533,8 @@ export class FileAdapter {
       }
       if(job.readScope)await scoped!.assertScope(job.readScope,job.owner,operation);
     }catch(error){
-      job.error=job.readScope?'READ_ROOT_REVOKED':
-        error instanceof Error?error.message:'SEARCH_FAILED';
+      if(job.readScope){job.error='READ_ROOT_REVOKED';job.matches=[];job.bytes=0;}
+      else job.error=error instanceof Error?error.message:'SEARCH_FAILED';
     }finally{this.finishSearch(job);}
   }
 
@@ -588,6 +593,7 @@ export class FileAdapter {
   private async searchResults(args: Record<string, unknown>,
     context: FileOwnerContext): Promise<unknown> {
     const job=this.searchFor(args.search_id as string,context);
+    if(job.error==='READ_ROOT_REVOKED')throw new RuntimeError('READ_ROOT_REVOKED');
     const access=this.options?.readRoots;
     const operation=job.mode==='content'?'content_search':'name_search';
     if(job.provider==='everything') {
