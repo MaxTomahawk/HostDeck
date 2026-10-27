@@ -7,6 +7,8 @@ import { parseToolArguments } from './contracts.js';
 import {RuntimeError} from './runtime-error.js';
 import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
 import type {EverythingClient} from './everything.js';
+import type {ReadRootAccess,ReadRootScope} from './read-root-access.js';
+import type {ReadOnlyOperation} from './read-root-boundary.js';
 
 const execFile = promisify(execFileCallback);
 const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference'] as const;
@@ -25,9 +27,9 @@ interface SearchJob {
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
   provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
   provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
-  coverageTruncated:boolean;rootIsFile:boolean;
+  coverageTruncated:boolean;rootIsFile:boolean;readScope?:ReadRootScope;
 }
-interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;}
+interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;readRoots?:ReadRootAccess;}
 
 function inside(root: string, value: string): boolean {
   const relative = path.relative(root, value);
@@ -89,6 +91,34 @@ export class FileAdapter {
     return { absolute: canonical, stat: lastStat };
   }
 
+  /** Read authority is additive and external-only; all write guards stay unmodified. */
+  private async guardReadPath(input: unknown, context: FileOwnerContext,
+    operation: ReadOnlyOperation): Promise<{absolute:string;stat:import('node:fs').Stats;
+      readScope?:ReadRootScope}> {
+    if(typeof input!=='string'||!input.trim())throw new RuntimeError('FILES_PATH_INVALID');
+    const target=path.resolve(this.workspace,input);
+    if(inside(this.workspace,target)){
+      const baseline=await this.guardPath(input);
+      if(!baseline.stat)throw new RuntimeError('FILES_PATH_INVALID');
+      return {absolute:baseline.absolute,stat:baseline.stat};
+    }
+    const access=this.options?.readRoots;
+    if(!access)throw new RuntimeError('FILES_PATH_OUTSIDE_WORKSPACE');
+    const candidate=await access.resolve(input,context,operation);
+    if(!candidate.external||!candidate.rootIdentity||!candidate.revision||!candidate.digest)
+      throw new RuntimeError('READ_ROOT_DENIED');
+    const scope=candidate as ReadRootScope;
+    const observed=await access.metadata(scope,context,operation);
+    const stat=await fs.lstat(scope.absolute);
+    if((observed.isFile!==stat.isFile())||(observed.isDirectory!==stat.isDirectory()))
+      throw new RuntimeError('READ_ROOT_CHANGED');
+    return {absolute:scope.absolute,stat,readScope:scope};
+  }
+
+  private displayRead(value:string,scope?:ReadRootScope):string{
+    return scope?.external?value:this.relative(value);
+  }
+
   private relative(value: string): string {
     const rel = path.relative(this.workspace, value);
     return rel || '.';
@@ -102,7 +132,7 @@ export class FileAdapter {
     const args = parseToolArguments(name, rawArgs);
     if (args.device_id !== context.deviceId) throw new Error('FILES_DEVICE_CONTEXT_MISMATCH');
     switch (name) {
-      case 'hostdeck_list_directory': return this.listDirectory(args);
+      case 'hostdeck_list_directory': return this.listDirectory(args,context);
       case 'hostdeck_create_directory': return this.createDirectory(name, args);
       case 'hostdeck_move_file': return this.moveFile(name, args);
       case 'hostdeck_delete_path': return this.deletePath(name, args);
