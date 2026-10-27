@@ -24,21 +24,31 @@ function Worker([string]$Mode,$Request=$null){
  }finally{$p.Dispose()}
 }
 try{
- $configPath=Join-Path $env:ProgramFiles 'HostDeck/config/facade.json'
+ $script:stage='configuration_path'
+ # HostDeck intentionally omits ProgramFiles from command environments.
+ # Resolve the OS known folder without weakening that environment filter.
+ $programFiles=[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+ if([string]::IsNullOrEmpty($programFiles)){throw 'QUALIFICATION_PRODUCT_LOCATION_UNAVAILABLE'}
+ $configPath=Join-Path $programFiles 'HostDeck/config/facade.json'
+ $script:stage='configuration_read'
  $config=Get-Content -LiteralPath $configPath -Raw|ConvertFrom-Json
  $script:worker=$config.desktop_worker
+ $script:stage='native_identity'
  $own=Worker '--identity'
  if(-not $own.eligible -or $own.elevated -or $own.sid -cne $config.expected_user_sid -or
     $own.session_id -ne [Diagnostics.Process]::GetCurrentProcess().SessionId){throw 'QUALIFICATION_IDENTITY'}
+ $script:stage='app_pin'
  $appHash=(Get-FileHash -LiteralPath $config.everything.executable -Algorithm SHA256).Hash.ToLowerInvariant()
  $appVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($config.everything.executable).FileVersion
  if($appHash -cne $config.everything.sha256.ToLowerInvariant() -or $appVersion -cne $config.everything.version){throw 'QUALIFICATION_APP_PIN'}
  $base=@{operation='status';executable=$config.everything.executable;sha256=$appHash;version=$appVersion;
   instance=$config.everything.instance;session_id=$own.session_id;sid=$own.sid;logon_id=$own.logon_id}
+ $script:stage='positive_native_status'
  $status=(Worker '--everything' $base).result
  if(-not $status.running -or -not $status.healthy -or $status.reason -cne 'ready'){throw 'QUALIFICATION_APP_NOT_READY'}
  $cases=@()
  foreach($kind in @('wrong_session','changed_hash','wrong_version','absent_instance')){
+  $script:stage='negative_'+$kind
   $request=$base.Clone()
   switch($kind){
    'wrong_session'{$request.session_id=[int]$own.session_id+1;$expected='EVERYTHING_WRONG_SESSION'}
@@ -51,6 +61,7 @@ try{
   if($observed -cne $expected){throw 'QUALIFICATION_NEGATIVE_MISMATCH'}
   $cases+=@{case=$kind;expected=$expected;observed=$observed;verdict='PASS'}
  }
+ $script:stage='component_hash_readback'
  $manifestFile=Join-Path (Split-Path -Parent (Split-Path -Parent $script:worker)) 'manifest.json'
  $record=[ordered]@{schema=1;utc=[DateTimeOffset]::UtcNow.ToString('o');verdict='PASS';
   role='READ_ONLY_NATIVE_COMPONENT_QUALIFICATION';app_version=$appVersion;app_sha256=$appHash;
@@ -62,6 +73,6 @@ try{
  $record|ConvertTo-Json -Depth 6 -Compress
 }catch{
  # No raw paths, SIDs, account/configuration values, stderr or exception text.
- @{schema=1;verdict='FAIL';code='QUALIFICATION_UNAVAILABLE_OR_MISMATCH'}|ConvertTo-Json -Compress
+ @{schema=1;verdict='FAIL';code='QUALIFICATION_UNAVAILABLE_OR_MISMATCH';stage=$script:stage}|ConvertTo-Json -Compress
  exit 1
 }
