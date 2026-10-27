@@ -156,6 +156,14 @@ test('real AccessCheck rejects writable user-owned config and approval; does not
     client=await bridge(await identity());
     const originalSelection = await readFile(selectionFile);
     const originalApproval = await readFile(approvalFile);
+    const ordinaryObject = await client.probeProtectedObjectAcl(selectionFile);
+    assert.equal(ordinaryObject.verified, false,
+      'ordinary user-owned writable file cannot be independently qualified as protected');
+    assert.equal(ordinaryObject.status, 'unqualified');
+    assert.match(ordinaryObject.reason ?? '', /^[A-Z][A-Z0-9_]+$/);
+    assert.equal(ordinaryObject.scope, 'physical_filesystem_snapshot_only');
+    assert.ok(!JSON.stringify(ordinaryObject).includes(selectionFile),
+      'read-only probe must never return a real local path');
     await assert.rejects(client.verifyProtectedOwnerAcl({
       protectedDirectory:config,selectionFile,approvalFile,indexDirectory:index,
     }), /FULLTEXT_NATIVE_BOUNDARY_UNQUALIFIED/,
@@ -201,6 +209,45 @@ test('current-token identity must match trusted executor; no caller identity ove
   });
   try {await assert.rejects(bad.open(),/FULLTEXT_NATIVE_EXECUTOR_UNQUALIFIED/);}
   finally {await bad.close();}
+});
+
+test('existing trusted Windows system binaries qualify as individual protected objects with no writes', {
+  skip: !available ? 'Actual native Windows worker unavailable; positive object probe NOT_RUN' : false,
+  timeout: 20000,
+}, async t => {
+  const systemRoot = process.env.SystemRoot ?? process.env.windir;
+  if (!systemRoot) {
+    t.skip('Windows SystemRoot unavailable; positive object probe NOT_RUN'); return;
+  }
+  // Two fixed OS-owned binaries. This read-only test does not open them with
+  // write access, create fake protected records or modify system ACLs.
+  const targets = ['kernel32.dll','ntdll.dll'].map(file =>
+    path.win32.join(systemRoot,'System32',file));
+  if (!targets.every(existsSync)) {
+    t.skip('Expected pre-existing Windows binaries unavailable; no mock-positive'); return;
+  }
+  let client: FullTextNativeBridge | undefined;
+  try {
+    client = await bridge(await identity());
+    for (const [i, target] of targets.entries()) {
+      const observation = await client.probeProtectedObjectAcl(target);
+      t.diagnostic('Existing protected object #' + (i+1) +
+        ': status=' + observation.status +
+        ', reason=' + (observation.reason ?? 'NONE') +
+        ', checked=' + observation.componentsChecked +
+        ', failedIndex=' + (observation.failedComponentIndex ?? 'NONE') +
+        ', failedRole=' + (observation.failedComponentRole ?? 'NONE'));
+      assert.equal(observation.verified, true,
+        'Expected actual Windows protected object to qualify; ' +
+        'failure indicates an exact ACL/token oracle, not an owner-boundary PASS. ' +
+        JSON.stringify(observation));
+      assert.equal(observation.code, 'FULLTEXT_NATIVE_ACL_VERIFIED');
+      assert.equal(observation.scope, 'physical_filesystem_snapshot_only');
+      assert.ok(observation.componentsChecked >= 3);
+      assert.ok(!JSON.stringify(observation).includes(target),
+        'native read-only probe must not expose host file paths');
+    }
+  } finally { await client?.close(); }
 });
 
 test('existing external admin-protected source plus separate writable index qualifies only when opt-in fixture exists', {
