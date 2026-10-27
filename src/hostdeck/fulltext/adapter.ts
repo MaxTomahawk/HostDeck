@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {constants as fsFlags} from 'node:fs';
 import type {Adapter} from '../gateway.js';
+import type {FullTextNativeBridge} from '../fulltext-native-bridge.js';
 import type {ExecutionContext} from '../security.js';
 import {FullTextPort,FULLTEXT_PROVIDER_ID,FULLTEXT_ENGINE_ID} from './wiring.js';
 import {FullTextSelectionStore,type FullTextProtectedAclVerifier} from './selection-store.js';
@@ -36,6 +37,8 @@ export interface FullTextAdapterOptions{
   protectedOwnerDirectory?:string;
   /** Mandatory trusted native effective-ACL verifier. NOT a caller boolean. */
   verifyProtectedOwnerAcl?:FullTextProtectedAclVerifier;
+  /** PR22 persistent native metadata bridge; no attrib.exe or synthetic fallback. */
+  nativeAttributes?:Pick<FullTextNativeBridge,'attributes'>;
   /** Must be bound to HostDeckFacade.reauthorize and active ALS context. */
   reauthorize:Reauthorize;
   /** Optional MORE restrictive local policy; true never bypasses native checks. */
@@ -60,6 +63,15 @@ export class FullTextAdapter implements Adapter {
       loadSelectedConfig:c=>this.store.selected(c),
       isOwnerConfirmed:(c,digest)=>this.store.confirmed(c,digest),
       authorize:request=>this.authorized(request),
+      nativeAttributes:options.nativeAttributes
+        ? (paths,principal,root,action)=>options.nativeAttributes!.attributes(paths,
+            async file=>{
+              // The native worker never grants permissions. Verify current
+              // PolicyGate AND selected root/file rights for each batch member.
+              try{return await this.authorized({principal,root,path:file,action});}
+              catch{return false;}
+            })
+        : undefined,
     });
   }
 
