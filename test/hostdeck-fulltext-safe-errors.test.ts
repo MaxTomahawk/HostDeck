@@ -61,6 +61,11 @@ test('read-only query remains safely unconfigured; pending owner approval, inval
     };
     adapter.store.selected=async()=>config;
     adapter.store.confirmed=async()=>false; // deliberately not approved
+    // A selected but unconfirmed protected profile still cannot read any
+    // indexed snippets or metadata: query remains a typed dormant refusal.
+    expected(await caught(()=>adapter.handle('hostdeck_fulltext_query',{
+      query:'sunflower',limit:10,
+    },context)),'FULLTEXT_NOT_CONFIGURED');
     const preview=await adapter.handle('hostdeck_fulltext_preview',{},context) as {digest:string};
     assert.match(preview.digest,/^[a-f0-9]{64}$/);
     expected(await caught(()=>adapter.handle('hostdeck_fulltext_confirm',{
