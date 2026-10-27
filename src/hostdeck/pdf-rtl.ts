@@ -70,9 +70,10 @@ function repairLine(items: readonly PdfDirectionalItem[]): string {
         if (item.dir !== 'rtl' || item.width <= 0) unqualified();
         rtlGlyphs++;
       } else if (MARK.test(ch)) {
-        // PDF.js emits zero-width Arabic combining marks with dir=ltr. Their
-        // observed visual order is repaired only on an Arabic-only baseline.
-        if (item.width !== 0) unqualified();
+        // Zero-width combining marks may be emitted before/after their base
+        // with producer-specific ordering. The original mark/ligature oracle
+        // is still OPEN: never imply that reversing this case is verified.
+        unqualified();
       } else unqualified(); // No numeric, punctuation or bidi control guesses.
     } else if (SPACE.test(item.str)) {
       // Spaces between RTL glyphs may have dir=ltr.
