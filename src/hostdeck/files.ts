@@ -635,6 +635,7 @@ export class FileAdapter {
     const items=job.readScope?authorized.slice(offset,offset+limit):authorized;
     return {search_id:job.id,provider:job.provider,
       ...(job.provenance?{provenance:job.provenance}:{}),
+      ...(job.readScope?{root_scope:job.readScope.root}:{}),
       items,offset,total_results:total,complete:job.done,
       truncated:job.truncated,stopped:job.stopped,
       state:job.done?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
