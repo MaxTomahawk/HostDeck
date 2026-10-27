@@ -15,6 +15,10 @@ internal static class Program
     private const uint TokenQuery = 0x0008;
     private const int AppModelNoPackage = 15700;
     private const int InsufficientBuffer = 122;
+    private const int ErrorAccessDenied = 5;
+    private const int ErrorInvalidHandle = 6;
+    private const int ErrorNotSupported = 50;
+    private const int ErrorInvalidParameter = 87;
     private const int TokenStatisticsClass = 10;
     private const int TokenSessionIdClass = 12;
     private const int TokenIsAppContainerClass = 29;
@@ -28,6 +32,10 @@ internal static class Program
         internal string ExecutablePathAccessible = "unknown";
         internal string PackageProcess = "unknown";
         internal string PackageToken = "unknown";
+        internal string PackageProcessApiStatus = "not_called";
+        internal string PackageProcessExceptionClass = "none";
+        internal string PackageTokenApiStatus = "not_called";
+        internal string PackageTokenExceptionClass = "none";
         internal string PackageProcessTokenMatch = "unknown";
         internal string AppContainer = "unknown";
         internal string DaclReadable = "unknown";
@@ -92,7 +100,11 @@ internal static class Program
         creation_time_observable = p.ProcessCreationTime,
         image_location_accessible = p.ExecutablePathAccessible,
         package_from_process = p.PackageProcess,
+        package_from_process_api_status = p.PackageProcessApiStatus,
+        package_from_process_exception_class = p.PackageProcessExceptionClass,
         package_from_token = p.PackageToken,
+        package_from_token_api_status = p.PackageTokenApiStatus,
+        package_from_token_exception_class = p.PackageTokenExceptionClass,
         package_process_token_equal = p.PackageProcessTokenMatch,
         app_container_token = p.AppContainer,
         token_query = p.TokenAvailable,
@@ -110,7 +122,12 @@ internal static class Program
     {
         var observed = new Observation();
         IntPtr handle = Native.OpenProcess(ProcessQueryLimitedInformation, false, pid);
-        if (handle == IntPtr.Zero) return observed;
+        if (handle == IntPtr.Zero)
+        {
+            observed.PackageProcessApiStatus = "not_called_process_handle_unavailable";
+            observed.PackageTokenApiStatus = "not_called_process_handle_unavailable";
+            return observed;
+        }
         try
         {
             observed.ProcessQuery = "yes";
@@ -123,19 +140,23 @@ internal static class Program
                 Native.QueryFullProcessImageName(handle, 0, imageBuffer, ref chars) ? "yes" : "unknown";
             // Do not copy, serialize, hash, resolve, display or open the image path.
 
-            (observed.PackageProcess, observed.ProcessPackageValue) = ReadPackage(
+            (observed.PackageProcess, observed.ProcessPackageValue,
+                observed.PackageProcessApiStatus, observed.PackageProcessExceptionClass) = ReadPackage(
                 (ref uint size, StringBuilder? name) => Native.GetPackageFullName(handle, ref size, name));
             if (Native.OpenProcessToken(handle, TokenQuery, out IntPtr token))
             {
                 try
                 {
                     observed.TokenAvailable = "yes";
-                    using var identity = new WindowsIdentity(token);
-                    observed.User = identity.User;
-                    (observed.PackageToken, observed.TokenPackageValue) = ReadPackage(
+                    // Query the package token independently of WindowsIdentity.
+                    // An identity lookup failure must not conceal the API outcome.
+                    (observed.PackageToken, observed.TokenPackageValue,
+                        observed.PackageTokenApiStatus, observed.PackageTokenExceptionClass) = ReadPackage(
                         (ref uint size, StringBuilder? name) => Native.GetPackageFullNameFromToken(token, ref size, name));
                     observed.PackageProcessTokenMatch =
                         Compare(observed.ProcessPackageValue, observed.TokenPackageValue);
+                    using var identity = new WindowsIdentity(token);
+                    observed.User = identity.User;
                     if (Native.GetTokenInformationInt(token, TokenIsAppContainerClass,
                         out int appContainer, sizeof(int), out _))
                         observed.AppContainer = appContainer != 0 ? "yes" : "no";
@@ -144,12 +165,22 @@ internal static class Program
                         observed.Session = session;
                     observed.LogonIdentity = ReadLogonIdentity(token);
                 }
-                catch
+                catch (Exception error)
                 {
-                    // Insufficient token metadata is unknown, never a denial
-                    // or a positive intended-client authentication claim.
+                    // Only the fixed exception class is emitted; never message,
+                    // stack, HRESULT, package name or process identity.
+                    // Package API results already obtained above are retained.
+                    if (observed.PackageTokenApiStatus == "not_called")
+                    {
+                        observed.PackageTokenApiStatus = "not_called_token_inspection_exception";
+                        observed.PackageTokenExceptionClass = SafeExceptionClass(error);
+                    }
                 }
                 finally { Native.CloseHandle(token); }
+            }
+            else
+            {
+                observed.PackageTokenApiStatus = "not_called_token_handle_unavailable";
             }
         }
         finally { Native.CloseHandle(handle); }
@@ -183,20 +214,69 @@ internal static class Program
     }
 
     private delegate int PackageReader(ref uint capacity, StringBuilder? output);
-    private static (string Presence, string? Value) ReadPackage(PackageReader read)
+
+    // Bounded, non-sensitive categories only. Native API return values are
+    // LONG error codes, not last-error values. Never disclose arbitrary codes.
+    private static string PackageApiCategory(int status, string phase)
+    {
+        string kind = status switch
+        {
+            ErrorAccessDenied => "access_denied",
+            ErrorInvalidHandle => "invalid_handle",
+            ErrorNotSupported => "not_supported",
+            ErrorInvalidParameter => "invalid_parameter",
+            InsufficientBuffer => "insufficient_buffer",
+            AppModelNoPackage => "no_package",
+            0 => "unexpected_success",
+            _ => "other_api_error"
+        };
+        return phase + "_" + kind;
+    }
+
+    private static string SafeExceptionClass(Exception error) => error switch
+    {
+        EntryPointNotFoundException => "EntryPointNotFoundException",
+        DllNotFoundException => "DllNotFoundException",
+        BadImageFormatException => "BadImageFormatException",
+        MarshalDirectiveException => "MarshalDirectiveException",
+        SEHException => "SEHException",
+        UnauthorizedAccessException => "UnauthorizedAccessException",
+        InvalidOperationException => "InvalidOperationException",
+        ArgumentException => "ArgumentException",
+        _ => "OtherException"
+    };
+
+    private static (string Presence, string? Value, string ApiStatus, string ExceptionClass)
+        ReadPackage(PackageReader read)
     {
         try
         {
             uint chars = 0;
             int status = read(ref chars, null);
-            if (status == AppModelNoPackage) return ("absent", null);
-            if (status != InsufficientBuffer || chars < 2 || chars > 2048)
-                return ("unknown", null);
+            if (status == AppModelNoPackage)
+                return ("absent", null, "no_package", "none");
+            if (status != InsufficientBuffer)
+                return ("unknown", null, PackageApiCategory(status, "length"), "none");
+            if (chars < 2 || chars > 2048)
+                return ("unknown", null, "required_length_out_of_bounds", "none");
+
             var buffer = new StringBuilder((int)chars);
             status = read(ref chars, buffer);
-            return status == 0 ? ("present", buffer.ToString()) : ("unknown", null);
+            if (status == 0)
+            {
+                // A zero-length success is not evidence of a package identity.
+                if (buffer.Length == 0)
+                    return ("unknown", null, "empty_success_value", "none");
+                return ("present", buffer.ToString(), "success", "none");
+            }
+            // A race between two calls (including NO_PACKAGE after the initial
+            // size query) is not converted into affirmative "absent" evidence.
+            return ("unknown", null, PackageApiCategory(status, "value"), "none");
         }
-        catch { return ("unknown", null); }
+        catch (Exception error)
+        {
+            return ("unknown", null, "exception", SafeExceptionClass(error));
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
