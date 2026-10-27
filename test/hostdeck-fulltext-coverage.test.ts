@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,realpath,rm,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,realpath,rm,readFile,writeFile,open,appendFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {DocxFileHandler,pizzipPackage} from '../src/utils/files/docx.js';
 import {exceljsPackage} from '../src/utils/files/excel.js';
-import {extractDocument} from '../src/hostdeck/fulltext/extract.js';
+import {extractDocument,readOpenedSourceBounded} from '../src/hostdeck/fulltext/extract.js';
 import {resolveBudgets} from '../src/hostdeck/fulltext/policy.js';
 import type {FullTextConfig} from '../src/hostdeck/fulltext/types.js';
 
@@ -153,5 +153,38 @@ test('Office archive guard rejects unsafe XML and never returns partial indexed 
     const r=await extractDocument(f,root,limits);
     assert.notEqual(r.status,'indexed');
     assert.equal(r.text,undefined);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('bounded descriptor read denies deterministic post-stat growth without unbounded allocation',async()=>{
+  const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'hd-coverage-race-')));
+  try{
+    const file=path.join(root,'growing.txt');
+    const initial=Buffer.alloc(4096,0x61);
+    await writeFile(file,initial);
+    // Hold the same descriptor whose initial fstat passed. The appended bytes
+    // model a competing writer in the precise stat-before-read gap.
+    const handle=await open(file,'r');
+    try{
+      const before=await handle.stat();
+      assert.equal(before.size,initial.length);
+      await appendFile(file,Buffer.alloc(1024*1024,0x62));
+      await assert.rejects(readOpenedSourceBounded(handle,before,16*1024),
+        /FULLTEXT_SOURCE_SIZE_CHANGED/);
+    }finally{await handle.close();}
+    const bounded=await extractDocument(file,root,{...limits,maxFileBytes:16*1024});
+    assert.equal(bounded.status,'size_limit');
+    assert.equal(bounded.text,undefined);
+    // Even a within-budget mutation invalidates the earlier descriptor
+    // snapshot; no stale content may be marked qualified.
+    const small=path.join(root,'changed-in-budget.txt');
+    await writeFile(small,Buffer.alloc(100,0x63));
+    const second=await open(small,'r');
+    try{
+      const before=await second.stat();
+      await appendFile(small,Buffer.alloc(10,0x64));
+      await assert.rejects(readOpenedSourceBounded(second,before,1024),
+        /FULLTEXT_SOURCE_CHANGED/);
+    }finally{await second.close();}
   }finally{await rm(root,{recursive:true,force:true});}
 });
