@@ -10,11 +10,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants as flags } from 'node:fs';
 import { RuntimeError } from './runtime-error.js';
+import { within } from './fulltext/policy.js';
 import { resolveSelectedReadPath, type ReadRootCandidate,
   type ReadOnlyOperation, type ReadRootOwner } from './read-root-boundary.js';
 import type { ReadRootSelectionStore } from './read-root-selection-store.js';
 
 type Stat = import('node:fs').BigIntStats;
+type OpenFile = Awaited<ReturnType<typeof fs.open>>;
+type OpenDirectory = Awaited<ReturnType<typeof fs.opendir>>;
 export interface TrustedReadRootReader {
   selected: ReadRootSelectionStore['selected'];
 }
@@ -43,7 +46,12 @@ export class ReadRootAccess {
 
   async resolve(raw: string, owner: ReadRootOwner,
     operation: ReadOnlyOperation): Promise<ReadRootCandidate & Partial<ReadRootScope>> {
-    const selected = await this.selectionSource?.selected(owner) ?? null;
+    // Workspace-only remains exactly the baseline, even when an optional
+    // external owner record is invalid or revoked.
+    const base = path.resolve(this.workspace);
+    const target = path.resolve(base, raw);
+    const selected = within(base, target) ? null :
+      await this.selectionSource?.selected(owner) ?? null;
     const answer = await resolveSelectedReadPath({
       workspace: this.workspace, path: raw, owner,
       selection: selected, protectedPaths: this.protectedPaths, operation,
@@ -77,9 +85,9 @@ export class ReadRootAccess {
    */
   async withFile<T>(scope: ReadRootScope, owner: ReadRootOwner,
     operation: ReadOnlyOperation, maxBytes: number,
-    use: (file: fs.FileHandle, before: Stat) => Promise<T>): Promise<T> {
+    use: (file: OpenFile, before: Stat) => Promise<T>): Promise<T> {
     await this.assertScope(scope, owner, operation);
-    let handle: fs.FileHandle | undefined;
+    let handle: OpenFile | undefined;
     try {
       handle = await fs.open(scope.absolute, flags.O_RDONLY | (flags.O_NOFOLLOW ?? 0));
       const opened = await handle.stat({ bigint: true });
@@ -138,7 +146,7 @@ export class ReadRootAccess {
   /** Check the path and root AGAIN after opendir before exposing names. */
   async withDirectory<T>(scope: ReadRootScope, owner: ReadRootOwner,
     operation: ReadOnlyOperation,
-    use: (dir: fs.Dir) => Promise<T>): Promise<T> {
+    use: (dir: OpenDirectory) => Promise<T>): Promise<T> {
     const initial = await this.assertScope(scope, owner, operation);
     const before = await identity(initial.absolute);
     if (!before.isDirectory() || before.ino === 0n) denied();
