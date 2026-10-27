@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DocumentAdapter } from '../src/hostdeck/documents.js';
@@ -14,7 +14,9 @@ test('Arabic PDF extraction returns logical source order (open R04 failure)', {
     ? 'Known open R04 failure; opt in with HOSTDECK_TEST_RTL_PDF=1.'
     : !chrome ? 'HOSTDECK_TEST_BROWSER_EXECUTABLE is required.' : false,
 }, async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-arabic-bidi-'));
+  const temporaryParent = await realpath(os.tmpdir());
+  const workspace = await realpath(await mkdtemp(path.join(temporaryParent, 'hostdeck-arabic-bidi-')));
+  assert.equal(path.dirname(workspace), temporaryParent, 'owned cleanup remains inside canonical temporary directory');
   try {
     const adapter = await DocumentAdapter.create({ workspace, browserExecutable: chrome });
     const logical = 'السلام عليكم';
