@@ -61,8 +61,11 @@ test('HD-B007 root RED: mixed Latin island cannot establish paragraph base direc
   const observed = 'ﻢﻟﺎﻋ API ﺎﺒﺣﺮﻣ';
   const items = captureInline(observed);
   assert.equal(items.map(i=>i.str).join(''),observed);
-  assert.ok(items.filter(i=>/^\\p{Script=Arabic}$/u.test(i.str))
-    .every(i=>i.dir==='rtl'));
+  const rtlItems = items.filter(i=>i.dir==='rtl');
+  assert.ok(rtlItems.length > 0 && rtlItems.every(i=>i.str.length===1));
+  assert.ok(items.some(i=>i.str==='API' && i.dir==='ltr'));
+  assert.ok(items.every((i,index)=>index===0 ||
+    (i.transform?.[4] ?? -Infinity) >= (items[index-1].transform?.[4] ?? Infinity)));
   assert.throws(
     () => restoreQualifiedPdfArabic(observed,items),
     /PDF_RTL_ORDER_UNQUALIFIED/,
