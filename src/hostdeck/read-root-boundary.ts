@@ -1,0 +1,133 @@
+/**
+ * Source-only boundary for a future explicitly owner-selected READ/SEARCH root
+ * set. NOT wired into main.ts or installed/runtime configuration by this PR.
+ *
+ * The selection parameter must be supplied by a separately qualified,
+ * protected, owner-bound local reader, NEVER from MCP arguments, a search hit,
+ * an environment variable, or broadUserAuthority alone.
+ *
+ * This is a lexical + reparse preflight, NOT race-safe authorization to read an
+ * already-opened file handle. Integrators MUST bind the actual opened object
+ * to the admitted root immediately before disclosing content/metadata.
+ */
+import path from 'node:path';
+import { RuntimeError } from './runtime-error.js';
+import { safeRealpath, within } from './fulltext/policy.js';
+
+export interface ReadRootOwner {
+  readonly ownerId: string;
+  readonly deviceId: string;
+  readonly executorId: string;
+}
+
+export interface ProtectedReadRootSelection {
+  readonly owner: ReadRootOwner;
+  /** Verified by the protected local source; not a self-declared MCP revision. */
+  readonly revision: string;
+  /** Explicitly approved non-volume absolute directory roots. */
+  readonly roots: readonly string[];
+  /** Explicit owner exclusions, in addition to protected runtime paths. */
+  readonly excludedRoots: readonly string[];
+}
+
+export type ReadOnlyOperation = 'name_search' | 'content_search' |
+  'list_directory' | 'read_file' | 'file_info';
+
+export interface ReadRootCandidate {
+  readonly root: string;
+  readonly absolute: string;
+  readonly displayPath: string;
+  readonly external: boolean;
+}
+
+export interface ReadRootResolveRequest {
+  readonly workspace: string;
+  readonly path: string;
+  readonly owner: ReadRootOwner;
+  readonly selection: ProtectedReadRootSelection | null;
+  /**
+   * Trusted protected paths (state, grant store, enrollment, executable/config,
+   * protected credential and private caches), supplied by the installed host.
+   * This check is mandatory for external root reads, even when a root was
+   * approved. Protected ancestors must also be accounted for in list/search.
+   */
+  readonly protectedPaths: readonly string[];
+  readonly operation: ReadOnlyOperation;
+}
+
+const denied = (): never => { throw new RuntimeError('READ_ROOT_DENIED'); };
+const safeRoot = async (input: string): Promise<string> => {
+  if (typeof input !== 'string' || !path.isAbsolute(input) ||
+      input.length > 4096 || /[\u0000-\u001f]/.test(input)) denied();
+  try { return await safeRealpath(input); }
+  catch { return denied(); }
+};
+const equals = (a: string, b: string): boolean =>
+  process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+const sameOwner = (a: ReadRootOwner, b: ReadRootOwner): boolean =>
+  !!a?.ownerId && !!a?.deviceId && !!a?.executorId &&
+  a.ownerId === b?.ownerId && a.deviceId === b?.deviceId &&
+  a.executorId === b?.executorId;
+
+/**
+ * Validate one selected root and one target. The read adapter must rerun this
+ * for each disclosed directory entry, search match and readback, not only for
+ * the original search root. No selected root is inferred from a grant scope.
+ */
+export async function resolveSelectedReadPath(
+  request: ReadRootResolveRequest,
+): Promise<ReadRootCandidate> {
+  const { workspace, owner, selection, protectedPaths } = request;
+  if (!owner?.ownerId || !owner.deviceId || !owner.executorId ||
+      typeof request.path !== 'string' || !request.path.trim() ||
+      request.path.length > 4096) denied();
+  if (!['name_search', 'content_search', 'list_directory',
+    'read_file', 'file_info'].includes(request.operation)) denied();
+
+  const base = await safeRoot(workspace);
+  // A relative path always means "relative to workspace", never a route out
+  // to an additional root through "..". External paths must be explicit.
+  const absolute = path.resolve(base, request.path);
+  if (!path.isAbsolute(request.path) && !within(base, absolute)) denied();
+
+  // Preserve the old contract unchanged when no selected external roots exist.
+  if (within(base, absolute)) {
+    const canonical = await safeRoot(absolute);
+    if (!within(base, canonical)) denied();
+    return { root: base, absolute: canonical,
+      displayPath: path.relative(base, canonical) || '.', external: false };
+  }
+
+  if (!selection || !sameOwner(selection.owner, owner) ||
+      !selection.revision || !Array.isArray(selection.roots) ||
+      !Array.isArray(selection.excludedRoots) ||
+      selection.roots.length > 128 || selection.excludedRoots.length > 256 ||
+      !Array.isArray(protectedPaths) || protectedPaths.length === 0) denied();
+
+  // A broad disk-root selection needs its own fixed-volume qualification,
+  // protective exclusions, approval and budgets. It is NOT implicit here.
+  const candidateRoots: string[] = [];
+  for (const approved of selection.roots) {
+    if (typeof approved !== 'string' || !path.isAbsolute(approved) ||
+        equals(path.resolve(approved), path.parse(approved).root)) denied();
+    // Reject aliases and reparse points for the entire trusted root chain.
+    candidateRoots.push(await safeRoot(approved));
+  }
+  if (new Set(candidateRoots.map(value =>
+      process.platform === 'win32' ? value.toLowerCase() : value)).size !== candidateRoots.length) denied();
+
+  const root = candidateRoots.find(value => within(value, absolute));
+  if (!root) denied();
+  // Resolve before reporting any path, count, filename, metadata or snippet.
+  const canonical = await safeRoot(absolute);
+  if (!within(root, canonical)) denied();
+
+  for (const raw of [...selection.excludedRoots, ...protectedPaths]) {
+    const excluded = await safeRoot(raw);
+    if (within(excluded, canonical)) denied();
+  }
+  // A caller cannot get an unsafe "../" path to retry under a write API.
+  // Existing workspace matches remain relative; external reads explicitly
+  // identify their already authorized absolute source.
+  return { root, absolute: canonical, displayPath: canonical, external: true };
+}
