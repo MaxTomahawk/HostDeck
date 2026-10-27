@@ -82,9 +82,33 @@ export async function checkOfficeArchive(file: string, extension: '.docx' | '.xl
   return buffer;
 }
 
-/** Existing bounded unpdf text-layer semantics, now with an item-verified
- * Arabic logical-order repair. No OCR, writing, or font-engine changes. */
-export async function readPdfTextFromBuffer(bytes: Uint8Array, selectedPages?: readonly number[]): Promise<{text: string[]; totalPages: number}> {
+/** The original unpdf page remains available when RTL text order cannot be qualified. */
+export type PdfPageTextOrder = {
+  page_index: number;
+  text_order: 'not_evaluated_no_arabic' | 'qualified_glyph_repair' | 'unqualified_original_unpdf';
+  limitation?: 'PDF_RTL_ORDER_UNQUALIFIED';
+};
+
+/** Catch ONLY the helper's explicit uncertainty; parser failures still propagate. */
+export function reconcilePdfArabicPage(raw: string, items: readonly unknown[]): {
+  text: string;
+  text_order: PdfPageTextOrder['text_order'];
+  limitation?: PdfPageTextOrder['limitation'];
+} {
+  try {
+    return { text: restoreQualifiedPdfArabic(raw, items), text_order: 'qualified_glyph_repair' };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'PDF_RTL_ORDER_UNQUALIFIED') throw error;
+    return { text: raw, text_order: 'unqualified_original_unpdf',
+      limitation: 'PDF_RTL_ORDER_UNQUALIFIED' };
+  }
+}
+
+/** Existing bounded unpdf text-layer semantics, now with narrowly qualified
+ * glyph repair and per-page uncertainty metadata. No OCR or font changes. */
+export async function readPdfTextFromBuffer(bytes: Uint8Array, selectedPages?: readonly number[]): Promise<{
+  text: string[]; totalPages: number; textOrderCoverage: PdfPageTextOrder[];
+}> {
   if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   const { getDocumentProxy, extractText } = await import('unpdf');
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
@@ -92,18 +116,24 @@ export async function readPdfTextFromBuffer(bytes: Uint8Array, selectedPages?: r
     if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
     const result = await extractText(pdf);
     const pages = [...result.text];
-    // Only RTL-bearing pages require an extra PDF.js item-level read. The
-    // serialized unpdf string alone has already lost glyph direction/geometry.
-    // Unsupported BiDi layouts fail closed with PDF_RTL_ORDER_UNQUALIFIED.
+    // Only selected Arabic-bearing pages need PDF.js geometry. An unsupported
+    // RTL layout does not revoke the already readable original unpdf page.
     const selected = selectedPages ?? pages.map((_page, index) => index);
+    const coverage: PdfPageTextOrder[] = [];
     for (const i of new Set(selected)) {
       if (!Number.isInteger(i) || i < 0 || i >= result.totalPages) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
-      if (!/\p{Script=Arabic}/u.test(pages[i] ?? '')) continue;
+      if (!/\p{Script=Arabic}/u.test(pages[i] ?? '')) {
+        coverage.push({ page_index: i, text_order: 'not_evaluated_no_arabic' });
+        continue;
+      }
       const page = await pdf.getPage(i + 1);
-      const details = await page.getTextContent();
-      pages[i] = restoreQualifiedPdfArabic(pages[i], details.items);
+      const details = await page.getTextContent(); // Genuine parser errors propagate.
+      const repaired = reconcilePdfArabicPage(pages[i], details.items);
+      pages[i] = repaired.text;
+      coverage.push({ page_index: i, text_order: repaired.text_order,
+        ...(repaired.limitation ? { limitation: repaired.limitation } : {}) });
     }
-    return { text: pages, totalPages: result.totalPages };
+    return { text: pages, totalPages: result.totalPages, textOrderCoverage: coverage };
   } finally {
     // Preserve the existing unpdf loading-task cleanup path.
     try { await pdf.loadingTask.destroy(); }
@@ -356,7 +386,11 @@ export class DocumentAdapter {
       const selected = requested ?? result.text.map((_text, index) => index);
       if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
       const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
-      return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
+      const coverageByPage = new Map(result.textOrderCoverage.map(item => [item.page_index, item]));
+      return { content: pages, mimeType: 'application/json', metadata: {
+        totalPages: result.totalPages,
+        textOrderCoverage: selected.map(index => coverageByPage.get(index)),
+      } };
     }
     throw new Error('DOCUMENT_FORMAT_UNSUPPORTED');
   }
