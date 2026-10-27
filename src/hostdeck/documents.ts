@@ -7,6 +7,7 @@ import { DocxFileHandler, pizzipPackage } from '../utils/files/docx.js';
 import { RuntimeError } from './runtime-error.js';
 import { replaceVisibleDocxXml, validateOfficeStructure, type OfficePart } from './office-xml.js';
 import { isOpenpyxlCommentLayout, readOpenpyxlCommentWorkbook, editOpenpyxlCommentWorkbook } from './office-xlsx.js';
+import { restoreQualifiedPdfArabic } from './pdf-rtl.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024;
@@ -81,8 +82,8 @@ export async function checkOfficeArchive(file: string, extension: '.docx' | '.xl
   return buffer;
 }
 
-/** Existing unpdf text-layer semantics, also usable on a prebounded buffer.
- * No OCR, Arabic logical-order repair, or document editing changes. */
+/** Existing bounded unpdf text-layer semantics, now with an item-verified
+ * Arabic logical-order repair. No OCR, writing, or font-engine changes. */
 export async function readPdfTextFromBuffer(bytes: Uint8Array): Promise<{text: string[]; totalPages: number}> {
   if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   const { getDocumentProxy, extractText } = await import('unpdf');
@@ -90,7 +91,17 @@ export async function readPdfTextFromBuffer(bytes: Uint8Array): Promise<{text: s
   try {
     if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
     const result = await extractText(pdf);
-    return { text: result.text, totalPages: result.totalPages };
+    const pages = [...result.text];
+    // Only RTL-bearing pages require an extra PDF.js item-level read. The
+    // serialized unpdf string alone has already lost glyph direction/geometry.
+    // Unsupported BiDi layouts fail closed with PDF_RTL_ORDER_UNQUALIFIED.
+    for (let i = 0; i < pages.length; i++) {
+      if (!/\p{Script=Arabic}/u.test(pages[i])) continue;
+      const page = await pdf.getPage(i + 1);
+      const details = await page.getTextContent();
+      pages[i] = restoreQualifiedPdfArabic(pages[i], details.items);
+    }
+    return { text: pages, totalPages: result.totalPages };
   } finally {
     // Preserve the existing unpdf loading-task cleanup path.
     try { await pdf.loadingTask.destroy(); }
