@@ -248,13 +248,15 @@ remain to avoid an unbounded scan. `maxFileBytes`, unsupported extraction,
 scan deadlines and entry limits still produce partial coverage where
 appropriate; no all-content recall, cloud-model or GPU claims.
 
-On Windows, Node Dirent/Stats do **not** report `Hidden`: a bounded
-`SystemRoot/System32/attrib.exe` check runs without shell, elevation, or
-dependency before queueing, extracting, and showing existing metadata/snippets.
-This compatibility path costs an external subprocess per candidate and does
-**not** yet qualify high-throughput full-volume indexing or every Unicode
-console-codepage/path edge case. Any unknown result fails closed. A future
-batched native `GetFileAttributesW` capability must be tested independently.
+On Windows, Node Dirent/Stats do **not** report `Hidden`. The earlier
+`attrib.exe` compatibility probe failed the actual accented/CJK filename
+oracle; preserve that failure. The current facade uses the installer-pinned
+native metadata bridge, with bounded batches and fail-closed unknown results.
+Actual Windows Unicode and Hidden-before/during-extraction fixtures pass.
+The exact selected fixed-volume anchor alone can tolerate its own volume
+flags; Hidden/System descendants remain subject to policy. This does not
+qualify high-throughput full-volume indexing or a real protected personal
+selection/approval/index tuple. Those remain independent activation gates.
 
 New focused oracles (do not replay the whole suite):
 - `node --import tsx --test test/hostdeck-fulltext-hidden.test.ts`:
