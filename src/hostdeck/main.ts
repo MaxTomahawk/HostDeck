@@ -29,6 +29,8 @@ import {ProviderRegistry} from './providers.js';
 import {EverythingClient} from './everything.js';
 import {FullTextAdapter} from './fulltext/adapter.js';
 import {FullTextNativeBridge} from './fulltext-native-bridge.js';
+import {ReadRootSelectionStore} from './read-root-selection-store.js';
+import {ReadRootAccess} from './read-root-access.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -44,6 +46,8 @@ const configuration=z.object({
   // trusted local installation configuration may select this directory.
   fulltext_owner_directory:absolute.optional(),
   fulltext_index_directory:absolute.optional(),
+  // Explicit installer-controlled opt-in. No configured directory = workspace-only.
+  read_root_owner_directory:absolute.optional(),
   browser_executable:absolute.optional(),grants_file:absolute,
   installed:z.boolean().default(false),enrollment_file:absolute.optional(),
   everything:z.object({executable:absolute,sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),version:z.string().regex(/^1\.[45]\.\d+\.\d+b?$/),instance:z.string().regex(/^[A-Za-z0-9_. -]{0,64}$/)}).strict().optional(),
@@ -147,7 +151,6 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const committer=await SafeCommitter.create({workspace,reauthorize});
   const providers=await ProviderRegistry.open(path.join(config.state_directory,'provider-preferences.sqlite'));
   const everything=config.everything?new EverythingClient({worker:config.desktop_worker,...config.everything,identity}):undefined;
-  const files=await FileAdapter.create({workspace,reauthorize,providers,everything});
   // Always dormant unless an independently approved protected local selection
   // exists AND both fresh principal/grant scopes permit the requested call.
   // Merely constructing the bridge reads nothing, starts no helper and
@@ -162,6 +165,24 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
         },
       })
     : undefined;
+  // Reuse the existing pinned, private native effective-ACL object probe.
+  // No new native worker, service, grant, enrollment or owner record is created.
+  const readRootStore=config.read_root_owner_directory
+    ? new ReadRootSelectionStore(config.read_root_owner_directory,workspace,
+        fulltextNative)
+    : undefined;
+  const readRoots=readRootStore
+    ? new ReadRootAccess(workspace,[
+        configPath,config.state_directory,config.grants_file,config.desktop_worker,
+        config.read_root_owner_directory!,
+        ...(config.enrollment_file?[config.enrollment_file]:[]),
+        ...(config.fulltext_owner_directory?[config.fulltext_owner_directory]:[]),
+        ...(config.fulltext_index_directory?[config.fulltext_index_directory]:[]),
+        ...(config.browser_executable?[config.browser_executable]:[]),
+      ],readRootStore)
+    : undefined;
+  const files=await FileAdapter.create({workspace,reauthorize,providers,everything,
+    ...(readRoots?{readRoots}:{})});
   const fulltext=new FullTextAdapter({
     stateDirectory:config.fulltext_index_directory??config.state_directory,workspace,reauthorize,
     protectedOwnerDirectory:config.fulltext_owner_directory,
@@ -186,10 +207,11 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
       let runtime=runtimes.get(context.ownerId);
       if(!runtime){if(runtimes.size>=8)throw new RuntimeError('LIMIT_EXCEEDED');
         runtime=UserRuntime.create({deviceId:config.device_id,workspace,environment,shells:{powershell:shell,cmd:path.join(systemRoot,'System32','cmd.exe')},
+          ...(readRoots?{readRoots}:{}),
           authorize:async(operation,arguments_)=>{await reauthorize(operation,arguments_);return true;}});
         runtimes.set(context.ownerId,runtime);
       }
-      return(await runtime).invoke(name,args);
+      return(await runtime).invoke(name,args,context);
     }};
   const documentAdapter:Adapter={implementedTools:documents.implementedTools,async handle(name,args,context){
     const expected=name==='hostdeck_edit_document'?await committer.snapshot(String(args.path)):undefined;
