@@ -107,13 +107,13 @@ test('indexed Office limitations survive SQLite/search/status/reopen; ACL denies
   }finally{revoked.clear();engine?.close();await rm(base,{recursive:true,force:true});}
 });
 
-test('legacy indexed rows migrate without invented coverage and are requalified only on explicit scan',async()=>{
+test('legacy indexed Office rows remain unverified until a source-backed rescan',async()=>{
   revoked.clear();
-  const {base,root,config}=await ownFixture(['.txt']);
+  const {base,root,config}=await ownFixture(['.docx']);
   let engine:FullTextEngine|undefined;
   try{
-    const file=path.join(root,'legacy.txt');
-    await writeFile(file,'legacyfixture actual plaintext source');
+    const file=path.join(root,'legacy.docx');
+    await new DocxFileHandler().write(file,'legacyfixture actual DOCX source');
     const db=new DatabaseSync(config.indexFile);
     try{
       db.exec(`
@@ -126,8 +126,8 @@ test('legacy indexed rows migrate without invented coverage and are requalified 
           read_bytes INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
       `);
       db.prepare('INSERT INTO docs(path,root,format,state,sha256,bytes,indexed_at,seen_scan) VALUES(?,?,?,?,?,?,?,?)')
-        .run(file,root,'.txt','indexed','legacy-hash',32,'2026-10-27','past-run');
-      db.prepare('INSERT INTO docs_fts(rowid,body,grams) VALUES(1,?,?)').run('legacyfixture actual plaintext source','');
+        .run(file,root,'.docx','indexed','legacy-hash',32,'2026-10-27','past-run');
+      db.prepare('INSERT INTO docs_fts(rowid,body,grams) VALUES(1,?,?)').run('legacyfixture actual DOCX source','');
       db.prepare('INSERT INTO runs(id,state,created_at,updated_at) VALUES(?,?,?,?)')
         .run('past-run','complete','2026-10-27','2026-10-27');
       assert.deepEqual(db.prepare('PRAGMA table_info(docs)').all().map((row:any)=>row.name)
@@ -142,8 +142,8 @@ test('legacy indexed rows migrate without invented coverage and are requalified 
     assert.equal((await engine.status(principal)).visibleDocumentCoverage[0]?.documentCoverage,'legacy_unverified');
     await finish(engine);
     const updated=(await engine.search(principal,'legacyfixture')).results[0]!;
-    assert.equal(updated.documentCoverage,'qualified_text');
-    assert.deepEqual(updated.limitations,[]);
-    assert.equal((await engine.status(principal)).coverage,'complete_bounded_scan');
+    assert.equal(updated.documentCoverage,'partial');
+    assert.ok(updated.limitations.includes('structured_text_layer_only'));
+    assert.equal((await engine.status(principal)).coverage,'partial_or_unverified');
   }finally{engine?.close();await rm(base,{recursive:true,force:true});}
 });
