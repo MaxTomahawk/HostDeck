@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import fs from 'node:fs/promises';
@@ -58,7 +59,7 @@ test('explicit protected excluded subtree never reaches SQLite or FTS',async()=>
     const preview=await FullTextEngine.preview(config,principal,authorized);
     assert.deepEqual(preview.excludedRoots,[protectedSource]);
     assert.equal(preview.activated,false);
-    engine=await FullTextEngine.openConfirmed(config,principal,authorized,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,authorized,preview.digest,syntheticFullTextAttributes);
     const {runId}=await engine.start(principal);
     let coverage='';
     for(let i=0;i<16;i++){
