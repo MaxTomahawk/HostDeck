@@ -2,12 +2,43 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {constants as fsFlags} from 'node:fs';
 import type {Adapter} from '../gateway.js';
+import {RuntimeError} from '../runtime-error.js';
 import type {FullTextNativeBridge} from '../fulltext-native-bridge.js';
 import type {ExecutionContext} from '../security.js';
 import {FullTextPort,FULLTEXT_PROVIDER_ID,FULLTEXT_ENGINE_ID} from './wiring.js';
 import {FullTextSelectionStore,type FullTextProtectedAclVerifier} from './selection-store.js';
 import {safeRealpath,within} from './policy.js';
 import type {FullTextCheck,FullTextPrincipal,FullTextAction} from './types.js';
+
+// Trust only these literal, path-free full-text refusal codes. Never allow
+// arbitrary FULLTEXT_* prefixes, interpolated paths, SQL or native exceptions.
+const SAFE_FULLTEXT_CODES=new Set<string>([
+  'FULLTEXT_WRITER_BUSY','FULLTEXT_DENIED','FULLTEXT_NOT_CONFIGURED',
+  'FULLTEXT_OWNER_CONFIRMATION_REQUIRED','FULLTEXT_OWNER_SELECTION_REVOKED',
+  'FULLTEXT_SELECTION_NOT_CONFIRMED','FULLTEXT_ROOTS_NOT_SELECTED',
+  'FULLTEXT_SCAN_ALREADY_ACTIVE','FULLTEXT_SCAN_BUSY','FULLTEXT_NOT_RUNNING',
+  'FULLTEXT_NOT_RESUMABLE','FULLTEXT_NOT_CANCELLABLE','FULLTEXT_RUN_NOT_OWNED',
+  'FULLTEXT_QUERY_INVALID','FULLTEXT_QUERY_LIMIT','FULLTEXT_HAN_MIN_TWO',
+  'FULLTEXT_ROOT_IDENTITY_CHANGED','FULLTEXT_REPARSE_DENIED','FULLTEXT_SOURCE_CHANGED',
+  'FULLTEXT_SESSION_UNQUALIFIED',
+  // Protected selection/config and root-binding refusals are stable codes,
+  // not source details. They previously collapsed to unhelpful IO_ERROR.
+  'FULLTEXT_PROTECTED_CONFIG_INVALID','FULLTEXT_INDEX_INSIDE_CORPUS',
+  'FULLTEXT_STATE_INSIDE_WORKSPACE','FULLTEXT_OWNER_CONFIG_INDEX_OVERLAP',
+  'FULLTEXT_FIXED_VOLUME_SELECTION_INVALID','FULLTEXT_FIXED_VOLUME_UNQUALIFIED',
+  'FULLTEXT_VOLUME_ROOT_DENIED','FULLTEXT_OVERLAPPING_ROOTS','FULLTEXT_ROOT_EXCLUDED',
+  'FULLTEXT_PORT_CLOSED','FULLTEXT_ALREADY_OPEN','FULLTEXT_DRIVER_ALREADY_RUNNING',
+  'FULLTEXT_DRIVER_NO_PROGRESS','FULLTEXT_DRIVER_AUTHORIZATION_OR_RUNTIME_LOST',
+]);
+
+function asTrustedFullTextError(error:unknown):unknown {
+  // PolicyGate and native authoritative denials already use trusted types;
+  // neither broaden nor rewrite their code.
+  if(error instanceof RuntimeError)return error;
+  if(error instanceof Error&&SAFE_FULLTEXT_CODES.has(error.message))
+    return new RuntimeError(error.message);
+  return error; // publicError masks all other raw errors as IO_ERROR.
+}
 
 const TOOLS=[
   'hostdeck_fulltext_preview','hostdeck_fulltext_status','hostdeck_fulltext_confirm',
@@ -133,10 +164,11 @@ export class FullTextAdapter implements Adapter {
   }
 
   async handle(name:string,args:Record<string,unknown>,context:ExecutionContext):Promise<unknown>{
+    try{
     const principal=p(context);
     switch(name){
       case 'hostdeck_fulltext_preview':
-        return this.port.preview(principal);
+        return await this.port.preview(principal);
       case 'hostdeck_fulltext_status':{
         if(!await this.store.selected(principal))return {
           state:'unconfigured',provider:FULLTEXT_PROVIDER_ID,engine:FULLTEXT_ENGINE_ID,
@@ -155,12 +187,12 @@ export class FullTextAdapter implements Adapter {
       case 'hostdeck_fulltext_confirm':
         return {...await this.port.confirm(principal,String(args.digest)),engine:FULLTEXT_ENGINE_ID};
       case 'hostdeck_fulltext_start':
-        return this.port.startDriven(principal);
+        return await this.port.startDriven(principal);
       case 'hostdeck_fulltext_step':
-        return this.port.step(principal,String(args.run_id),
+        return await this.port.step(principal,String(args.run_id),
           args.max_operations===undefined?undefined:Number(args.max_operations));
       case 'hostdeck_fulltext_query':
-        return this.port.query(principal,String(args.query),Number(args.limit));
+        return await this.port.query(principal,String(args.query),Number(args.limit));
       case 'hostdeck_fulltext_pause':
         await this.port.pause(principal,String(args.run_id));return {state:'paused',run_id:args.run_id};
       case 'hostdeck_fulltext_resume':{
@@ -170,6 +202,9 @@ export class FullTextAdapter implements Adapter {
       case 'hostdeck_fulltext_cancel':
         await this.port.cancel(principal,String(args.run_id));return {state:'cancelled',run_id:args.run_id};
       default:throw new Error('FULLTEXT_OPERATION_UNAVAILABLE');
+    }
+    }catch(error){
+      throw asTrustedFullTextError(error);
     }
   }
   async close():Promise<void>{await this.port.close();}
