@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { PDFDocument } from 'pdf-lib';
+import { DocumentAdapter, reconcilePdfArabicPage } from '../src/hostdeck/documents.js';
 import {
   restoreQualifiedPdfArabic,
   type PdfDirectionalItem,
@@ -127,4 +132,66 @@ test('unknown Arabic diacritics, direction, markup and geometry fail closed', ()
 test('normal LTR, Latin accent and CJK text remain byte-for-byte unchanged', () => {
   const plain = 'Page one\nBelgië, 中文';
   assert.equal(restoreQualifiedPdfArabic(plain,[]),plain);
+});
+
+test('document caller retains logical Arabic, RTL mixtures and combining marks with finite limitation', () => {
+  const logical = 'السلام عليكم';
+  const mixed = 'ﻢﻟﺎﻋ API ﺎﺒﺣﺮﻣ';
+  const marked = 'ﻋَﻠﻰ';
+  for (const [original, items] of [
+    [logical, captureInline(logical)],
+    [mixed, captureInline(mixed)],
+    [marked, [...marked].map((glyph, index) =>
+      item(glyph, 42 + index * 6, baseline, /^\\p{M}$/u.test(glyph) ? 'ltr' : 'rtl',
+        /^\\p{M}$/u.test(glyph) ? 0 : 6))],
+  ] as const) {
+    const outcome = reconcilePdfArabicPage(original, items);
+    assert.deepEqual(outcome, {
+      text: original,
+      text_order: 'unqualified_original_unpdf',
+      limitation: 'PDF_RTL_ORDER_UNQUALIFIED',
+    }, 'unsupported classes must preserve original unpdf text');
+  }
+  assert.deepEqual(reconcilePdfArabicPage(raw, actualPdfItems), {
+    text: expected, text_order: 'qualified_glyph_repair',
+  }, 'previous qualified pure-Arabic glyph repair must still work');
+  const badItem = { get str(): string { throw new Error('UNEXPECTED_PDF_JS_ERROR'); } };
+  assert.throws(() => reconcilePdfArabicPage('ﻢﻜﻴﻠﻋ', [badItem]),
+    /UNEXPECTED_PDF_JS_ERROR/, 'non-qualification parser errors must not be caught');
+});
+
+test('selected-page document caller preserves order and limits coverage metadata to selected pages', async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hd-pdf-rtl-pages-')));
+  try {
+    const pdf = await PDFDocument.create();
+    for (const text of ['OWN PAGE ZERO', 'OWN PAGE ONE', 'OWN PAGE TWO']) {
+      const page = pdf.addPage();
+      page.drawText(text, { x: 54, y: 740 });
+    }
+    const file = path.join(root, 'owned-selected-pages.pdf');
+    await writeFile(file, await pdf.save());
+    const adapter = await DocumentAdapter.create({ workspace: root });
+    const result = await adapter.handle('hostdeck_read_document', {
+      path: file, page_indexes: [2, 0],
+    }) as {
+      content: Array<{ page_index: number; text: string }>;
+      metadata: { totalPages: number; textOrderCoverage: Array<{
+        page_index: number; text_order: string; limitation?: string;
+      }> };
+    };
+    assert.equal(result.metadata.totalPages, 3);
+    assert.deepEqual(result.content.map(page => page.page_index), [2, 0]);
+    assert.match(result.content[0].text, /OWN PAGE TWO/);
+    assert.match(result.content[1].text, /OWN PAGE ZERO/);
+    assert.deepEqual(result.metadata.textOrderCoverage, [
+      { page_index: 2, text_order: 'not_evaluated_no_arabic' },
+      { page_index: 0, text_order: 'not_evaluated_no_arabic' },
+    ]);
+    assert.equal(result.metadata.textOrderCoverage.some(page => page.page_index === 1), false);
+    await assert.rejects(adapter.handle('hostdeck_read_document', {
+      path: file, page_indexes: [3],
+    }), /PDF_PAGE_INDEX_OUT_OF_RANGE/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
