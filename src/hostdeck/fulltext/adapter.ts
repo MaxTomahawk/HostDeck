@@ -66,9 +66,15 @@ export class FullTextAdapter implements Adapter {
       nativeAttributes:options.nativeAttributes
         ? (paths,principal,root,action)=>options.nativeAttributes!.attributes(paths,
             async file=>{
-              // The native worker never grants permissions. Verify current
-              // PolicyGate AND selected root/file rights for each batch member.
-              try{return await this.authorized({principal,root,path:file,action});}
+              // Native attribute batches also cover ancestor directories inside
+              // the selected root. 'index'/'snippet'/'metadata' require a
+              // file leaf; applying that leaf rule to an ancestor would deny
+              // every nested document. Use the equivalent live read/index
+              // POLICY scope with directory-readable semantics here. The
+              // engine separately reauthorizes the actual file as
+              // 'index' or 'metadata'/'snippet' before effects or disclosure.
+              const directorySafeAction:FullTextAction=READ_ACTIONS.has(action)?'search':'scan';
+              try{return await this.authorized({principal,root,path:file,action:directorySafeAction});}
               catch{return false;}
             })
         : undefined,
