@@ -26,6 +26,10 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   await Promise.all([workspace,state,protectedDir,corpus,other].map(dir=>fs.mkdir(dir)));
   const marker=path.join(corpus,'België_日本語_中文.txt'),forbidden=path.join(corpus,'restricted.txt');
   await fs.writeFile(marker,'Sunflower Café België 中文文件 السلام');
+  const nestedDir=path.join(corpus,'nested-directory');
+  await fs.mkdir(nestedDir);
+  const nested=path.join(nestedDir,'Sub_日本語.txt');
+  await fs.writeFile(nested,'Nestedmarker fixture inside a selected subdirectory');
   await fs.writeFile(forbidden,'Hiddensecret document contents');
   const audit=await AuditLog.open(path.join(root,'audit'));
   const {privateKey,publicKey}=await generateKeyPair('RS256');
@@ -173,10 +177,14 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   const visible=(matches.structuredContent?.result as {results:Array<{path:string;snippet:string}>}).results;
   assert.deepEqual(visible.map(item=>item.path),[marker]);
   assert.match(visible[0].snippet,/Sunflower/);
+  const nestedResult=await call('query',{query:'Nestedmarker'});
+  assert.equal(nestedResult.isError,undefined,JSON.stringify(nestedResult.content));
+  assert.deepEqual((nestedResult.structuredContent!.result as {results:Array<{path:string}>}).results.map(item=>item.path),
+    [nested],'Native metadata must accept authorized in-root ancestor directories');
 
   // Revoked file policy cannot expose filename, snippet or visible counter;
   // the SQLite bytes remain until authorized index maintenance/rescan.
-  extraDenied.add(marker);extraDenied.add(forbidden);
+  extraDenied.add(marker);extraDenied.add(forbidden);extraDenied.add(nested);
   const deniedResult=await call('query',{query:'Sunflower'});
   assert.deepEqual((deniedResult.structuredContent?.result as {results:unknown[]}).results,[]);
   const filtered=await call('status');
@@ -190,6 +198,8 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
   scopes=['fulltext:read'];revision='r4';
   assert.equal((await call('start')).isError,true);
   assert.equal((await call('query',{query:'Sunflower'})).isError,undefined);
+  assert.equal((await call('query',{query:'Nestedmarker'})).isError,undefined,
+    'Read-only grant must permit nested metadata without index grant');
   scopes=[];revision='r5';
   assert.equal((await call('query',{query:'Sunflower'})).isError,true);
   assert.deepEqual((await rpc('tools/list')).payload.result.tools,[]);
