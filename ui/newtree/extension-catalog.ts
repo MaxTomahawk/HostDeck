@@ -2,7 +2,7 @@
  * HostDeck B007 manager presentation model.
  * A catalogue candidate is never treated as installed/qualified on the basis of
  * its research record. The only live overlay comes from authenticated
- * hostdeck_list_providers, and only the existing preference API may mutate it.
+ * hostdeck_list_providers. Logical integration controls never manage vendor software.
  */
 import { EXTENSION_CANDIDATES, type ExtensionCandidate } from './extension-catalog-data.js';
 
@@ -11,6 +11,7 @@ export interface LiveProvider {
   id: string;
   capabilities?: unknown;
   installed?: unknown; enabled?: unknown; running?: unknown;
+  desiredEnabled?: unknown; enabledOverride?: unknown; configured?: unknown;
   compatible?: unknown; healthy?: unknown; qualified?: unknown;
   reason?: unknown; version?: unknown; instance?: unknown; session_id?: unknown;
 }
@@ -125,7 +126,7 @@ export function mergeManagerCatalog(snapshot: ProviderSnapshot): ManagerEntry[] 
       candidate, providerId: id, live, actualCapabilities: actualFunctionIds(live?.capabilities),
       states: {
         installed: live ? observed(live.installed) : 'unknown',
-        enabled: live ? observed(live.enabled) : 'unknown',
+        enabled: live ? observed(live.desiredEnabled ?? live.enabled) : 'unknown',
         running,
         onDemand: running === 'on_demand' ? 'yes' : live?.running === true ? 'no' : 'unknown',
         compatible: live ? observed(live.compatible) : 'unknown',

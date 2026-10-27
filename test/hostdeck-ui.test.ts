@@ -34,6 +34,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
 }, async (t) => {
   const root = process.cwd(); let authorization = '';
   let savedProvider: string | null = 'everything'; let preferenceWrites = 0;
+  let enabledOverride:boolean|null=null,enableWrites=0;
   const server = createServer(async (request, response) => {
     if (request.url === '/ui' || request.url === '/ui/') { response.writeHead(302, { location: '/ui/index.html' }).end(); return; }
     if (request.url?.startsWith('/ui/')) {
@@ -56,11 +57,17 @@ test('standalone panel keeps inputs during result updates and treats hostile too
             : name === 'hostdeck_list_providers' ? {providers:[
                 {id:'direct',installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true,
                   capabilities:['files.name','files.content']},
-                {id:'everything',installed:true,enabled:true,running:true,compatible:true,healthy:false,
+                {id:'everything',installed:true,enabled:enabledOverride??true,desiredEnabled:enabledOverride??true,enabledOverride,configured:true,running:true,compatible:true,healthy:false,
                   reason:'loading <img src=x onerror=window.pwned=3>',qualified:'not_independently_accepted',
                   capabilities:['files.name'],version:'1.5.0-fixture'}
               ],functions:[{capability:'files.name',preference:savedProvider,default:'direct',selected:savedProvider??'direct'},
                 {capability:'files.content',preference:null,default:'direct',selected:'direct'}]}
+            : name === 'hostdeck_set_provider_enabled' ? (()=>{
+                const args=message.params.arguments;
+                assert.equal(args.provider,'everything');assert.ok([true,false,null].includes(args.enabled));
+                enabledOverride=args.enabled;enableWrites++;
+                return {provider:'everything',updated:true,enabledOverride,desiredEnabled:enabledOverride??true};
+              })()
             : name === 'hostdeck_set_provider_preference' ? (() => {
                 const args = message.params.arguments;
                 if (args.capability !== 'files.name' || ![null,'direct','everything'].includes(args.provider)) {
@@ -118,7 +125,7 @@ test('standalone panel keeps inputs during result updates and treats hostile too
     const address = server.address();
     assert.ok(address && typeof address === 'object');
 
-    browser = await step('launch test-owned Edge', () => {
+    browser = await step('launch test-owned browser', () => {
       launchPending = puppeteer.launch({
         executablePath: path.resolve(executable!),
         headless: true, args: ['--no-sandbox'], timeout: 15_000,
@@ -192,6 +199,20 @@ test('standalone panel keeps inputs during result updates and treats hostile too
         button => /^(Install|Start|Stop|Update|Uninstall|Rollback)$/i.test(button.textContent ?? ''),
       ).length);
       assert.equal(lifecycleButtons, 0, 'unsupported lifecycle actions are not clickable');
+    });
+
+    await step('logical Everything enablement is read back without changing running state or preference',async()=>{
+      await page.select('#provider-enabled','false');
+      await page.locator('#provider-enabled-apply').click();
+      await page.waitForFunction(()=>document.querySelector('#provider-enabled-feedback')?.textContent?.includes('verified on readback'));
+      assert.equal(enableWrites,1);assert.equal(enabledOverride,false);assert.equal(savedProvider,'everything');
+      const detail=await page.$eval('#extension-detail',element=>element.textContent??'');
+      assert.match(detail,/RunningYes/);assert.match(detail,/HealthyNo/);
+      await page.select('#provider-enabled','');
+      await page.locator('#provider-enabled-apply').click();
+      await page.waitForFunction(()=>(document.querySelector('#provider-enabled-apply') as HTMLButtonElement|null)?.disabled===true&&
+        document.querySelector('#provider-enabled-feedback')?.textContent?.includes('verified on readback'));
+      assert.equal(enableWrites,2);assert.equal(enabledOverride,null);assert.equal(savedProvider,'everything');
     });
 
     await step('clear extension filters and restore all candidates', async () => {

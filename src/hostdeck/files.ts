@@ -9,7 +9,7 @@ import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers
 import type {EverythingClient} from './everything.js';
 
 const execFile = promisify(execFileCallback);
-const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference'] as const;
+const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference','hostdeck_set_provider_enabled'] as const;
 const MAX_TRAVERSAL_ENTRIES = 100_000;
 const MAX_SEARCH_MATCHES = 10_000;
 const MAX_SEARCH_RESULT_BYTES = 4 * 1024 * 1024;
@@ -110,7 +110,20 @@ export class FileAdapter {
       case 'hostdeck_search_results': return this.searchResults(args, context);
       case 'hostdeck_stop_search': return this.stopSearch(args, context);
       case 'hostdeck_list_processes': return this.listProcesses(args);
-      case 'hostdeck_list_providers': return this.listProviders(context);
+      case 'hostdeck_list_providers': {
+        await this.authorize(name,args);
+        const result=await this.listProviders(context);
+        await this.authorize(name,args);
+        return result;
+      }
+      case 'hostdeck_set_provider_enabled': {
+        if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
+        if(!this.reauthorize)throw new RuntimeError('DENIED');
+        await this.authorize(name,args);
+        await this.options.providers.setEnabled(context,args.provider as SearchProvider,args.enabled as boolean|null);
+        if(args.enabled===false)for(const job of this.searches.values())if(job.provider==='everything'&&ownerMatches(job.owner,context))this.disableSearch(job);
+        return {provider:args.provider,enabledOverride:args.enabled,desiredEnabled:args.enabled??true,scope:'owner_device_executor',updated:true};
+      }
       case 'hostdeck_set_provider_preference': {
         if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
         if(!this.reauthorize)throw new RuntimeError('DENIED');
@@ -255,17 +268,35 @@ export class FileAdapter {
   }
 
   private async listProviders(context:FileOwnerContext):Promise<unknown> {
-    let everything:unknown={installed:null,enabled:false,running:null,compatible:null,healthy:false,reason:'not_configured',qualified:'not_independently_accepted'};
+    const enabledOverride=await this.options?.providers?.enabledOverride(context,'everything')??null;
+    const desiredEnabled=enabledOverride??true;
+    let everything:unknown={installed:null,running:null,compatible:null,healthy:null,reason:'not_configured',qualified:'not_independently_accepted'};
     if(this.options?.everything)try{this.authorizeEverythingSession(context);everything=await this.options.everything.status();}
-    catch(e){everything={installed:null,enabled:true,running:null,compatible:null,healthy:false,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
-    return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,enabled:true,running:'on_demand',compatible:true,healthy:true},
-      {id:'everything',capabilities:['files.name'],...(everything as object)}],functions:await Promise.all((['files.name','files.content'] as const).map(async capability=>({
+    catch(e){everything={installed:null,running:null,compatible:null,healthy:null,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
+    return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,configured:true,enabled:true,desiredEnabled:true,enabledOverride:null,running:'on_demand',compatible:true,healthy:true},
+      {id:'everything',capabilities:['files.name'],...(everything as object),configured:!!this.options?.everything,enabled:desiredEnabled,desiredEnabled,enabledOverride}],functions:await Promise.all((['files.name','files.content'] as const).map(async capability=>({
         capability,preference:await this.options?.providers?.preference(context,capability)??null,default:'direct',selected:await this.options?.providers?.select(context,capability)??'direct'})))};
   }
 
   private authorizeEverythingSession(context:FileOwnerContext):void {
     if(!this.options?.everything||!context.sessionIds?.includes(this.options.everything.sessionId)
       ||context.sessionId!==undefined&&context.sessionId!==this.options.everything.sessionId)throw new RuntimeError('EVERYTHING_WRONG_SESSION');
+  }
+
+  private async assertProviderEnabled(context:FileOwnerContext,provider:SearchProvider):Promise<void> {
+    if(await this.options?.providers?.enabled(context,provider)===false)throw new RuntimeError('PROVIDER_DISABLED');
+  }
+
+  private disableSearch(job:SearchJob):void {
+    job.error='PROVIDER_DISABLED';job.matches=[];job.bytes=0;job.abort.abort();
+  }
+
+  private async authorizeEverythingSearch(job:SearchJob):Promise<void> {
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+    await this.authorize('hostdeck_search_files',{device_id:job.owner.deviceId,session_id:this.options?.everything?.sessionId,path:job.root,pattern:job.pattern,mode:job.mode,provider:'everything'});
+    try{await this.assertProviderEnabled(job.owner,'everything');}
+    catch(error){if(error instanceof RuntimeError&&error.code==='PROVIDER_DISABLED')this.disableSearch(job);throw error;}
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
   }
 
   private async startSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
@@ -276,6 +307,10 @@ export class FileAdapter {
     const literal = args.literal as boolean;
     const capability=args.mode==='content'?'files.content':'files.name';
     const provider=await this.options?.providers?.select(context,capability,args.provider as SearchProvider|undefined)??args.provider as SearchProvider|undefined??'direct';
+    if(provider==='everything') {
+      await this.authorize('hostdeck_search_files',args);
+      await this.assertProviderEnabled(context,provider);
+    }
     if(provider==='everything'&&capability!=='files.name')throw new RuntimeError('PROVIDER_CAPABILITY_UNSUPPORTED');
     if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
     if(provider==='everything')this.authorizeEverythingSession(context);
@@ -295,10 +330,13 @@ export class FileAdapter {
 
   private async runEverything(job:SearchJob):Promise<void> {
     try {
+      await this.authorizeEverythingSearch(job);
       const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal);
+      await this.authorizeEverythingSearch(job);
       job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
       const seen=new Set<string>();
       for(const candidate of result.paths){
+        if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
         if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
         // Do not expose engine counts or unchecked paths, even on malformed replies.
         if(!inside(job.root,candidate)||!inside(this.workspace,candidate))continue;
@@ -316,7 +354,12 @@ export class FileAdapter {
         await this.inspectSearchEntry(job,safe.absolute,safe.stat);
       }
       job.truncated ||= result.truncated;
-    }catch(e){if(!job.stopped||e instanceof RuntimeError&&e.code==='EVERYTHING_TERMINATION_UNCERTAIN')job.error=e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE';}
+      await this.authorizeEverythingSearch(job);
+    }catch(e){
+      if(e instanceof RuntimeError&&e.code==='EVERYTHING_TERMINATION_UNCERTAIN')job.error=e.code;
+      else if(!job.stopped)job.error=job.error??(e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE');
+      if(job.error==='PROVIDER_DISABLED'||job.error==='DENIED'){job.matches=[];job.bytes=0;}
+    }
     finally{this.finishSearch(job);}
   }
 
@@ -411,16 +454,26 @@ export class FileAdapter {
 
   private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     const job = this.searchFor(args.search_id as string, context);
+    if(job.provider==='everything') {
+      await this.authorize('hostdeck_search_results',args);
+      await this.authorizeEverythingSearch(job);
+    }
     const offset = args.offset as number; const limit = args.limit as number;
     // Sorted snapshots are published only when sealed, so page offsets cannot shift.
     const matches=job.sort&&!job.done?[]:job.matches;
     const items:SearchMatch[]=[];
     for(const match of matches.slice(offset,offset+limit))try{await this.guardPath(match.path);items.push(match);}catch{/* Changed targets never become extra read authority. */}
+    if(job.provider==='everything')await this.authorizeEverythingSearch(job);
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
     return { search_id: job.id,provider:job.provider,...(job.provenance?{provenance:job.provenance}:{}), items, offset, total_results:matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':job.stopped ? 'stopped' : job.error ? 'failed' : job.truncated?'partial':'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit,matches.length),snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS };
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     const job = this.searchFor(args.search_id as string, context);
+    if(job.provider==='everything') {
+      await this.authorize('hostdeck_stop_search',args);
+      await this.authorizeEverythingSearch(job);
+    }
     if (job.done) return { search_id: job.id, stopped: false, complete: true };
     job.stopped = true; job.abort.abort(); job.touchedAt = Date.now();
     return { search_id: job.id, stopped: true, complete: false };

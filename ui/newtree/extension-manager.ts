@@ -61,7 +61,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   liveStatus.setAttribute('aria-live', 'polite');
   const deviceReadiness = add(host, 'p', 'HostDeck device readiness: not verified. Provider readiness is separate.', 'manager-note');
   deviceReadiness.setAttribute('role', 'status');
-  add(host, 'p', 'Lifecycle actions are not exposed by the current HostDeck provider API. Install, enable, start, stop, configure, update, repair and rollback are unavailable here.', 'manager-note');
+  add(host, 'p', 'The Everything integration can be enabled or disabled for this owner and device. Vendor software install, start, stop, configure, update, repair and rollback are unavailable here.', 'manager-note');
 
   const nav = add(host, 'div', undefined, 'manager-tabs');
   nav.setAttribute('role', 'group'); nav.setAttribute('aria-label', 'Manager sections');
@@ -148,6 +148,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   let lastChange: { capability: string; preference: string | null; outcome: string; readback: string } | null = null;
   let requestedSerial = 0;
   let snapshotDevice = '';
+  let enableFeedback = 'No integration change attempted.';
 
   function switchTab(target: 'library' | 'functions' | 'changes'): void {
     tab = target;
@@ -175,22 +176,89 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     fieldValue(dl, 'Candidate domain (not confirmed)', entry.candidate.capabilityHints.join(', ') || 'Not mapped');
     fieldValue(dl, 'Selected for', entry.activeFunctions.join(', ') || (entry.live ? 'No function' : 'No live provider'));
     const axes = [
-      ['Installed', entry.states.installed], ['Enabled', entry.states.enabled],
+      ['Installed', entry.states.installed], ['Integration enabled', entry.states.enabled],
       ['Running', entry.states.running], ['On demand', entry.states.onDemand],
       ['Compatible', entry.states.compatible], ['Healthy', entry.states.healthy],
       ['Selected', entry.states.selected], ['Qualification', entry.states.qualified],
     ];
     for (const [label, value] of axes) fieldValue(dl, label, stateLabel(value));
+    fieldValue(dl, 'Integration configured', entry.live?.configured === true ? 'Yes' : entry.live?.configured === false ? 'No' : 'Unknown');
     fieldValue(dl, 'Probe reason / limit', entry.reason || 'No reason returned');
     fieldValue(dl, 'Instance', typeof entry.live?.instance === 'string' ? entry.live.instance : 'Unknown');
     fieldValue(dl, 'Session', typeof entry.live?.session_id === 'number' ? String(entry.live.session_id) : 'Unknown');
     add(detail, 'h4', 'Lifecycle actions');
-    add(detail, 'p', 'Not supported: there is no install, enable, start, stop, configure, update, repair or rollback tool in the current provider API. Catalogue entries do not authorize effects.');
+    add(detail, 'p', 'Vendor software install, start, stop, configure, update, repair and rollback are unavailable. Catalogue entries do not authorize effects.');
+    if(entry.providerId==='everything')renderEnablement(entry);
+    if(entry.providerId==='direct')add(detail,'p','Built-in direct integration is always enabled and cannot be disabled.');
     if (entry.live && entry.providerId) button(detail, 'Manage supported preference', () => {
       switchTab('functions');
       functions.querySelector<HTMLSelectElement>('#provider-function')?.focus();
     });
     if (focus) heading.focus();
+  }
+  function renderEnablement(entry:ManagerEntry):void {
+    add(detail,'h4','HostDeck integration');
+    add(detail,'p','This owner/device/executor setting controls Everything searches. It preserves saved preferences and does not install, start, stop or qualify Everything. Disabled selections fail without fallback.');
+    const live=entry.live;
+    if(typeof live?.desiredEnabled!=='boolean'||!(live.enabledOverride===null||typeof live.enabledOverride==='boolean')) {
+      add(detail,'p','Logical integration state unavailable; refresh before editing.');return;
+    }
+    const prior=live.enabledOverride;
+    const choice=field(detail,'Desired integration enablement','provider-enabled',[
+      ['','Automatic · enabled by default'],['true','Enabled'],['false','Disabled'],
+    ]);
+    choice.value=prior===null?'':String(prior);
+    const apply=button(detail,'Apply integration setting',()=>{void save();});
+    apply.id='provider-enabled-apply';
+    const feedback=add(detail,'p',enableFeedback);feedback.id='provider-enabled-feedback';
+    feedback.setAttribute('role','status');feedback.setAttribute('aria-live','polite');
+    const selected=():boolean|null=>choice.value===''?null:choice.value==='true';
+    const update=()=>{apply.disabled=busy||saving||selected()===prior;choice.disabled=saving;};
+    choice.addEventListener('change',update);update();
+    async function save():Promise<void> {
+      if(busy||saving||!current())return;
+      const desired=selected(),target=connection.deviceId(),serial=requestedSerial;
+      if(desired===prior)return;
+      if(!snapshotDevice||target!==snapshotDevice) {
+        enableFeedback=feedback.textContent='Device changed since inspection. Refresh live providers first; no write sent.';return;
+      }
+      saving=true;refreshButton.disabled=true;update();
+      const valid=()=>current()&&connection.deviceId()===target&&requestedSerial===serial;
+      const message=(value:string)=>{enableFeedback=value;if(current())feedback.textContent=value;};
+      lastChange={capability:'Everything integration',preference:desired===null?'Automatic (enabled)':desired?'Enabled':'Disabled',outcome:'Preflight',
+        readback:'Not yet verified. Current state is checked before and after saving. A concurrent change may still cause a mismatch; refresh to reconcile.'};
+      try {
+        message('Checking latest integration setting before any change…');
+        const before=assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+        if(!valid())throw new Error('Device or context changed; no write attempted.');
+        const fresh=before.providers.find(item=>item.id==='everything');
+        if(!fresh||fresh.enabledOverride!==prior||fresh.desiredEnabled!==live!.desiredEnabled) {
+          snapshot=before;entries=mergeManagerCatalog(before);lastChange.outcome='Conflict before write';
+          message('Integration setting changed externally: no write issued. Inspect current state.');return;
+        }
+        message('Applying scoped integration setting…');
+        const receipt=await endpoint('hostdeck_set_provider_enabled',{provider:'everything',enabled:desired});
+        if(!valid())throw new Error('Device or context changed after write; outcome uncertain. Refresh to reconcile.');
+        if(receipt?.updated!==true||receipt.provider!=='everything'||receipt.enabledOverride!==desired||receipt.desiredEnabled!==(desired??true))
+          throw new Error('Write confirmation missing; outcome uncertain. Refresh before retrying.');
+        const after=assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+        if(!valid())throw new Error('Device or context changed before readback; outcome uncertain.');
+        snapshot=after;entries=mergeManagerCatalog(after);
+        const checked=after.providers.find(item=>item.id==='everything');
+        if(checked?.enabledOverride!==desired||checked.desiredEnabled!==(desired??true)) {
+          lastChange.outcome='Conflict / readback mismatch';message('Server receipt and current integration setting disagree; do not automatically retry.');
+        } else {
+          lastChange.outcome='Readback confirmed';lastChange.readback='The saved setting matches the current device readback. Vendor running and health states are separate.';
+          message('Integration setting verified on readback. Vendor running and health states remain separate.');
+        }
+      } catch(error) {
+        lastChange.outcome='Uncertain / failed';
+        message((error instanceof Error?error.message.slice(0,180):'Request failed.')+' Refresh to reconcile; do not blindly retry.');
+      } finally {
+        saving=false;refreshButton.disabled=false;
+        if(current()){renderList();if(tab==='functions')renderFunctions();}
+      }
+    }
   }
   function renderList(): void {
     if (!current()) return;
@@ -238,7 +306,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     if (lastChange) {
       add(changes, 'p', lastChange.capability + ' → ' + (lastChange.preference ?? 'Automatic') + ' · ' + lastChange.outcome);
       add(changes, 'p', lastChange.readback);
-    } else add(changes, 'p', 'No preference change attempted during this page session.');
+    } else add(changes, 'p', 'No provider setting change attempted during this page session.');
     add(changes, 'p', 'No durable lifecycle receipt/change-log API exists here. Closing this panel clears the local display; it neither replays nor reverts saved preferences.');
   }
   function renderFunctions(): void {
