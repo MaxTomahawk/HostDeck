@@ -8,32 +8,37 @@ Provider ID: `local.sqlite-fts5.document-content.v1`.
 
 `FullTextAdapter` is now an additive, dormant-by-default MCP facade source
 implementation. It does **not** modify Everything, the normal files contract,
-manager/UI rendering, grants, installer or automatic indexing. No real owner
-location has been approved or indexed. No
+manager/UI rendering, grants, installer or automatic indexing. No protected
+personal-corpus selection/digest approval has been provisioned or indexed. No
 automatic watcher, auto-index, semantic model, cloud API, download or GPU route
 exists. Calling `FullTextEngine.preview()` only inspects explicitly supplied
 configuration and hardware limits; it does not create or scan an index.
 
-No owner-selected root has been supplied. Do not substitute the current
-workspace, home directory, first available drive or Everything's file index.
+The owner requests broad local coverage. Represent that with exact selected
+fixed-volume roots, exclusions and visible limits in the protected proposal;
+do not silently narrow it to a few profile folders or the first drive.
+Everything's filename index is not a document-content index.
 
-## Exact minimal integration (coordinating Codex)
+## Remaining setup and activation (coordinating Codex)
 
 1. Add a **separately admin/SYSTEM-writable owner config/approval directory**
    and a distinct ordinary-user-writable SQLite index directory. Do **not**
    reuse the current ordinary executor `state_directory` as approval storage.
-   The owner selection contains `roots: []` until
-   chosen, allowed formats, `includeHidden: false`, and explicit budgets.
+   The selection records exact roots, allowed formats, the chosen Hidden
+   policy and explicit hardware-adapted budgets. A separately protected
+   approval file containing JSON `null` means no approval; its physical
+   existence can permit preview without inventing consent.
    Display `FullTextPort.preview(principal)` **before** providing an owner
    confirmation proof bound to its `digest`. Re-preview after every diff.
-2. Instantiate `FullTextPort` only if a compatible, qualified Node 24
-   SQLite FTS5 runtime is installed and the capability has been selected.
-   Connect `loadSelectedConfig` to protected config, `isOwnerConfirmed` to
+2. The adapter/port objects are constructed without creating an index.
+   A compatible Node 24 SQLite FTS5 runtime and selected capability are
+   required before opening the engine. `loadSelectedConfig` uses protected
+   config, `isOwnerConfirmed` uses
    a trusted approval record, and `authorize` to fresh PolicyGate identity,
    device/executor and root/file ACL checks. A caller's boolean or guessed
    digest **is not** an approval. Avoid new grants during this patch.
-3. Only after adding genuine separate policy scopes, expose additive,
-   explicitly scoped facade operations. Suggested independent operations:
+3. Source contracts now contain separate read/index scopes and additive
+   facade operations. These are not production grants. The operations are:
    `fulltext_preview` (no effects), `fulltext_confirm` (owner-selected
    state file), `fulltext_start`, `fulltext_step`, `fulltext_pause`,
    `fulltext_resume`, `fulltext_cancel`, `fulltext_query` and
@@ -63,6 +68,18 @@ workspace, home directory, first available drive or Everything's file index.
    `running`, `resource_paused`, `paused`, `interrupted`, `cancelled`,
    `complete-bounded` and `partial`, plus format-by-format gaps. This
    module does not modify the UI.
+
+The trusted agent configuration accepts optional `desktop_worker_sha256`,
+`fulltext_owner_directory` and `fulltext_index_directory`. The SHA must come
+from the approved installer/package, not a requester or sampling an untrusted
+live file. Owner records and writable index must be outside the workspace and
+in disjoint trees; actual native checks remain mandatory. Without these setup
+proofs, selected roots, protected digest approval and current scopes, no
+personal index is activated. The ordinary state directory's Modify rights
+alone do not satisfy the current index verifier: the dedicated index directory
+also needs effective `FILE_DELETE_CHILD`. Provision only the dedicated data
+directory with the needed rights, rather than changing the existing state or
+protected-owner ACLs. Each step remains explicit; there is no background scan.
 
 ## Format/semantic qualifications and explicit exclusions
 

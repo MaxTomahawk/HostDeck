@@ -28,6 +28,7 @@ import {PrivilegeAdapter} from './privilege.js';
 import {ProviderRegistry} from './providers.js';
 import {EverythingClient} from './everything.js';
 import {FullTextAdapter} from './fulltext/adapter.js';
+import {FullTextNativeBridge} from './fulltext-native-bridge.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -35,7 +36,15 @@ const https=z.string().url().refine(value=>new URL(value).protocol==='https:'&&!
 const scopes=z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage','fulltext:read','fulltext:index'])).max(13);
 const configuration=z.object({
   version:z.literal(1),device_id:identifier,executor_id:identifier,expected_user_sid:z.string().regex(/^S-1-5-[0-9-]+$/),
-  workspace:absolute,state_directory:absolute,desktop_worker:absolute,browser_executable:absolute.optional(),grants_file:absolute,
+  workspace:absolute,state_directory:absolute,desktop_worker:absolute,
+  // Installer-pinned local binary hash; NEVER derive this trust pin from an
+  // MCP request, a caller filename or the live executable being verified.
+  desktop_worker_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+  // Protected owner records are separate from the user-writable index. Only
+  // trusted local installation configuration may select this directory.
+  fulltext_owner_directory:absolute.optional(),
+  fulltext_index_directory:absolute.optional(),
+  browser_executable:absolute.optional(),grants_file:absolute,
   installed:z.boolean().default(false),enrollment_file:absolute.optional(),
   everything:z.object({executable:absolute,sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),version:z.string().regex(/^1\.[45]\.\d+\.\d+b?$/),instance:z.string().regex(/^[A-Za-z0-9_. -]{0,64}$/)}).strict().optional(),
   privilege_broker:z.object({enabled:z.boolean(),allow_remote:z.boolean().default(false),powershell_executable:absolute,
@@ -141,7 +150,26 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const files=await FileAdapter.create({workspace,reauthorize,providers,everything});
   // Always dormant unless an independently approved protected local selection
   // exists AND both fresh principal/grant scopes permit the requested call.
-  const fulltext=new FullTextAdapter({stateDirectory:config.state_directory,workspace,reauthorize});
+  // Merely constructing the bridge reads nothing, starts no helper and
+  // activates no index. Without an installer pin or effective protected ACL
+  // proof the fulltext provider remains dormant and fail-closed.
+  const fulltextNative=config.installed&&config.desktop_worker_sha256
+    ? new FullTextNativeBridge({
+        workerExecutable:config.desktop_worker,
+        workerSha256:config.desktop_worker_sha256,
+        expectedExecutor:{
+          sid:identity.sid,logonId:identity.logon_id,sessionId:identity.session_id,
+        },
+      })
+    : undefined;
+  const fulltext=new FullTextAdapter({
+    stateDirectory:config.fulltext_index_directory??config.state_directory,workspace,reauthorize,
+    protectedOwnerDirectory:config.fulltext_owner_directory,
+    nativeAttributes:fulltextNative,
+    verifyProtectedOwnerAcl:fulltextNative
+      ? paths=>fulltextNative.verifyProtectedOwnerAcl(paths)
+      : undefined,
+  });
   const documents=await DocumentAdapter.create({workspace,browserExecutable:config.browser_executable});
   const desktop=await DesktopAdapter.create({executable:config.desktop_worker,expectedSid:config.expected_user_sid,identity,
     reauthorize,storeArtifact:(context,bytes,name,mime)=>state.storeArtifact(context,Buffer.from(bytes),name,mime),
@@ -235,7 +263,8 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
     await diagnosticTask;
     await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
-    fulltext.close();await state.close();audit.close();
+    try{fulltext.close();}finally{await fulltextNative?.close();}
+    await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}
   };
   if(transport==='http'){

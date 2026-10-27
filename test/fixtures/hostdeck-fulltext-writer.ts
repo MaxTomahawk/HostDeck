@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fulltext-test-native-attributes.js';
 /** Disposable two-process HostDeck fulltext writer test helper. Not production. */
 import {readFile} from 'node:fs/promises';
 import {FullTextEngine} from '../../src/hostdeck/fulltext/engine.js';
@@ -14,7 +15,7 @@ async function main():Promise<void> {
   const preview=await FullTextEngine.preview(config,principal,authorize);
   let engine:FullTextEngine|undefined;
   try {
-    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes);
     let state=(await engine.status(principal)).state;
     if (mode==='hold') {
       if (state==='unstarted') {
