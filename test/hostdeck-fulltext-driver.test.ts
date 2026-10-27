@@ -219,3 +219,25 @@ test('detached continuation preserves request context and rechecks policy per st
     assert.ok(visited>14,'driver did not reauthorize its individual steps and source paths');
   }finally{await port.close();await rm(own.root,{recursive:true,force:true});}
 });
+
+test('injected zero-progress running receipt interrupts rather than spinning',async()=>{
+  const own=await fixtures(2);
+  const port=provider(own.config);
+  try{
+    await confirmed(port);
+    const engine=(port as unknown as {engine:{step:(c:FullTextPrincipal,id:string,max?:number)=>Promise<FullTextScanReceipt>}}).engine;
+    let calls=0;
+    engine.step=async(_c,id)=>{
+      calls++;
+      return {state:'running',runId:id,processedThisStep:0,indexedThisStep:0,
+        changedThisStep:0,renamedThisStep:0,skippedThisStep:0,
+        removedAtCompletion:0,coverage:'partial'};
+    };
+    await port.startDriven(owner);
+    const failed=await state(port,'interrupted');
+    assert.equal(failed.driver.lastCode,'FULLTEXT_DRIVER_NO_PROGRESS');
+    assert.equal(calls,1,'zero-progress receipt must not schedule another step');
+    await new Promise(resolve=>setTimeout(resolve,60));
+    assert.equal(calls,1,'zero-progress driver restarted without explicit resume');
+  }finally{await port.close();await rm(own.root,{recursive:true,force:true});}
+});
