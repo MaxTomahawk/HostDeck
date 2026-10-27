@@ -77,7 +77,7 @@ export function resolveBudgets(config: FullTextConfig): FullTextBudgets {
   return b;
 }
 
-export function normalizeConfig(config: FullTextConfig): { roots: string[]; indexFile: string; formats: FullTextFormat[]; budgets: FullTextBudgets; includeHidden: boolean; digest: string } {
+export function normalizeConfig(config: FullTextConfig): { roots: string[]; indexFile: string; formats: FullTextFormat[]; budgets: FullTextBudgets; includeHidden: boolean; excludedRoots: string[]; fixedVolumeRoots: string[]; digest: string } {
   if (!config || !Array.isArray(config.roots) || !Array.isArray(config.formats)) throw new Error('FULLTEXT_CONFIG_REQUIRED');
   if (config.roots.length > 128 || (config.excludedRoots??[]).length > 256 || (config.fixedVolumeRoots??[]).length > 8 || config.formats.length > ALL_FORMATS.length) throw new Error('FULLTEXT_CONFIG_LIMIT');
   const roots = config.roots.map(root => absolutePath(root, 'ROOT')).sort();
