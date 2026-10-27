@@ -106,7 +106,8 @@ export class ReadRootSelectionStore {
     private readonly nativeAcl?: NativeReadRootAclProbe,
   ) {
     if (!path.isAbsolute(protectedDirectory) || !path.isAbsolute(workspace) ||
-        contains(path.resolve(workspace), path.resolve(protectedDirectory))) {
+        contains(path.resolve(workspace), path.resolve(protectedDirectory)) ||
+        contains(path.resolve(protectedDirectory), path.resolve(workspace))) {
       denied('READ_ROOT_PROTECTED_DIRECTORY_INVALID');
     }
     this.selectionFile = path.join(protectedDirectory, 'read-roots-selection.json');
