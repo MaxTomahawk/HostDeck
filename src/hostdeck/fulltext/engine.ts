@@ -200,8 +200,20 @@ export class FullTextEngine {
       return paths.map(()=>true); // non-Windows fixture engine only
     }
     const included:boolean[]=[];
-    for(let offset=0;offset<paths.length;offset+=64){
-      const batch=paths.slice(offset,offset+64);
+    let offset=0;
+    while(offset<paths.length){
+      const batch:string[]=[];
+      let characters=0;
+      // PR22 limits: <=64 paths and <=32768 combined UTF-16 characters.
+      // Choose the largest bounded batch; never silently replace the native
+      // provider with a per-file attrib.exe process.
+      while(offset<paths.length&&batch.length<64&&
+          characters+paths[offset].length<=32768){
+        batch.push(paths[offset]);
+        characters+=paths[offset].length;
+        offset++;
+      }
+      if(!batch.length)throw new Error('FULLTEXT_NATIVE_BATCH_LIMIT');
       const rows=await this.attributes(batch,c,root,action);
       included.push(...qualifiedBatch(batch,rows,root,this.config.includeHidden,this.config.fixedVolumeRoots));
     }
