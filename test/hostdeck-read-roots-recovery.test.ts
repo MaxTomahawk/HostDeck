@@ -49,9 +49,9 @@ async function fixture(){
         system_component:nativeAttribute==='system',directory:null,
       }));
     },
-    directoryPage:async(target:string, expected:bigint, offset:number,limit:number,_authorize:unknown)=>{
+    directoryPage:async(target:string, expectedDev:bigint, expected:bigint, offset:number,limit:number,_authorize:unknown)=>{
       const stat=await fs.stat(target,{bigint:true});
-      if(forceHandleMismatch||stat.ino!==expected)throw Error('FULLTEXT_NATIVE_DIRECTORY_CHANGED');
+      if(forceHandleMismatch||stat.ino!==expected||stat.dev!==expectedDev)throw Error('FULLTEXT_NATIVE_DIRECTORY_CHANGED');
       const names=(await fs.readdir(target)).slice(offset,offset+limit);
       const size=(await fs.readdir(target)).length;
       return {names,more:offset+names.length<size,nextOffset:offset+names.length};
