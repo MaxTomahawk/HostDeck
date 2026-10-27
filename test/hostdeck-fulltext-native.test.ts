@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { existsSync, createReadStream } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -32,6 +32,19 @@ async function sha(file: string): Promise<string> {
   for await (const data of createReadStream(file)) h.update(data);
   return h.digest('hex');
 }
+async function observedExisting(file: string): Promise<Awaited<ReturnType<typeof stat>> | null> {
+  try { return await stat(file); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    // Do not surface an access-denied path from the operating system.
+    throw new Error('FULLTEXT_NATIVE_PROTECTED_FIXTURE_METADATA_UNAVAILABLE');
+  }
+}
+function expectedComponentCount(file: string): number {
+  const root = path.win32.parse(file).root;
+  return 1 + file.slice(root.length).split(/[\/\\]+/).filter(Boolean).length;
+}
+
 async function bridge(id: FullTextNativeIdentity): Promise<FullTextNativeBridge> {
   const instance = new FullTextNativeBridge({
     workerExecutable: fixtureWorker, workerSha256: await sha(fixtureWorker),
@@ -222,10 +235,16 @@ test('existing protected config is physical-ACL-positive while a user-writable f
     (process.env.ProgramFiles
       ? path.win32.join(process.env.ProgramFiles, 'HostDeck', 'config', 'facade.json')
       : undefined);
-  if (!target || !existsSync(target)) {
-    t.skip('Existing protected configuration object unavailable; real positive NOT_RUN');
+  if (!target) {
+    t.skip('Existing protected configuration object not configured; real positive NOT_RUN');
     return;
   }
+  const preexisting = await observedExisting(target);
+  if (!preexisting) {
+    t.skip('Existing protected configuration object absent; real positive NOT_RUN');
+    return;
+  }
+  assert.equal(preexisting.isFile(), true, 'positive protected source must be an existing file');
   const root = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-ft-acl-contrast-'));
   let client: FullTextNativeBridge | undefined;
   try {
@@ -251,7 +270,8 @@ test('existing protected config is physical-ACL-positive while a user-writable f
       JSON.stringify(positive));
     assert.equal(positive.code, 'FULLTEXT_NATIVE_ACL_VERIFIED');
     assert.equal(positive.scope, 'physical_filesystem_snapshot_only');
-    assert.ok(positive.componentsChecked >= 3);
+    assert.equal(positive.componentsChecked, expectedComponentCount(target),
+      'positive native receipt must cover root, every ancestor and target');
     assert.ok(!JSON.stringify(positive).includes(target),
       'positive receipt must not disclose physical path or protected contents');
     // A single physical positive never establishes selection, owner consent,
@@ -274,10 +294,16 @@ test('physical owner-boundary tuple uses only pre-existing qualified records and
   const indexDirectory = process.env.HOSTDECK_TEST_FULLTEXT_INDEX_DIR!;
   const selectionFile = path.join(protectedDirectory,'fulltext-selection.json');
   const approvalFile = path.join(protectedDirectory,'fulltext-approval.json');
-  if (![protectedDirectory,selectionFile,approvalFile,indexDirectory].every(existsSync)) {
+  const objects = await Promise.all(
+    [protectedDirectory,selectionFile,approvalFile,indexDirectory].map(observedExisting));
+  if (objects.some(item => item === null)) {
     t.skip('Required pre-existing selection, approval or index missing; whole-boundary positive NOT_RUN');
     return;
   }
+  assert.equal(objects[0]!.isDirectory(),true,'protected root must be an existing directory');
+  assert.equal(objects[1]!.isFile(),true,'selection must be a pre-existing file');
+  assert.equal(objects[2]!.isFile(),true,'approval must be a pre-existing file');
+  assert.equal(objects[3]!.isDirectory(),true,'index must be a pre-existing separate directory');
   let client: FullTextNativeBridge | undefined;
   try {
     client = await bridge(await identity());
@@ -295,7 +321,8 @@ test('physical owner-boundary tuple uses only pre-existing qualified records and
         JSON.stringify(result));
       assert.equal(result.code,'FULLTEXT_NATIVE_ACL_VERIFIED');
       assert.equal(result.scope,'physical_filesystem_snapshot_only');
-      assert.ok(result.componentsChecked >= 3);
+      assert.equal(result.componentsChecked,expectedComponentCount(object),
+        'positive component proof must cover the full physical path');
       assert.ok(!JSON.stringify(result).includes(object),
         'native receipt must not expose protected physical path');
     }
