@@ -63,6 +63,20 @@ export type DocumentCoverage =
   | 'text_limit' | 'ocr_required' | 'pdf_rtl_unqualified'
   | 'unsupported_office_value' | 'extraction_failed' | 'invalid_utf8';
 
+/** Persisted truth about the qualified text layer, not full visual-document recall. */
+export type FullTextDocumentCoverage = 'qualified_text' | 'partial' | 'unqualified' | 'legacy_unverified';
+
+/** Expose only after current per-document metadata authorization. */
+export interface FullTextDocumentEvidence {
+  path: string;
+  format: FullTextFormat;
+  state: DocumentCoverage;
+  documentCoverage: FullTextDocumentCoverage;
+  /** Bounded extractor-issued reason codes, never document text. */
+  limitations: string[];
+  freshness: 'last_scan_only';
+}
+
 export interface FullTextSearchResult {
   path: string;
   format: FullTextFormat;
@@ -72,6 +86,8 @@ export interface FullTextSearchResult {
   bytes: number;
   sha256: string;
   freshness: 'last_scan_only';
+  documentCoverage: FullTextDocumentCoverage;
+  limitations: string[];
 }
 
 export interface FullTextSearchPage {
