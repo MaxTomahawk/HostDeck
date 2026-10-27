@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { constants as fsConstants } from 'node:fs';
 import { extractDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
-import {excludedByFileAttributes} from './windows-attributes.js';
+import {qualifiedBatch,selectedComponents,type FullTextAttributeProbe} from './native-attributes.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
 import { authorize, normalizeConfig, previewFullText, safeRealpath, within, isExcludedSource, qualifyFixedVolumes } from './policy.js';
 import type {
@@ -76,6 +76,7 @@ export class FullTextEngine {
     private readonly principal: Scope, private readonly check: FullTextAuthorizer,
     private readonly writer: FullTextWriterLock,
     private readonly roots: ReadonlyMap<string,FsIdentity>,
+    private readonly attributes?: FullTextAttributeProbe,
   ) {}
 
   static preview(config: FullTextConfig, principal: FullTextPrincipal, check: FullTextAuthorizer): Promise<FullTextPreview> {
@@ -87,11 +88,16 @@ export class FullTextEngine {
     principal: FullTextPrincipal,
     check: FullTextAuthorizer,
     confirmedDigest: string,
+    attributes?: FullTextAttributeProbe,
   ): Promise<FullTextEngine> {
     const c = normalizeConfig(supplied);
     const owner = validPrincipal(principal);
     if (!c.roots.length || !c.formats.length || confirmedDigest !== c.digest)
       throw new Error('FULLTEXT_SELECTION_NOT_CONFIRMED');
+    // No Windows attrib.exe or all-false fallback: no native source provider,
+    // no index or scan. Other platforms remain test-only/unqualified.
+    if (process.platform==='win32' && !attributes)
+      throw new Error('FULLTEXT_NATIVE_METADATA_REQUIRED');
     await qualifyFixedVolumes(c); // exact owner-approved FIXED volumes only
     const rootIdentities=new Map<string,FsIdentity>();
     for (const root of c.roots) {
@@ -100,6 +106,11 @@ export class FullTextEngine {
       if (actual !== root && actual.toLowerCase() !== root.toLowerCase()) throw new Error('FULLTEXT_ROOT_MOVED');
       if (!(await fs.lstat(actual)).isDirectory()) throw new Error('FULLTEXT_ROOT_NOT_DIRECTORY');
       rootIdentities.set(root,await identity(root));
+      if (attributes) {
+        const rows=await attributes([root],owner,root,'configure');
+        if (!qualifiedBatch([root],rows,root,c.includeHidden,c.fixedVolumeRoots)[0])
+          throw new Error('FULLTEXT_ROOT_ATTRIBUTES_EXCLUDED');
+      }
     }
     // The state directory must already exist and be protected by the caller's
     // installer/profile ACL. Never invent a location or mkdir in user drives.
@@ -155,7 +166,7 @@ export class FullTextEngine {
       // A prior process might have stopped midstep. Do not claim completion
       // or continue an interrupted scan without a new explicit resume.
       db.prepare("UPDATE runs SET state='interrupted',updated_at=? WHERE state IN ('running','resource_paused')").run(now());
-      return new FullTextEngine(db, c, owner, check, writer,rootIdentities);
+      return new FullTextEngine(db, c, owner, check, writer,rootIdentities,attributes);
     } catch (error) {
       try { db?.close(); }
       finally { writer.release(); }
@@ -176,12 +187,42 @@ export class FullTextEngine {
     if (!pinned || !sameIdentity(await identity(root),pinned))
       throw new Error('FULLTEXT_ROOT_IDENTITY_CHANGED');
   }
+  /** Native calls are always bounded to <=64 paths; for each path the
+   * adapter reauthorizes against fresh PolicyGate and filesystem permissions.
+   * Component flags inherited from OUTSIDE the selected root are never
+   * treated as leaf Hidden/System exclusions. Reparse is always fatal.
+   */
+  private async nativeBatch(c:FullTextPrincipal,root:string,paths:readonly string[],
+    action:Parameters<FullTextAuthorizer>[0]['action']):Promise<boolean[]> {
+    if(!paths.length)return [];
+    if(!this.attributes) {
+      if(process.platform==='win32')throw new Error('FULLTEXT_NATIVE_METADATA_REQUIRED');
+      return paths.map(()=>true); // non-Windows fixture engine only
+    }
+    const included:boolean[]=[];
+    for(let offset=0;offset<paths.length;offset+=64){
+      const batch=paths.slice(offset,offset+64);
+      const rows=await this.attributes(batch,c,root,action);
+      included.push(...qualifiedBatch(batch,rows,root,this.config.includeHidden,this.config.fixedVolumeRoots));
+    }
+    return included;
+  }
+
+  private async nativeEligible(c:FullTextPrincipal,root:string,candidate:string,
+    action:Parameters<FullTextAuthorizer>[0]['action']):Promise<boolean> {
+    const components=selectedComponents(root,candidate); // never inspect out-of-scope ancestors for exclusions
+    const states=await this.nativeBatch(c,root,components,action);
+    return states.every(Boolean);
+  }
+
   private async rootsAllowed(c: FullTextPrincipal, action: Parameters<FullTextAuthorizer>[0]['action']): Promise<void> {
     this.guard(c);
     await qualifyFixedVolumes(this.config); // never assume prior drive type after removable mount changes
     for (const root of this.config.roots) {
       await this.auth(c, action, root, root);
       await this.verifyRoot(root);
+      if(!await this.nativeEligible(c,root,root,action))
+        throw new Error('FULLTEXT_ROOT_ATTRIBUTES_EXCLUDED');
     }
   }
 
