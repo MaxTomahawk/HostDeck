@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { constants as fsConstants } from 'node:fs';
-import { extractDocument } from './extract.js';
+import { extractDocument, type ExtractedDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
 import {qualifiedBatch,selectedComponents,type FullTextAttributeProbe} from './native-attributes.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
@@ -12,6 +12,7 @@ import { authorize, normalizeConfig, previewFullText, safeRealpath, within, isEx
 import type {
   FullTextAuthorizer, FullTextConfig, FullTextPrincipal, FullTextPreview,
   FullTextScanReceipt, FullTextSearchPage, FullTextFormat,
+  FullTextDocumentCoverage, FullTextDocumentEvidence,
 } from './types.js';
 
 type Scope = { ownerId: string; deviceId: string; executorId: string; sessionId?: number };
@@ -39,6 +40,7 @@ type Task = { path: string; root: string; depth: number; kind: 'dir' | 'file'; r
 type Doc = {
   id: number; path: string; root: string; format: FullTextFormat; state: string;
   sha256: string; bytes: number; indexed_at: string; seen_scan: string;
+  coverage: string; limitations_json: string;
 };
 type Run = {
   id: string; state: string; incomplete: number; traversal_incomplete: number; processed: number;
@@ -53,6 +55,62 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 }
 function now(): string { return new Date().toISOString(); }
+
+/** Only bounded, extractor-defined codes may enter the durable index or public API. */
+const EVIDENCE_MAX_REASONS = 32;
+const REASON_CODE = /^[a-z][a-z0-9_]{0,95}$/;
+type StoredEvidence = {documentCoverage: FullTextDocumentCoverage; limitations: string[]};
+const legacyEvidence = (): StoredEvidence =>
+  ({documentCoverage:'legacy_unverified',limitations:['legacy_coverage_unverified']});
+
+function boundedReasons(source: readonly string[]): string[] {
+  const codes = new Set<string>();
+  let unknown = false;
+  for (const reason of source) {
+    if (typeof reason !== 'string' || !REASON_CODE.test(reason)) { unknown = true; continue; }
+    if (codes.size >= EVIDENCE_MAX_REASONS - 1) { unknown = true; break; }
+    codes.add(reason);
+  }
+  if (unknown) codes.add('extractor_limitations_unverified');
+  return [...codes].sort();
+}
+
+/** Original extractor evidence is authoritative; status 'indexed' by itself is not. */
+function fromExtraction(document: ExtractedDocument): StoredEvidence {
+  if (document.status !== 'indexed') {
+    return {documentCoverage:'unqualified',
+      limitations:boundedReasons([document.status,...(document.limitations??[])])};
+  }
+  if (document.format === '.docx' || document.format === '.xlsx') {
+    return {documentCoverage:'partial',
+      limitations:boundedReasons([...(document.limitations??[]),'structured_text_layer_only'])};
+  }
+  if (document.format === '.pdf') {
+    return {documentCoverage:'partial',
+      limitations:boundedReasons(['pdf_text_layer_only_ocr_unverified'])};
+  }
+  return {documentCoverage:'qualified_text',limitations:[]};
+}
+
+/** Bad/old rows are unknown, never silently promoted to complete coverage. */
+function fromStorage(row: Pick<Doc,'coverage'|'limitations_json'|'format'|'state'>): StoredEvidence {
+  const allowed = ['qualified_text','partial','unqualified','legacy_unverified'];
+  if (!allowed.includes(row.coverage) || row.coverage === 'legacy_unverified') return legacyEvidence();
+  if ((row.state === 'indexed') === (row.coverage === 'unqualified')) return legacyEvidence();
+  if (row.coverage === 'qualified_text' && !['.txt','.md','.csv','.json'].includes(row.format))
+    return legacyEvidence();
+  if (row.coverage === 'partial' && row.state !== 'indexed') return legacyEvidence();
+  try {
+    const parsed:unknown = JSON.parse(row.limitations_json);
+    if (!Array.isArray(parsed) || parsed.length > EVIDENCE_MAX_REASONS ||
+        parsed.some(item=>typeof item!=='string'||!REASON_CODE.test(item))) return legacyEvidence();
+    const limitations = [...new Set(parsed as string[])].sort();
+    if ((row.coverage === 'partial' || row.coverage === 'unqualified') && !limitations.length)
+      return legacyEvidence();
+    return {documentCoverage:row.coverage as FullTextDocumentCoverage,limitations};
+  } catch { return legacyEvidence(); }
+}
+
 function validPrincipal(c: FullTextPrincipal): Scope {
   if (!c?.ownerId || !c.deviceId || !c.executorId) throw new Error('FULLTEXT_IDENTITY_REQUIRED');
   return { ownerId: c.ownerId, deviceId: c.deviceId, executorId: c.executorId,
@@ -135,7 +193,9 @@ export class FullTextEngine {
         CREATE TABLE IF NOT EXISTS docs (
           id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, root TEXT NOT NULL,
           format TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL,
-          bytes INTEGER NOT NULL, indexed_at TEXT NOT NULL, seen_scan TEXT NOT NULL
+          bytes INTEGER NOT NULL, indexed_at TEXT NOT NULL, seen_scan TEXT NOT NULL,
+          coverage TEXT NOT NULL DEFAULT 'legacy_unverified',
+          limitations_json TEXT NOT NULL DEFAULT '["legacy_coverage_unverified"]'
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
           body, grams, tokenize='unicode61 remove_diacritics 2'
@@ -151,6 +211,13 @@ export class FullTextEngine {
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
       `);
+      // Preserve old indexed text, but never infer Office coverage from the
+      // old single 'indexed' flag. Legacy evidence is unknown until rescanned.
+      const docColumns=db.prepare('PRAGMA table_info(docs)').all() as Array<{name:string}>;
+      if (!docColumns.some(column=>column.name==='coverage'))
+        db.exec("ALTER TABLE docs ADD COLUMN coverage TEXT NOT NULL DEFAULT 'legacy_unverified'");
+      if (!docColumns.some(column=>column.name==='limitations_json'))
+        db.exec(`ALTER TABLE docs ADD COLUMN limitations_json TEXT NOT NULL DEFAULT '["legacy_coverage_unverified"]'`);
       // Existing indices predate the content-vs-traversal split. Legacy
       // incomplete runs cannot prove that traversal finished: fail closed.
       // Fresh scans explicitly initialize both flags to zero below.
@@ -421,6 +488,8 @@ export class FullTextEngine {
       throw new Error('FULLTEXT_SOURCE_CHANGED');
     if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
     if (!document.sha256) this.markContentPartial(task.run_id);
+    const evidence=fromExtraction(document);
+    const limitationsJson=JSON.stringify(evidence.limitations);
     const old = previous?.sha256 === document.sha256 && previous?.state === document.status;
     const stamp = now();
     let movedId: number|undefined;
@@ -440,14 +509,17 @@ export class FullTextEngine {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (movedId !== undefined)
-        this.db.prepare('UPDATE docs SET path=?,state=?,sha256=?,bytes=?,indexed_at=?,seen_scan=? WHERE id=?')
-          .run(file,document.status,document.sha256,document.bytes,stamp,task.run_id,movedId);
+        this.db.prepare('UPDATE docs SET path=?,state=?,sha256=?,bytes=?,indexed_at=?,seen_scan=?,coverage=?,limitations_json=? WHERE id=?')
+          .run(file,document.status,document.sha256,document.bytes,stamp,task.run_id,
+            evidence.documentCoverage,limitationsJson,movedId);
       else if (previous)
-        this.db.prepare('UPDATE docs SET state=?,sha256=?,bytes=?,indexed_at=?,seen_scan=? WHERE id=?')
-          .run(document.status,document.sha256,document.bytes,stamp,task.run_id,previous.id);
+        this.db.prepare('UPDATE docs SET state=?,sha256=?,bytes=?,indexed_at=?,seen_scan=?,coverage=?,limitations_json=? WHERE id=?')
+          .run(document.status,document.sha256,document.bytes,stamp,task.run_id,
+            evidence.documentCoverage,limitationsJson,previous.id);
       else
-        this.db.prepare('INSERT INTO docs(path,root,format,state,sha256,bytes,indexed_at,seen_scan) VALUES(?,?,?,?,?,?,?,?)')
-          .run(file,task.root,format,document.status,document.sha256,document.bytes,stamp,task.run_id);
+        this.db.prepare('INSERT INTO docs(path,root,format,state,sha256,bytes,indexed_at,seen_scan,coverage,limitations_json) VALUES(?,?,?,?,?,?,?,?,?,?)')
+          .run(file,task.root,format,document.status,document.sha256,document.bytes,stamp,task.run_id,
+            evidence.documentCoverage,limitationsJson);
       const id = movedId ?? previous?.id ??
         Number((this.db.prepare('SELECT id FROM docs WHERE path=?').get(file) as {id:number}).id);
       // Remove indexed text when source changes, becomes unqualified or denied.
@@ -572,12 +644,12 @@ export class FullTextEngine {
       throw new Error('FULLTEXT_QUERY_LIMIT');
     const parsed = parseFullTextQuery(query);
     const candidates = this.db.prepare(`
-      SELECT d.id,d.path,d.root,d.format,d.sha256,d.bytes,d.indexed_at,bm25(docs_fts,1.0,0.6) score
+      SELECT d.id,d.path,d.root,d.format,d.sha256,d.bytes,d.indexed_at,d.state,d.coverage,d.limitations_json,bm25(docs_fts,1.0,0.6) score
       FROM docs_fts JOIN docs d ON docs_fts.rowid=d.id
       WHERE docs_fts MATCH ? AND d.state='indexed'
       ORDER BY score ASC,d.path ASC LIMIT ?
     `).all(parsed.ftsMatch,this.config.budgets.maxQueryCandidates) as
-      Array<{id:number;path:string;root:string;format:FullTextFormat;sha256:string;bytes:number;indexed_at:string;score:number}>;
+      Array<Doc & {score:number}>;
     const results: FullTextSearchPage['results'] = [];
     let authorizationGaps = false;
     for (const row of candidates) {
@@ -593,16 +665,19 @@ export class FullTextEngine {
       } catch { authorizationGaps=true; continue; }
       const body = this.db.prepare('SELECT body FROM docs_fts WHERE rowid=?').get(row.id) as {body:string}|undefined;
       if (!body || !satisfiesHanSubstrings(body.body,parsed.hanRuns)) continue;
+      const evidence=fromStorage(row);
       results.push({
         path:row.path, format:row.format, score:row.score, snippet:makeSnippet(body.body,query),
         sha256:row.sha256, bytes:row.bytes, indexedAt:row.indexed_at,
         freshness:'last_scan_only',
+        documentCoverage:evidence.documentCoverage,limitations:evidence.limitations,
       });
     }
     const current = this.active();
+    const unknownHistory=this.db.prepare("SELECT 1 FROM docs WHERE coverage='legacy_unverified' LIMIT 1").get()!==undefined;
     return {
       results, truncated: authorizationGaps || candidates.length >= this.config.budgets.maxQueryCandidates || results.length >= limit,
-      coverage: current?.state === 'complete' && current.incomplete===0 && !authorizationGaps
+      coverage: current?.state === 'complete' && current.incomplete===0 && !authorizationGaps && !unknownHistory
         ? 'complete_bounded_scan' : 'partial_or_unverified',
       actualFreshness:'not_monitored',
       querySemantics:parsed.normalization,
@@ -614,14 +689,16 @@ export class FullTextEngine {
     visibleDocuments: number; visibleCountTruncated: boolean;
     actualFreshness: 'not_monitored'; configuredRoots: number;
     visibleFormatCoverage: Array<{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>;
+    visibleDocumentCoverage: FullTextDocumentEvidence[];
     resource: {indexBytes:number;freeDiskMiB:number|null;freeMemoryMiB:number;
       processRssMiB:number;gpuUsed:false;cpuPressure:'not_measured'};
   }> {
     await this.rootsAllowed(c,'status');
     const run = this.active();
-    const rows = this.db.prepare('SELECT path,root,state FROM docs ORDER BY path LIMIT ?')
-      .all(this.config.budgets.maxQueryCandidates + 1) as Array<{path:string;root:string;state:string}>;
+    const rows = this.db.prepare('SELECT path,root,format,state,coverage,limitations_json FROM docs ORDER BY path LIMIT ?')
+      .all(this.config.budgets.maxQueryCandidates + 1) as Doc[];
     let visible = 0, hiddenByAcl = false;
+    const visibleDocumentCoverage:FullTextDocumentEvidence[]=[];
     const coverage=new Map<FullTextFormat,{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>(
       this.config.formats.map(format=>[format,{format,indexed:0,unqualified:0,reasons:{}}])
     );
@@ -630,30 +707,31 @@ export class FullTextEngine {
       try {
         await this.auth(c,'metadata',row.root,row.path);
         if(!await this.nativeEligible(c,row.root,row.path,'metadata'))throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
-        const format=path.extname(row.path).toLowerCase() as FullTextFormat;
+        const format=row.format;
+        const evidence=fromStorage(row);
+        visibleDocumentCoverage.push({path:row.path,format,state:row.state as FullTextDocumentEvidence['state'],
+          documentCoverage:evidence.documentCoverage,limitations:evidence.limitations,
+          freshness:'last_scan_only'});
         const entry=coverage.get(format);
-        if (row.state==='indexed') {
+        if(row.state==='indexed') {
           visible++;
-          if(entry) {
-            entry.indexed++;
-            if (['.docx','.xlsx','.pdf'].includes(format))
-              entry.reasons['structured_text_layer_only']=(entry.reasons['structured_text_layer_only']??0)+1;
-          }
-        } else if (entry) {
-          entry.unqualified++;
-          entry.reasons[row.state]=(entry.reasons[row.state]??0)+1;
-        }
+          if(entry) entry.indexed++;
+        } else if(entry) entry.unqualified++;
+        if(entry) for(const reason of evidence.limitations)
+          entry.reasons[reason]=(entry.reasons[reason]??0)+1;
       }
       catch { hiddenByAcl = true; /* Never count inaccessible documents. */ }
     }
     const resource=await this.resourceSample();
+    const unknownHistory=this.db.prepare("SELECT 1 FROM docs WHERE coverage='legacy_unverified' LIMIT 1").get()!==undefined;
     return {
       state:run?.state??'unstarted',
-      coverage:run?.state==='complete' && run.incomplete===0 && !hiddenByAcl && rows.length <= this.config.budgets.maxQueryCandidates
+      coverage:run?.state==='complete' && run.incomplete===0 && !hiddenByAcl && !unknownHistory && rows.length <= this.config.budgets.maxQueryCandidates
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
       visibleFormatCoverage:[...coverage.values()],
+      visibleDocumentCoverage,
       resource:{indexBytes:resource.indexBytes,
         freeDiskMiB:resource.freeDiskBytes===null?null:Math.floor(resource.freeDiskBytes/(1024*1024)),
         freeMemoryMiB:Math.floor(resource.freeMemoryBytes/(1024*1024)),
