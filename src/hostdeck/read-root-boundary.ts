@@ -1,6 +1,6 @@
 /**
- * Source-only boundary for a future explicitly owner-selected READ/SEARCH root
- * set. NOT wired into main.ts or installed/runtime configuration by this PR.
+ * Existing PR30 lexical and reparse preflight for explicitly configured,
+ * owner-scoped READ/SEARCH roots (never caller-selected or writable).
  *
  * The selection parameter must be supplied by a separately qualified,
  * protected, owner-bound local reader, NEVER from MCP arguments, a search hit,
@@ -66,6 +66,32 @@ const safeRoot = async (input: string): Promise<string> => {
   try { return await safeRealpath(input); }
   catch { return denied(); }
 };
+/**
+ * Exclusions remain binding even when their terminal object is not present.
+ * Canonicalize the nearest existing ancestor, append the absent suffix, and
+ * refuse unsafe/reparse ancestors. A missing excluded directory is not a
+ * reason to reject unrelated reads or to drop that exclusion.
+ */
+async function protectedExclusion(input: string): Promise<string> {
+  if (typeof input !== 'string' || !path.isAbsolute(input) ||
+      input.length > 4096 || /[\u0000-\u001f]/.test(input)) denied();
+  const missing: string[] = [];
+  let cursor = path.resolve(input);
+  while (true) {
+    try {
+      await (await import('node:fs/promises')).lstat(cursor);
+      const parent = await safeRoot(cursor);
+      return path.join(parent, ...missing.reverse());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') denied();
+      const previous = path.dirname(cursor);
+      if (previous === cursor) return path.resolve(input);
+      missing.push(path.basename(cursor));
+      cursor = previous;
+    }
+  }
+}
+
 const equals = (a: string, b: string): boolean =>
   process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 const sameOwner = (a: ReadRootOwner, b: ReadRootOwner): boolean =>
@@ -145,7 +171,7 @@ export async function resolveSelectedReadPath(
        'credentials','vault'].includes(part))) denied();
   }
   for (const raw of [...selection.excludedRoots, ...protectedPaths]) {
-    const excluded = await safeRoot(raw);
+    const excluded = await protectedExclusion(raw);
     if (within(excluded, canonical)) denied();
   }
   // A caller cannot get an unsafe "../" path to retry under a write API.
