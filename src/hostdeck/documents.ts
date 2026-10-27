@@ -55,7 +55,8 @@ function validateZip(buffer: Buffer): void {
   if (cursor !== centralEnd) throw new Error('DOCUMENT_INVALID_ARCHIVE');
 }
 
-async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): Promise<Buffer> {
+/** Shared bounded ZIP/package validator; full-text reuses it before parsing Office content. */
+export async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): Promise<Buffer> {
   const stat = await fs.stat(file);
   if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   const buffer = await fs.readFile(file);
