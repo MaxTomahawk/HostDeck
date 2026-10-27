@@ -1,4 +1,5 @@
 import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtemp,mkdir,realpath,rm,writeFile} from 'node:fs/promises';
@@ -192,5 +193,29 @@ test('manual and driver steps share one serialized lane, never overlap the engin
     await state(port,'complete');
     assert.equal(peak,1,'simultaneous driver/manual engine.step was observed');
     assert.ok(calls>=2);
+  }finally{await port.close();await rm(own.root,{recursive:true,force:true});}
+});
+
+test('detached continuation preserves request context and rechecks policy per step',async()=>{
+  const own=await fixtures(14);
+  const context=new AsyncLocalStorage<{token:string}>();
+  let visited=0;
+  const policy:FullTextAuthorizer=async request=>{
+    if(context.getStore()?.token!=='approved-request')throw new Error('FULLTEXT_DENIED');
+    if(request.action==='scan'||request.action==='index')visited++;
+    return allow(request);
+  };
+  const port=provider(own.config,policy);
+  try{
+    await context.run({token:'approved-request'},async()=>{
+      await confirmed(port);
+      await port.startDriven(owner);
+    });
+    const completed=await until(()=>context.run({token:'approved-request'},async()=>{
+      const progress=await port.status(owner);
+      return progress.state==='complete'?progress:undefined;
+    }));
+    assert.equal(completed.driver.state,'complete');
+    assert.ok(visited>14,'driver did not reauthorize its individual steps and source paths');
   }finally{await port.close();await rm(own.root,{recursive:true,force:true});}
 });
