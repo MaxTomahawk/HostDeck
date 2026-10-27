@@ -49,6 +49,16 @@ test('explicit fixed-volume root can be traversed despite its own C: Hidden/Syst
 },()=>{
   const volume='C:\\';
   assert.deepEqual(qualifiedBatch([volume],[metadata({hidden:true,system:true})],volume,false,[volume]),[true]);
+  const lowerVolume='c:\\';
+  // HD-B007-FULLTEXT-NATIVE-ROOT-CASE-001: a qualified fixed-volume root
+  // has Windows case-insensitive identity, even when supplied as c: vs C:.
+  assert.deepEqual(qualifiedBatch([lowerVolume],[metadata({hidden:true,system:true})],lowerVolume,false,[volume]),[true]);
+  assert.deepEqual(qualifiedBatch([volume],[metadata({hidden:true,system:true})],volume,false,[lowerVolume]),[true]);
+  // This exception is root-only: an ordinary Hidden/System subtree is denied.
+  const nestedHidden=path.join(lowerVolume,'owner-selected','hidden.txt');
+  assert.deepEqual(qualifiedBatch([nestedHidden],[metadata({hidden:true})],lowerVolume,false,[volume]),[false]);
+  assert.deepEqual(qualifiedBatch([nestedHidden],[metadata({system:true})],lowerVolume,true,[volume]),[false]);
+  assert.deepEqual(qualifiedBatch([lowerVolume],[metadata({hidden:true,system:true})],lowerVolume,false,[]),[false]);
   const child=path.join(volume,'owner-selected','normal.txt');
   assert.deepEqual(qualifiedBatch([child],[metadata({hidden_component:true,system_component:true})],volume,false,[volume]),[true]);
   assert.deepEqual(qualifiedBatch([child],[metadata({system:true})],volume,true,[volume]),[false]);
