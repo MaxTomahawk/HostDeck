@@ -1,4 +1,5 @@
 import { FullTextEngine } from './engine.js';
+import type {FullTextAttributeProbe} from './native-attributes.js';
 import type {
   FullTextAuthorizer, FullTextConfig, FullTextPreview, FullTextPrincipal,
   FullTextScanReceipt, FullTextSearchPage,
@@ -20,6 +21,8 @@ export interface FullTextPortWiring {
   isOwnerConfirmed: (principal: FullTextPrincipal, digest: string) => Promise<boolean>;
   /** Checks fresh device/executor and root/file privileges per operation. */
   authorize: FullTextAuthorizer;
+  /** Optional at construction; REQUIRED for Windows activation (no attrib fallback). */
+  nativeAttributes?: FullTextAttributeProbe;
 }
 
 export class FullTextPort {
@@ -46,7 +49,7 @@ export class FullTextPort {
     if (preview.digest!==digest || await this.wiring.isOwnerConfirmed(c,digest)!==true)
       throw new Error('FULLTEXT_OWNER_CONFIRMATION_REQUIRED');
     if (this.engine) throw new Error('FULLTEXT_ALREADY_OPEN');
-    this.engine=await FullTextEngine.openConfirmed(config,c,this.wiring.authorize,digest);
+    this.engine=await FullTextEngine.openConfirmed(config,c,this.wiring.authorize,digest,this.wiring.nativeAttributes);
     this.activePrincipal=this.key(c);
     this.activeDigest=digest;
     return {ready:true,provider:this.providerId};
