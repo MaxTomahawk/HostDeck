@@ -87,6 +87,22 @@ async function request(f:Awaited<ReturnType<typeof fixture>>,method:string,param
   return {httpStatus:response.status,data};
 }
 
+test('retired automatic-panel URI never reloads a full app from an old chat',async()=>{
+  const fullApp='<main>Explicit manager</main><script>'+('/* full bundle */'.repeat(1000))+'</script>';
+  const f=await fixture(fullApp);
+  try{
+    const retired=await request(f,'resources/read',{uri:legacy});
+    assert.equal(retired.data.result?.contents,undefined,
+      'historical automatically attached panels must not receive another full app');
+    assert.ok(retired.data.error,'retired resource must report unavailable');
+    assert.ok(!JSON.stringify(retired.data).includes('full bundle'));
+    const explicit=await request(f,'resources/read',{uri:MANAGER_APP_URI});
+    assert.equal(explicit.data.result.contents[0].text,fullApp,
+      'the explicit versioned manager remains available');
+    assert.equal(f.effects(),0);
+  }finally{await f.close();}
+});
+
 test('actual discovery exposes a single UI-render manager tool and preserves all data tools',async()=>{
   const f=await fixture('<main>Fixture manager app</main>');
   try {
@@ -125,8 +141,8 @@ test('actual discovery exposes a single UI-render manager tool and preserves all
     assert.equal(html.data.result.contents[0].mimeType,mime);
     assert.equal(html.data.result.contents[0].text,'<main>Fixture manager app</main>');
     const compat=await request(f,'resources/read',{uri:legacy});
-    assert.equal(compat.data.result.contents[0].uri,legacy);
-    assert.equal(compat.data.result.contents[0].mimeType,mime);
+    assert.equal(compat.data.result?.contents,undefined);
+    assert.ok(compat.data.error,'historical automatic-panel URI is retired');
     assert.equal(f.effects(),0,'discovery and render-resource reads execute no device action');
   } finally {await f.close();}
 });

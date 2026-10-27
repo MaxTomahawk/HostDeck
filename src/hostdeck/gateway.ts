@@ -117,7 +117,11 @@ export class HostDeckFacade {
     server.setRequestHandler('resources/read', async request => {
       const uri = request.params.uri;
       try {
-        if (uri === MANAGER_APP_URI || uri === LEGACY_MANAGER_APP_URI) {
+        // Old conversations attached this URI to every ordinary tool call.
+        // Reopening them must not load another full app per historical card.
+        // The explicit, versioned manager remains the only render resource.
+        if (uri === LEGACY_MANAGER_APP_URI) throw new RuntimeError('UNAVAILABLE');
+        if (uri === MANAGER_APP_URI) {
           if (!this.options.appHtml) throw new RuntimeError('DENIED');
           // Resource reads re-enter exactly the same devices:read grant and
           // executor boundary as open_manager. No "any visible tool" shortcut.
