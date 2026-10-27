@@ -42,6 +42,8 @@ internal static class Program
         internal string DaclPointer = "unknown";
         internal string OwnerEqualsTokenUser = "unknown";
         internal string TokenAvailable = "unknown";
+        internal string TokenIdentityStatus = "not_called";
+        internal string TokenIdentityExceptionClass = "none";
         internal SecurityIdentifier? User;
         internal string? LogonIdentity;
         internal int? Session;
@@ -108,6 +110,8 @@ internal static class Program
         package_process_token_equal = p.PackageProcessTokenMatch,
         app_container_token = p.AppContainer,
         token_query = p.TokenAvailable,
+        token_identity_status = p.TokenIdentityStatus,
+        token_identity_exception_class = p.TokenIdentityExceptionClass,
         process_security_descriptor_readable = p.DaclReadable,
         process_dacl_pointer = p.DaclPointer,
         process_owner_equals_token_user = p.OwnerEqualsTokenUser,
@@ -155,8 +159,19 @@ internal static class Program
                         (ref uint size, StringBuilder? name) => Native.GetPackageFullNameFromToken(token, ref size, name));
                     observed.PackageProcessTokenMatch =
                         Compare(observed.ProcessPackageValue, observed.TokenPackageValue);
-                    using var identity = new WindowsIdentity(token);
-                    observed.User = identity.User;
+                    // Identity construction is optional; its failure must not hide
+                    // independent AppContainer, session and logon token queries.
+                    try
+                    {
+                        using var identity = new WindowsIdentity(token);
+                        observed.User = identity.User;
+                        observed.TokenIdentityStatus = observed.User is null ? "no_user" : "success";
+                    }
+                    catch (Exception error)
+                    {
+                        observed.TokenIdentityStatus = "exception";
+                        observed.TokenIdentityExceptionClass = SafeExceptionClass(error);
+                    }
                     if (Native.GetTokenInformationInt(token, TokenIsAppContainerClass,
                         out int appContainer, sizeof(int), out _))
                         observed.AppContainer = appContainer != 0 ? "yes" : "no";
