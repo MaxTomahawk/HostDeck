@@ -165,12 +165,18 @@ export class ReadRootAccess {
           modified: stat.mtime.toISOString(),
         }));
     }
-    if (!target.isDirectory()) denied();
+    if (!target.isDirectory() || !this.native) denied();
     const before = await identity(scope.absolute);
-    if (!same(target, before)) changed();
+    if (!sameDirectory(target, before)) changed();
+    // Directory metadata also binds to the actual opened native directory
+    // handle. Names returned by this private probe are discarded.
+    try {
+      await this.native.directoryPage(scope.absolute, before.ino, 0, 1,
+        async filename => key(filename) === key(scope.absolute));
+    } catch { changed(); }
     await this.assertScope(scope, owner, operation);
     const after = await identity(scope.absolute);
-    if (!same(before, after) || before.mtimeNs !== after.mtimeNs) changed();
+    if (!sameDirectory(before, after)) changed();
     await this.assertScope(scope, owner, operation);
     return { size: Number(after.size), isDirectory: true, isFile: false,
       modified: after.mtime.toISOString() };
