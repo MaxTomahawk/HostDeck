@@ -263,7 +263,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
     await diagnosticTask;
     await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
-    try{fulltext.close();}finally{await fulltextNative?.close();}
+    try{await fulltext.close();}finally{await fulltextNative?.close();}
     await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}
   };
