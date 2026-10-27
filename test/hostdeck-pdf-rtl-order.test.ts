@@ -142,8 +142,8 @@ test('document caller retains logical Arabic, RTL mixtures and combining marks w
     [logical, captureInline(logical)],
     [mixed, captureInline(mixed)],
     [marked, [...marked].map((glyph, index) =>
-      item(glyph, 42 + index * 6, baseline, /^\\p{M}$/u.test(glyph) ? 'ltr' : 'rtl',
-        /^\\p{M}$/u.test(glyph) ? 0 : 6))],
+      item(glyph, 42 + index * 6, baseline, /^\p{M}$/u.test(glyph) ? 'ltr' : 'rtl',
+        /^\p{M}$/u.test(glyph) ? 0 : 6))],
   ] as const) {
     const outcome = reconcilePdfArabicPage(original, items);
     assert.deepEqual(outcome, {
