@@ -163,6 +163,25 @@ test('missing components mismatch manifest, invalid manifest gives UNKNOWN witho
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
+test('empty binaries and duplicate manifest entries are explicit failures, not attested matches', async () => {
+  const f = await fixture();
+  try {
+    await writeFile(local(f.root, 'native_exe'), Buffer.alloc(0));
+    const empty = await observeDiagnosticsProvenance(f.inputs);
+    assert.equal(component(empty, 'native_exe').observation, 'empty');
+    assert.equal(component(empty, 'native_exe').observed_sha256, null);
+    assert.equal(component(empty, 'native_exe').comparison, 'unknown');
+    const manifestPath = path.join(f.root, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.files.push({ path: TARGETS.node, sha256: digest(f.files.node) });
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const duplicate = await observeDiagnosticsProvenance(f.inputs);
+    assert.equal(duplicate.manifest.schema_status, 'invalid');
+    assert.ok(duplicate.components.every(item => item.comparison === 'unknown'));
+    assertStrictReport(duplicate, f.root);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
 test('streamed in-place mutation yields UNSTABLE, never a digest or false match', async () => {
   const f = await fixture();
   try {
