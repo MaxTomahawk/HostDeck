@@ -78,3 +78,38 @@ The existing \`hostdeck_edit_document\` API retains its established \`text_repla
 - `hostdeck_read_document` removes the two exact upstream `edit_block`/`read_file offset=1` tooltips only from the generated DOCX outline header, and the legacy Python suggestion only from the generated suffix. These are not generic substitutions in document body/header/footer content.
 - Own Office XML root/namespace/structure, unsupported formula, range and count exceptions now have bounded explicit `RuntimeError` codes. For replacement-count conflict, public MCP returns `DOCUMENT_REPLACEMENT_COUNT`, while the internal direct adapter error retains the numbers `Expected N occurrence(s) but found M`; no private text or path is included. The existing `publicError` masks unrelated arbitrary `Error.message` text as `IO_ERROR` and no global whitelist is added.
 - The local Windows build and real python-docx/openpyxl/ExcelJS cross-library tests are separate gates; the ordinary ChatGPT implementer does not independently certify its own patch. F002 remains OPEN. No Word/Excel installation, Actions, source merge or deployment is authorized.
+
+## B007 explicitly selected read/search roots — SOURCE-ONLY PROPOSAL, NOT ACTIVE
+
+**Pin and provenance.** Public product integration 61a1d1798df64357f88013beb49a7dcf5d62488a; private research e1353f01e48140bcafa12866c99e414b8844137f. Consulted 140-item requirement delivery map and all 18 Everything B007 criteria. This is an opt-in source proposal; it is NOT a new owner selection, config/grant change, runtime activation or replacement of the existing v1.1 contract.
+
+### Precise currently implemented boundary
+
+| Operation | Source-enforced current scope |
+|---|---|
+| Name/path search via direct | FileAdapter.guardPath selects root under canonical config.workspace; direct traversal max 20 levels/100,000 entries/10,000 retained matches, bounded time and result bytes |
+| Name/path search via Everything | Same workspace root; runEverything rejects candidate outside both requested root AND config.workspace, with canonical guardPath check; Everything indexed coverage outside workspace is NOT exposed |
+| Content search via direct | Same workspace root, literal/restricted regex, capped at 1 MiB per candidate file; Everything content mode is explicitly unsupported |
+| Directory listing | Same workspace guard, bounded depth/limit/deadline, workspace-relative paths and reparse skips |
+| Read file and file_info | UserRuntime.checkedPath requires the same workspace; read-file snapshot limited to 10 MiB; an authorized files:read grant alone does not supply extra roots |
+| Writes/edits/create/move/delete/document commits | Workspace-only write and SafeCommitter paths with separate authorization, unchanged by this proposal |
+
+PolicyGate requires current principal/device/executor grants and scope, but its broadUserAuthority flag is NOT a path-root selection. UserRuntime and FileAdapter independently confine absolute paths; Everything query coverage is NOT equivalent to HostDeck data authority. Search handles are owner/device/executor bound; Everything pages additionally recheck their Windows session.
+
+### Minimum coherent opt-in implementation boundary
+
+1. The root selection must originate from an independently qualified, protected local owner selection, bound to ownerId, deviceId and executorId with a verifiable revision/approval and effective ACLs. It cannot come from MCP input, a search hit, an environment variable, broadUserAuthority alone, or a provider's global index. Absence/mismatch/revocation means workspace-only. Do not alter the existing grants or installed configuration in this PR.
+2. Use a narrow trusted read-root resolver ONLY for FileAdapter list_directory, search_files and search_results, plus UserRuntime read_file and file_info. Source-only reference: src/hostdeck/read-root-boundary.ts. The same resolver MUST NOT be wired to write_file, edit_text, create/move/delete, document or artifact commits, process working directories, or SafeCommitter. Current write scope remains exactly the workspace.
+3. Validate approved root and target with canonical no-reparse/ADS/UNC checks, and recheck authorization on each directory entry, candidate, content snippet, result page and file readback. Preserve search-handle owner/device/executor and Everything session binding. Filter inaccessible hits BEFORE publishing names, metadata, totals, snippet text or other source-derived diagnostics. A revoked root must not leave a usable stale page/count.
+4. Checking strings and safeRealpath is necessary but NOT sufficient for races: actual file-handle identity and root membership must be validated at read time; a concurrent reparse replacement/hardlink adversary is not proven contained by the prototype. The helper is deliberately UNWIRED until that and protected-selection readback have been reviewed.
+5. Contract v1.1 promises workspace-relative result paths. An additive contract revision must explicitly distinguish authorized external-root hits, e.g. path_scope=selected_read_root, with a canonical absolute external path; workspace hits remain unchanged. Never generate an unsafe ../relative path to an external root. Reading a found hit is separately authorized and never inherits a grant from the search result.
+6. Everything is filename/path/metadata discovery only in the authorized Windows session/instance; it does not automatically index or return document contents. Direct content searching has finite file/depth/deadline limits. The separate fulltext provider has owner-selected explicit roots, separate fulltext:read/fulltext:index scopes, protected ACL qualification and format/index/resource budgets. It is not implicitly activated by this proposal or by Everything.
+7. Whole-volume coverage requires separately qualified fixed-volume identity, sensitive system/profile/state/credential exclusions, explicit owner review, and resource limits. No blanket all-drive/all-write or UNC/network/removable root follows from a selected directory. Ordinary users' personal data is not sourced into public Git.
+
+### Requirement and acceptance alignment
+
+HD-REQ-0019 rev2 literally specifies WORKSPACE-SCOPED filename search. Wider explicitly selected read/search coverage is an additive product contract, not a bug fix to that requirement. Preserve HD-REQ-0016 (authorized read), 0021 (list/metadata), 0025 (symlinks/junction/ADS/path case), 0064 (stable schema), 0078/0080 (per-principal/device/session and no unauthorized path/count leak), and 0092 (provider semantics). Everything B007 criteria 04 (actual names/metadata), 07 (authorize before results), 08 (revalidate readback/changed identity), 10 (paging and owner) and 18 (precise fixture cleanup) remain OPEN for any new external-root variant. No existing fulltext or Everything status is promoted to installed/qualified/accepted by this source proposal.
+
+### Status and bounded qualification
+
+Included pure reference helper plus five source regressions demonstrate current negative root boundary, workspace-only Everything result filtering, owner/device/executor selection, exclusions, reparse rejection, volume denial, and revocation. These tests are CHECKED IN, NOT_RUN here. The helper is not imported by main.ts, FileAdapter or UserRuntime; there is no new public tool or active new authority. Further Codex integration requires a separately protected owner selection and compatible additive result contract, then Windows tests of permitted external READ versus denied external WRITE, owner/session/selection revocation, actual Everything and direct results, aliases and opened-object races. Do not change local setup, vendor settings, grants, installed index, NEXT_RUN or personal files in this PR.
