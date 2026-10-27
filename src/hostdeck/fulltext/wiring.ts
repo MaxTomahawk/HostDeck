@@ -187,10 +187,13 @@ export class FullTextPort {
   async status(c:FullTextPrincipal) {
     const durable=await (await this.require(c)).status(c);
     const current=this.driver?.runId===durable.run?.runId?this.driver:undefined;
-    return {...durable,driver:current?
-      {state:current.state,runId:current.runId,steps:current.steps,processedInProcess:current.processed,
-        ...(current.lastCode?{lastCode:current.lastCode}:{})}:
-      {state:'inactive' as const}};
+    return {...durable,driver:{
+      state:current?.state??'inactive',
+      runId:current?.runId??null,
+      steps:current?.steps??0,
+      processedInProcess:current?.processed??0,
+      lastCode:current?.lastCode??null,
+    }};
   }
 
   async close():Promise<void> {
