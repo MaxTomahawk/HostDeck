@@ -70,3 +70,40 @@ test('without qualified native metadata, Windows cannot create a fulltext index'
     await assert.rejects(fs.stat(index),{code:'ENOENT'});
   }finally{await fs.rm(tmp,{recursive:true,force:true});}
 });
+
+
+test('bounded metadata batching indexes an owned Unicode TXT without inheriting outside-root flags',async()=>{
+  const tmp=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'hd-ft-native-batch-')));
+  const root=path.join(tmp,'selected'),state=path.join(tmp,'index-state');
+  await Promise.all([fs.mkdir(root),fs.mkdir(state)]);
+  const unicode=path.join(root,'België_日本語_中文.txt');
+  const config:FullTextConfig={indexFile:path.join(state,'index.sqlite'),roots:[root],formats:['.txt'],
+    budgets:{maxOperationsPerStep:32,maxStepMilliseconds:8000}};
+  const principal:FullTextPrincipal={ownerId:'unicode-fixture',deviceId:'test-device',executorId:'test-executor'};
+  const authorized:FullTextAuthorizer=async()=>true;
+  const batchSizes:number[]=[];
+  const mockProbe:import('../src/hostdeck/fulltext/native-attributes.js').FullTextAttributeProbe=
+    async paths=>{
+      batchSizes.push(paths.length);
+      return paths.map((_,index)=>metadata({index,hidden_component:true,system_component:true}));
+    };
+  let engine:FullTextEngine|undefined;
+  try{
+    for(let i=0;i<64;i++)await fs.writeFile(path.join(root,'ordinary-'+i+'.txt'),'ordinary fixture content');
+    await fs.writeFile(unicode,'UniqueUnicodeStem België 日本語 中文');
+    const preview=await FullTextEngine.preview(config,principal,authorized);
+    engine=await FullTextEngine.openConfirmed(config,principal,authorized,preview.digest,mockProbe);
+    const scan=(await engine.start(principal)).runId;
+    let finished=false;
+    for(let i=0;i<15;i++){
+      const receipt=await engine.step(principal,scan,32);
+      if(receipt.state==='complete'){finished=true;break;}
+      assert.equal(receipt.state,'running',receipt.reason??'scan blocked');
+    }
+    assert.equal(finished,true);
+    assert.equal((await engine.status(principal)).visibleDocuments,65);
+    assert.deepEqual((await engine.search(principal,'UniqueUnicodeStem')).results.map(r=>r.path),[unicode]);
+    assert.ok(batchSizes.every(length=>length>0&&length<=64));
+    assert.ok(batchSizes.some(length=>length===64),'enumeration must use real 64-item batches');
+  }finally{engine?.close();await fs.rm(tmp,{recursive:true,force:true});}
+});
