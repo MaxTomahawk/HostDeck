@@ -78,3 +78,42 @@ The existing \`hostdeck_edit_document\` API retains its established \`text_repla
 - `hostdeck_read_document` removes the two exact upstream `edit_block`/`read_file offset=1` tooltips only from the generated DOCX outline header, and the legacy Python suggestion only from the generated suffix. These are not generic substitutions in document body/header/footer content.
 - Own Office XML root/namespace/structure, unsupported formula, range and count exceptions now have bounded explicit `RuntimeError` codes. For replacement-count conflict, public MCP returns `DOCUMENT_REPLACEMENT_COUNT`, while the internal direct adapter error retains the numbers `Expected N occurrence(s) but found M`; no private text or path is included. The existing `publicError` masks unrelated arbitrary `Error.message` text as `IO_ERROR` and no global whitelist is added.
 - The local Windows build and real python-docx/openpyxl/ExcelJS cross-library tests are separate gates; the ordinary ChatGPT implementer does not independently certify its own patch. F002 remains OPEN. No Word/Excel installation, Actions, source merge or deployment is authorized.
+
+## B007 explicitly selected read/search roots — dormant opt-in source wiring
+
+**Default: workspace-only.** The optional trusted local config field `read_root_owner_directory` is absent unless a separately reviewed local owner setup supplies it. No MCP caller boolean, `broadUserAuthority`, indexed Everything hit or generic files:read grant creates additional roots. No installed selection, ACL, vendor index or grant is changed by this PR.
+
+### Protected owner records and native ACL verification
+
+The readonly `ReadRootSelectionStore` expects two existing files in the installer-controlled protected directory, with no tool or public setter to create them:
+
+- `read-roots-selection.json`: `{version:1,owner:{ownerId,deviceId,executorId},revision:"...",selection:{roots:["ABSOLUTE_ROOT"],excludedRoots:["ABSOLUTE_EXCLUSION"],fixedVolumeRoots:[]}}`
+- `read-roots-approval.json`: `{version:1,owner:{ownerId,deviceId,executorId},revision:"...",contentDigest:"64 lowercase hex",approvedAt:"ISO date with offset",source:"protected-local-owner-approval"}`
+
+`readRootContentDigest` computes the SHA-256 of version, exact owner identity, revision and the sorted approved roots/exclusions. Matching protected owner/device/executor/revision/digest, nonfuture approval and both records' continuing existence are required on every external disclosure. Absent, revoked, mismatched or invalid records deny external read while leaving workspace access intact.
+
+The existing pinned private FullTextNativeBridge's `probeProtectedObjectAcl` checks actual effective Windows token/ancestor ACL evidence for the protected directory AND both records. No mock Boolean is accepted in production. Without installed executable pin, native worker, or qualified native ACL the selection stays dormant. The native proof is a physical ACL snapshot, not a cryptographic same-SID app identity guarantee.
+
+### Wired operations and guaranteed exclusions
+
+| Tool | Default | Protected opt-in read behavior |
+|---|---|---|
+| list_directory | Workspace-only; existing depth/time/result limits | Scope-validated external absolute entries with `root_scope`, per-entry metadata checks and a final live scope recheck |
+| search_files direct | Workspace-only name/content | Explicit selected external root only; each candidate and snippet rechecked, content from an open verified file descriptor |
+| search_files Everything | Workspace-only, existing provider session and query semantics | Identical Everything query, but every returned candidate filtered by same trusted root; no content/whole-index authority |
+| search_results | Owned workspace pages | Recheck owner/device/executor, revision, digest and root identity before page, counts, snippets or metadata; revoked pages rejected |
+| read_file, file_info | Workspace-only | Actual opened FileHandle BigInt device/FileID/size/time checks before and after reads, root identity and live scope; external response includes `source_path` and `root_scope` |
+| write_file, edit_text, create/move/delete | Workspace-only | Unchanged original workspace guards, even with files:write |
+| read_document, edit_document, SafeCommitter, process cwd, artifact writes | Workspace-only | Unchanged; external-root read selection is NOT routed to these tools |
+
+Actual content reads compare `{dev,ino}` from open file handle with its current name before/after reading, plus the selected root identity and live owner scope before any return. Open-directory enumeration rechecks selected root identity before exposing names. These are more than string realpath checks, but Windows adversarial same-token reparse/rename and FileID behavior still require independent live qualification.
+
+### Broad fixed local volumes require an additional explicit qualification
+
+An exact drive root such as `X:\` can be selected only when it is separately present in both approved `roots` and `fixedVolumeRoots`, and the actual Windows `[System.IO.DriveInfo]` read-only query returns `Fixed`. UNC, network, removable and automatically discovered volumes are never approved. Built-in Windows system, profile AppData and common credential exclusions, the explicit owner exclusions, and protected product config/state/grants/enrollment/worker/owner files are mandatory even inside a selected volume. Existing 20-level, 100,000-entry, 3-second, result-size and 1 MiB content-search limits remain; broad volumes may truncate rather than promising full coverage. Real drive/ACL qualification is NOT_RUN.
+
+### Verification status
+
+PR30's initial standalone helper was unconnected. This revision actually wires the dormant opt-in into FileAdapter, UserRuntime and main config without activating any selection. The new focused fixtures cover two disposable sibling roots, default/owner denial, explicit readback and metadata, name/content/direct/Everything result paths, revocation before paging, file/root replacements during an open handle and outside-workspace write refusal. The Everything fixture is a fake provider, not proof of installed coverage.
+
+NOT_RUN: TypeScript build, focused Node/Windows tests, real native ACL/DriveInfo/FileID/TOCTOU acceptance, actual Everything instance qualification, deployment, public source scanner and independent ChatGPT acceptance. No NEXT_RUN, protected records, service, grant or vendor configuration was changed.

@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { parseToolArguments } from './contracts.js';
 import { RuntimeError } from './runtime-error.js';
 import { UserProcesses } from './user-processes.js';
+import type { ReadRootAccess, ReadRootScope } from './read-root-access.js';
+import type { ReadRootOwner } from './read-root-boundary.js';
 
 export interface UserRuntimeOptions {
   deviceId: string;
@@ -12,6 +14,8 @@ export interface UserRuntimeOptions {
   authorize: (operation: string, args: Readonly<Record<string, unknown>>) => Promise<boolean>;
   environment: Readonly<Record<string, string>>;
   shells: Readonly<Partial<Record<'powershell' | 'cmd' | 'wsl', string>>>;
+  /** Optional trusted read-only owner selection. Never supplied by caller args. */
+  readRoots?: ReadRootAccess;
 }
 
 const maxFileBytes = 10 * 1024 * 1024;
@@ -38,15 +42,17 @@ export class UserRuntime {
     return new Set([...fileOperations, 'hostdeck_start_process', 'hostdeck_read_process', 'hostdeck_interact_process']);
   }
 
-  async invoke(name: string, raw: unknown): Promise<Record<string, unknown>> {
+  async invoke(name: string, raw: unknown,
+    owner?: ReadRootOwner): Promise<Record<string, unknown>> {
     if (this.closed) throw new RuntimeError('DENIED');
     if (this.pending >= 32) throw new RuntimeError('LIMIT_EXCEEDED');
     this.pending++;
-    try { return await this.dispatch(name, raw); }
+    try { return await this.dispatch(name, raw, owner); }
     finally { this.pending--; }
   }
 
-  private async dispatch(name: string, raw: unknown): Promise<Record<string, unknown>> {
+  private async dispatch(name: string, raw: unknown,
+    owner?: ReadRootOwner): Promise<Record<string, unknown>> {
     const args = parseToolArguments(name, raw);
     if (!this.implementedTools.has(name)) throw new RuntimeError('UNAVAILABLE');
     await this.admit(name, args);
@@ -65,7 +71,7 @@ export class UserRuntime {
         throw new RuntimeError('IO_ERROR');
       }
     }
-    const result = this.fileQueue.then(() => this.fileOperation(name, args));
+    const result = this.fileQueue.then(() => this.fileOperation(name, args, owner));
     this.fileQueue = result.catch(() => {});
     try { return await result; }
     catch (error) {
@@ -137,9 +143,50 @@ export class UserRuntime {
     } finally { await fs.rm(temporary, { force: true }); }
   }
 
-  private async fileOperation(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async fileOperation(name: string, args: Record<string, unknown>,
+    owner?: ReadRootOwner): Promise<Record<string, unknown>> {
     await this.admit(name, args);
-    const target = await this.checkedPath(args.path as string);
+    const input=args.path as string;
+    const candidate=path.resolve(this.workspace,input);
+    const rel=path.relative(this.workspace,candidate);
+    const outside=rel==='..'||rel.startsWith('..'+path.sep)||path.isAbsolute(rel);
+    if(outside&&(name==='hostdeck_read_file'||name==='hostdeck_file_info')){
+      const access=this.options.readRoots;
+      if(!access||!owner)throw new RuntimeError('PATH_DENIED');
+      const scope=await access.resolve(input,owner,name==='hostdeck_read_file'?'read_file':'file_info');
+      if(!scope.external||!scope.rootIdentity||!scope.revision||!scope.digest)
+        throw new RuntimeError('PATH_DENIED');
+      const trusted=scope as ReadRootScope;
+      const operation=name==='hostdeck_read_file'?'read_file':'file_info';
+      if(name==='hostdeck_file_info'){
+        const info=await access.metadata(trusted,owner,'file_info');
+        const output:Record<string,unknown>={size:info.size,
+          type:info.isDirectory?'directory':'file',
+          modified_at:info.modified,source_path:trusted.absolute,root_scope:trusted.root};
+        if(args.hash==='sha256'){
+          if(!info.isFile)throw new RuntimeError('NOT_FILE');
+          const bytes=await access.readBytes(trusted,owner,'file_info',maxFileBytes);
+          output.sha256=createHash('sha256').update(bytes).digest('hex');
+        }
+        await this.admit(name,args);
+        await access.assertScope(trusted,owner,'file_info');
+        return output;
+      }
+      const bytes=await access.readBytes(trusted,owner,'read_file',maxFileBytes);
+      const content=this.decode(bytes);
+      const lines=content===''?[]:content.split(/\r?\n/);
+      if(content.endsWith('\n'))lines.pop();
+      const offset=Math.min(lines.length,Math.max(0,
+        (args.offset as number)<0?lines.length+(args.offset as number):args.offset as number));
+      const selected=lines.slice(offset,offset+(args.length as number));
+      await this.admit(name,args);
+      await access.assertScope(trusted,owner,'read_file');
+      return {content:selected.join('\n'),total_lines:lines.length,offset,
+        next_offset:offset+selected.length,source_path:trusted.absolute,root_scope:trusted.root};
+    }
+    // All writes and process working directories still use the original
+    // workspace-only checkedPath. The default read behavior is unchanged.
+    const target = await this.checkedPath(input);
     if (name === 'hostdeck_file_info') {
       const info = await fs.stat(target);
       return { size: info.size, type: info.isDirectory() ? 'directory' : 'file', modified_at: info.mtime.toISOString(),
