@@ -513,14 +513,40 @@ export class FileAdapter {
     return job;
   }
 
-  private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
-    const job = this.searchFor(args.search_id as string, context);
-    const offset = args.offset as number; const limit = args.limit as number;
-    // Sorted snapshots are published only when sealed, so page offsets cannot shift.
+  private async searchResults(args:Record<string,unknown>,
+    context:FileOwnerContext):Promise<unknown>{
+    const job=this.searchFor(args.search_id as string,context);
+    const access=this.options?.readRoots;
+    const operation=job.mode==='content'?'content_search':'name_search';
+    // No total, metadata, snippet, path or even a stale page on revocation.
+    if(job.readScope)await access!.assertScope(job.readScope,context,operation);
+    const offset=args.offset as number,limit=args.limit as number;
     const matches=job.sort&&!job.done?[]:job.matches;
     const items:SearchMatch[]=[];
-    for(const match of matches.slice(offset,offset+limit))try{await this.guardPath(match.path);items.push(match);}catch{/* Changed targets never become extra read authority. */}
-    return { search_id: job.id,provider:job.provider,...(job.provenance?{provenance:job.provenance}:{}), items, offset, total_results:matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':job.stopped ? 'stopped' : job.error ? 'failed' : job.truncated?'partial':'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit,matches.length),snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS };
+    for(const match of matches.slice(offset,offset+limit)){
+      try{
+        const checked=await this.guardReadPath(match.path,context,operation);
+        if(job.readScope&&(!checked.readScope||
+            checked.readScope.digest!==job.readScope.digest||
+            checked.readScope.revision!==job.readScope.revision))continue;
+        // Search snippets came only from handle-bound reads; current selected
+        // object/root must still be eligible on every disclosure.
+        items.push(match);
+      }catch{/* Changed or revoked individual targets never authorize disclosure. */}
+    }
+    if(job.readScope)await access!.assertScope(job.readScope,context,operation);
+    return {search_id:job.id,provider:job.provider,
+      ...(job.provenance?{provenance:job.provenance}:{}),
+      ...(job.readScope?{root_scope:job.readScope.root}:{}),
+      items,offset,total_results:matches.length,
+      complete:job.done,truncated:job.truncated,stopped:job.stopped,
+      state:job.done
+        ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain'
+          :job.stopped?'stopped':job.error?'failed':job.truncated?'partial':'complete'
+        :'running',
+      ...(job.error?{error:job.error}:{}),
+      next_offset:Math.min(offset+limit,matches.length),
+      snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS};
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
