@@ -607,7 +607,12 @@ export class FileAdapter {
     // Every retained result is checked BEFORE computing even total_results,
     // not only the entries inside the requested page. No stale count/metadata.
     const candidates=job.readScope?matches:matches.slice(offset,offset+limit);
+    const qualificationDeadline=Date.now()+5000;
     for(const match of candidates){
+      // No unbounded per-result native/ACL loops for large retained searches.
+      // Failure withholds the entire page, including total_results.
+      if(job.readScope && Date.now()>=qualificationDeadline)
+        throw new RuntimeError('READ_ROOT_PAGE_BUDGET');
       try{
         const checked=await this.guardReadPath(match.path,context,operation);
         if(job.readScope&&(!checked.readScope||
