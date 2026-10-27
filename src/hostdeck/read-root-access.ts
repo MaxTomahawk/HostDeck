@@ -31,6 +31,8 @@ const denied = (): never => { throw new RuntimeError('READ_ROOT_DENIED'); };
 const changed = (): never => { throw new RuntimeError('READ_ROOT_CHANGED'); };
 const same = (a: Stat, b: Stat): boolean =>
   a.dev === b.dev && a.ino !== 0n && a.ino === b.ino;
+const sameDirectory = (a: Stat, b: Stat): boolean =>
+  same(a,b) && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 const key = (value: string): string =>
   process.platform === 'win32' ? value.toLowerCase() : value;
 const identity = async (file: string): Promise<Stat> => fs.stat(file, { bigint: true });
@@ -194,7 +196,7 @@ export class ReadRootAccess {
       while (offset <= 100000) {
         await access.assertScope(scope, owner, operation);
         const now = await identity(scope.absolute);
-        if (!same(before, now)) changed();
+        if (!sameDirectory(before, now)) changed();
         let page: Awaited<ReturnType<NativeRead['directoryPage']>>;
         try {
           page = await native.directoryPage(scope.absolute, before.ino,
@@ -202,7 +204,7 @@ export class ReadRootAccess {
         } catch { return changed(); }
         await access.assertScope(scope, owner, operation);
         const after = await identity(scope.absolute);
-        if (!same(before, after)) changed();
+        if (!sameDirectory(before, after)) changed();
         for (const name of page.names) {
           if (!name || name === '.' || name === '..' ||
               name.includes('\\') || name.includes('/') ||
@@ -217,7 +219,7 @@ export class ReadRootAccess {
     }
     const result = await use(entries());
     const after = await identity(scope.absolute);
-    if (!same(before, after)) changed();
+    if (!sameDirectory(before, after)) changed();
     await this.assertScope(scope, owner, operation);
     return result;
   }
