@@ -18,6 +18,7 @@ const absolute = z.string().min(1).max(4096).refine(path.isAbsolute);
 
 /** Optional field of the EXISTING strict installer configuration. */
 export const readRootsConfigSchema = z.object({
+  owner_id: identifier,
   revision: identifier,
   roots: z.array(absolute).min(1).max(128),
   excluded_roots: z.array(absolute).max(256).default([]),
@@ -146,7 +147,7 @@ export class ReadRootSelectionStore {
         path.resolve(data.workspace).toLowerCase() !==
         path.resolve(this.workspace).toLowerCase()) denied();
     const roots = data.read_roots;
-    if (!roots) return null;
+    if (!roots || roots.owner_id !== caller.ownerId) return null;
     const digest = createHash('sha256').update(input).digest('hex');
     await this.qualifyFixed(roots.fixed_volume_roots, roots.roots, digest);
     return {
