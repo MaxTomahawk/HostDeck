@@ -334,7 +334,8 @@ export class FileAdapter {
   private async startSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     this.pruneSearches();
     if (this.searches.size >= 100) throw new Error('SEARCH_CAPACITY_REACHED');
-    const root = await this.guardPath(args.path);
+    const mode=args.mode==='content'?'content_search':'name_search';
+    const root=await this.guardReadPath(args.path,context,mode);
     const pattern = args.pattern as string;
     const literal = args.literal as boolean;
     const capability=args.mode==='content'?'files.content':'files.name';
@@ -349,7 +350,8 @@ export class FileAdapter {
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
       provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
-      coverageTruncated:false,rootIsFile:root.stat?.isFile()===true,
+      coverageTruncated:false,rootIsFile:root.stat.isFile()===true,
+      ...(root.readScope?{readScope:root.readScope}:{}),
     };
     this.searches.set(job.id, job);
     void (provider==='everything'?this.runEverything(job):this.runSearch(job));
@@ -364,15 +366,20 @@ export class FileAdapter {
       for(const candidate of result.paths){
         if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
         // Do not expose engine counts or unchecked paths, even on malformed replies.
-        if(!inside(job.root,candidate)||!inside(this.workspace,candidate))continue;
-        let safe:Awaited<ReturnType<FileAdapter['guardPath']>>;
-        try{safe=await this.guardPath(candidate);}catch{continue;}
+        if(!inside(job.root,candidate)||
+            (!job.readScope&&!inside(this.workspace,candidate)))continue;
+        let safe:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{safe=await this.guardReadPath(candidate,job.owner,'name_search');}
+        catch{continue;}
+        if(job.readScope&&(!safe.readScope||
+          safe.readScope.digest!==job.readScope.digest||
+          safe.readScope.revision!==job.readScope.revision))continue;
         if(!safe.stat||(!safe.stat.isFile()&&!safe.stat.isDirectory()))continue;
         const fromRoot=path.relative(job.root,safe.absolute);
         if(!job.rootIsFile&&fromRoot==='')continue;
         const components=fromRoot?fromRoot.split(path.sep):[];
         if(components.length>21){job.coverageTruncated=true;continue;}
-        const relative=this.relative(safe.absolute);
+        const relative=this.displayRead(safe.absolute,safe.readScope);
         if(seen.has(relative))continue;seen.add(relative);
         if(!job.includeHidden&&components.some(p=>p.startsWith('.')))continue;
         job.visited++;
@@ -396,56 +403,90 @@ export class FileAdapter {
     if(job.mode==='content'){if(stat.isFile())await this.inspectSearchFile(job,file,stat.size,MAX_CONTENT_FILE_BYTES);return;}
     if(stat.isDirectory()&&job.entryType==='files'||stat.isFile()&&job.entryType==='directories')return;
     if(!stat.isDirectory()&&!stat.isFile())return;
-    const relative=this.relative(file);
+    const relative=this.displayRead(file,job.readScope);
     if(job.regex!.test(path.basename(file))||job.regex!.test(relative))this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
       ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),metadata_source:'filesystem_readback' as const}:{})});
   }
 
-  private async runSearch(job: SearchJob): Promise<void> {
-    const stat = await fs.lstat(job.root).catch(() => undefined);
-    if (!stat) { job.error = 'SEARCH_ROOT_UNAVAILABLE'; job.done = true; return; }
-    const queue: Array<{ target: string; level: number }> = [{ target: job.root, level: 0 }];
-    const maxDepth = 20; const maxFile = MAX_CONTENT_FILE_BYTES;
-    try {
-      while (queue.length) {
-        if (job.stopped || Date.now() > job.deadline || job.visited >= MAX_TRAVERSAL_ENTRIES || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES) {
-          job.truncated = !job.stopped; break;
+  private async runSearch(job:SearchJob):Promise<void>{
+    const scoped=job.readScope?this.options?.readRoots:undefined;
+    const operation=job.mode==='content'?'content_search':'name_search';
+    const queue:Array<{target:string;level:number}>=[{target:job.root,level:0}];
+    const maxDepth=20,maxFile=MAX_CONTENT_FILE_BYTES;
+    try{
+      while(queue.length){
+        if(job.stopped||Date.now()>job.deadline||job.visited>=MAX_TRAVERSAL_ENTRIES||
+            job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES){
+          job.truncated=!job.stopped;break;
         }
-        const current = queue.shift()!;
-        const currentStat = await fs.lstat(current.target);
-        if (isReparseOrLink(currentStat)) continue;
-        if (currentStat.isDirectory()) {
-          const directory = await fs.opendir(current.target);
-          for await (const entry of directory) {
-            if (!visibleName(entry.name, job.includeHidden)) continue;
-            if (++job.visited > MAX_TRAVERSAL_ENTRIES) { job.truncated = true; break; }
-            const full = path.join(current.target, entry.name);
-            const childStat = await fs.lstat(full);
-            if (isReparseOrLink(childStat)) continue;
-            if (childStat.isDirectory()) {
-              if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
-              else job.coverageTruncated=true;
+        const current=queue.shift()!;
+        let currentPath:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{currentPath=await this.guardReadPath(current.target,job.owner,operation);}
+        catch{continue;}
+        if(job.readScope&&(!currentPath.readScope||
+            currentPath.readScope.digest!==job.readScope.digest||
+            currentPath.readScope.revision!==job.readScope.revision))continue;
+        if(isReparseOrLink(currentPath.stat))continue;
+        if(currentPath.stat.isDirectory()){
+          const scan=async(dir:Awaited<ReturnType<typeof fs.opendir>>)=>{
+            for await(const entry of dir){
+              if(!visibleName(entry.name,job.includeHidden))continue;
+              if(job.stopped||job.truncated||Date.now()>job.deadline)break;
+              const full=path.join(current.target,entry.name);
+              let child:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+              try{child=await this.guardReadPath(full,job.owner,operation);}
+              catch{continue;} // Excluded/protected/reparse are never counted as matches.
+              if(job.readScope&&(!child.readScope||
+                  child.readScope.digest!==job.readScope.digest||
+                  child.readScope.revision!==job.readScope.revision))continue;
+              if(isReparseOrLink(child.stat))continue;
+              if(++job.visited>MAX_TRAVERSAL_ENTRIES){job.truncated=true;break;}
+              if(child.stat.isDirectory()){
+                if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
+                else job.coverageTruncated=true;
+              }
+              await this.inspectSearchEntry(job,child.absolute,child.stat);
+              if(job.stopped||job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES||
+                  Date.now()>job.deadline){
+                job.truncated||=!job.stopped&&
+                  (job.bytes>=MAX_SEARCH_RESULT_BYTES||Date.now()>job.deadline);break;
+              }
             }
-            await this.inspectSearchEntry(job,full,childStat);
-            if (job.stopped || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline) { job.truncated ||= !job.stopped && (job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline); break; }
+          };
+          if(currentPath.readScope)await scoped!.withDirectory(currentPath.readScope,
+            job.owner,operation,scan);
+          else {
+            const dir=await fs.opendir(currentPath.absolute);
+            try{await scan(dir);}finally{await dir.close().catch(()=>{});}
           }
-        } else if (currentStat.isFile()) {
+        }else if(currentPath.stat.isFile()){
           job.visited++;
-          await this.inspectSearchEntry(job,current.target,currentStat);
+          await this.inspectSearchEntry(job,currentPath.absolute,currentPath.stat);
         }
       }
-    } catch (error) { job.error = error instanceof Error ? error.message : 'SEARCH_FAILED'; }
-    finally { this.finishSearch(job); }
+      if(job.readScope)await scoped!.assertScope(job.readScope,job.owner,operation);
+    }catch(error){
+      job.error=job.readScope?'READ_ROOT_REVOKED':
+        error instanceof Error?error.message:'SEARCH_FAILED';
+    }finally{this.finishSearch(job);}
   }
 
   private async inspectSearchFile(job: SearchJob, file: string, size: number, maxFile: number): Promise<void> {
-    const relative = this.relative(file);
+    const relative = this.displayRead(file,job.readScope);
     if (job.mode === 'files') {
       if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) this.addMatch(job, { path: relative, kind: 'file' });
       return;
     }
     if (size > maxFile || job.matches.length >= job.resultLimit) { if (size > maxFile) job.truncated = true; return; }
-    const bytes = await fs.readFile(file);
+    let bytes:Buffer;
+    if(job.readScope){
+      const source=await this.guardReadPath(file,job.owner,'content_search');
+      if(!source.readScope||
+          source.readScope.digest!==job.readScope.digest||
+          source.readScope.revision!==job.readScope.revision)return;
+      bytes=await this.options!.readRoots!.readBytes(source.readScope,job.owner,
+        'content_search',maxFile);
+    }else bytes=await fs.readFile(file);
     if (bytes.includes(0)) return;
     const content = bytes.toString('utf8');
     const lines = content.split(/\r?\n/);
