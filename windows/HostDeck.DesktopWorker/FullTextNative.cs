@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -17,7 +18,7 @@ internal static class FullTextNative
     private const int MaxPathChars = 4096, MaxTotalPathChars = 32768;
     private const int MaxBatchMs = 2000;
     private const uint InvalidAttributes = 0xffffffff;
-    private const uint Hidden = 0x0002, System = 0x0004, Directory = 0x0010, Reparse = 0x0400;
+    private const uint Hidden = 0x0002, SystemAttribute = 0x0004, Directory = 0x0010, Reparse = 0x0400;
 
     [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFileAttributesW(string fileName);
@@ -192,11 +193,11 @@ internal static class FullTextNative
                     hidden_component = (bool?)null, system_component = (bool?)null,
                     directory = (bool?)null };
             anyHidden |= (attributes & Hidden) != 0;
-            anySystem |= (attributes & System) != 0;
+            anySystem |= (attributes & SystemAttribute) != 0;
             latest = attributes;
         }
         return new { index, status = "ok", hidden = (bool?)((latest & Hidden) != 0),
-            system = (bool?)((latest & System) != 0), reparse = (bool?)false,
+            system = (bool?)((latest & SystemAttribute) != 0), reparse = (bool?)false,
             hidden_component = (bool?)anyHidden, system_component = (bool?)anySystem,
             directory = (bool?)((latest & Directory) != 0) };
     }
