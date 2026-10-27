@@ -6,8 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { constants as fsConstants } from 'node:fs';
 import { extractDocument } from './extract.js';
 import { FullTextWriterLock } from './writer-lock.js';
+import {excludedByFileAttributes} from './windows-attributes.js';
 import { hanBigrams, makeSnippet, parseFullTextQuery, satisfiesHanSubstrings } from './query.js';
-import { authorize, normalizeConfig, previewFullText, safeRealpath, within } from './policy.js';
+import { authorize, normalizeConfig, previewFullText, safeRealpath, within, isExcludedSource, qualifyFixedVolumes } from './policy.js';
 import type {
   FullTextAuthorizer, FullTextConfig, FullTextPrincipal, FullTextPreview,
   FullTextScanReceipt, FullTextSearchPage, FullTextFormat,
@@ -91,6 +92,7 @@ export class FullTextEngine {
     const owner = validPrincipal(principal);
     if (!c.roots.length || !c.formats.length || confirmedDigest !== c.digest)
       throw new Error('FULLTEXT_SELECTION_NOT_CONFIRMED');
+    await qualifyFixedVolumes(c); // exact owner-approved FIXED volumes only
     const rootIdentities=new Map<string,FsIdentity>();
     for (const root of c.roots) {
       await authorize(check, owner, 'configure', root, root);
@@ -176,6 +178,7 @@ export class FullTextEngine {
   }
   private async rootsAllowed(c: FullTextPrincipal, action: Parameters<FullTextAuthorizer>[0]['action']): Promise<void> {
     this.guard(c);
+    await qualifyFixedVolumes(this.config); // never assume prior drive type after removable mount changes
     for (const root of this.config.roots) {
       await this.auth(c, action, root, root);
       await this.verifyRoot(root);
@@ -273,6 +276,8 @@ export class FullTextEngine {
     await this.auth(c,'scan',task.root,task.path);
     const dir = await safeRealpath(task.path);
     if (!within(task.root,dir)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+    if(await excludedByFileAttributes(dir,this.config.includeHidden))
+      throw new Error('FULLTEXT_SCAN_ROOT_BECAME_HIDDEN');
     let count = 0, incomplete = false;
     const handle = await fs.opendir(dir);
     try {
@@ -283,6 +288,7 @@ export class FullTextEngine {
         if (!this.config.includeHidden && entry.name.startsWith('.')) continue;
         if (entry.name.includes(':') || entry.isSymbolicLink()) { incomplete = true; continue; }
         const child = path.join(dir,entry.name);
+        if(isExcludedSource(this.config,child))continue;
         if (!within(task.root,child)) { incomplete = true; continue; }
         const kind = entry.isDirectory()?'dir':entry.isFile()?'file':undefined;
         if (!kind) { incomplete = true; continue; }
@@ -290,6 +296,9 @@ export class FullTextEngine {
         // No unauthorized filenames or counts enter the durable queue.
         try { await this.auth(c,'scan',task.root,child); }
         catch { incomplete = true; continue; }
+        // Windows Hidden/System are file attributes, not dot-prefixes.
+        // Check before queuing any child path or reading its content.
+        if(await excludedByFileAttributes(child,this.config.includeHidden))continue;
         // Authorization may yield control; verify directory identity again
         // before committing any discovered child name to the durable queue.
         await this.verifyRoot(task.root);
@@ -309,6 +318,7 @@ export class FullTextEngine {
     try { file = await safeRealpath(task.path); }
     catch (error) { if (isMissing(error)) return 'skipped'; throw error; }
     if (!within(task.root,file)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+    if(isExcludedSource(this.config,file))return 'skipped';
     const format = path.extname(file).toLowerCase() as FullTextFormat;
     if (!formatSet.has(format) || !this.config.formats.includes(format)) return 'skipped';
     await this.verifyRoot(task.root);
@@ -316,6 +326,9 @@ export class FullTextEngine {
     const run = this.runById(task.run_id);
     const stat = await fs.lstat(file);
     if (!stat.isFile()) return 'skipped';
+    // A queued file may have gained +H after the containing directory was
+    // enumerated. Do not open its bytes when includeHidden=false.
+    if(await excludedByFileAttributes(file,this.config.includeHidden))return 'skipped';
     if (run.read_bytes + stat.size > this.config.budgets.maxTotalSourceBytes)
       throw new Error('FULLTEXT_SOURCE_BUDGET_EXCEEDED');
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as {n:number}).n;
@@ -332,6 +345,9 @@ export class FullTextEngine {
     await this.auth(c,'index',task.root,file);
     await this.verifyRoot(task.root);
     await safeRealpath(file);
+    if(isExcludedSource(this.config,file))throw new Error('FULLTEXT_SOURCE_EXCLUDED_DURING_SCAN');
+    if(await excludedByFileAttributes(file,this.config.includeHidden))
+      throw new Error('FULLTEXT_SOURCE_BECAME_HIDDEN');
     if (!sameIdentity(sourceIdentity,await identity(file)))
       throw new Error('FULLTEXT_SOURCE_IDENTITY_CHANGED');
     const postHash=await boundedPinnedHash(file,sourceIdentity,this.config.budgets.maxFileBytes);
@@ -350,7 +366,7 @@ export class FullTextEngine {
         let originalMissing = false;
         try { await fs.lstat(matches[0].path); } catch (error) { originalMissing = isMissing(error); }
         if (originalMissing) {
-          try { await this.auth(c,'metadata',task.root,matches[0].path); movedId = matches[0].id; }
+          try { await this.auth(c,'index',task.root,matches[0].path); movedId = matches[0].id; }
           catch { /* Can't disclose a rename from inaccessible old metadata. */ }
         }
       }
@@ -398,7 +414,9 @@ export class FullTextEngine {
         // Root may be revoked midscan. No deletions/counts are disclosed unless
         // the current authority still admits this exact document metadata.
         try {
-          await this.auth(c,'metadata',old.root,old.path);
+          // Deletion is index maintenance: an absent old path has no read ACL.
+          // Authorize current root and its canonical parent, never reveal it.
+          await this.auth(c,'index',old.root,old.path);
           await this.auth(c,'scan',old.root,old.root);
           await this.verifyRoot(old.root);
         } catch {
@@ -498,11 +516,14 @@ export class FullTextEngine {
     let authorizationGaps = false;
     for (const row of candidates) {
       if (results.length >= limit) break;
+      if(isExcludedSource(this.config,row.path)){authorizationGaps=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
         await this.auth(c,'snippet',row.root,row.path);
         const canonical = await safeRealpath(row.path);
         if (!within(row.root,canonical)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
+        if(await excludedByFileAttributes(canonical,this.config.includeHidden))
+          throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
       } catch { authorizationGaps=true; continue; }
       const body = this.db.prepare('SELECT body FROM docs_fts WHERE rowid=?').get(row.id) as {body:string}|undefined;
       if (!body || !satisfiesHanSubstrings(body.body,parsed.hanRuns)) continue;
@@ -539,8 +560,10 @@ export class FullTextEngine {
       this.config.formats.map(format=>[format,{format,indexed:0,unqualified:0,reasons:{}}])
     );
     for (const row of rows.slice(0,this.config.budgets.maxQueryCandidates)) {
+      if(isExcludedSource(this.config,row.path)){hiddenByAcl=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
+        if(await excludedByFileAttributes(row.path,this.config.includeHidden))throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
         const format=path.extname(row.path).toLowerCase() as FullTextFormat;
         const entry=coverage.get(format);
         if (row.state==='indexed') {

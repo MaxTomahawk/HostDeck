@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export const contractVersion = '1.1.0';
+export const contractVersion = '1.2.0';
 export type Domain = 'user' | 'desktop' | 'browser' | 'service' | 'management';
 export type Effect = 'read' | 'write' | 'execute' | 'control' | 'manage';
 export interface ToolContract {
@@ -90,6 +90,17 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('move_file', 'Move an authorized file without implicit overwrite.', { source: path, destination: path, overwrite: z.boolean().default(false) }, ['files:write'], 'user', 'write'),
   tool('delete_path', 'Delete or recycle an explicitly authorized path.', { path, recursive: z.boolean().default(false), recycle: z.boolean().default(true) }, ['files:write'], 'user', 'write'),
   tool('apply_artifact', 'Apply an owned artifact to a local destination after integrity checks.', { artifact_id: id, path, overwrite: z.boolean().default(false) }, ['artifacts:read', 'files:write'], 'user', 'write'),
+  // HD-WP-05 is an independent, dormant provider: never changes search_files/Everything.
+  // New scopes must be explicitly present in both verified principal and local grants.
+  tool('fulltext_preview', 'Preview owner-selected local full-text roots and budgets without creating an index.', {}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_status', 'Read only current owner-ACL-filtered full-text coverage or unconfigured state.', {}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_confirm', 'Open only the protected owner-approved exact full-text configuration digest.', {digest:z.string().regex(/^[a-f0-9]{64}$/)}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_start', 'Start a manually stepped, confirmed and authorized local full-text scan.', {}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_step', 'Advance one bounded owned full-text scan step; no background watcher.', {run_id:id,max_operations:positive.max(256).default(32)}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_query', 'Query only currently authorized indexed document text and snippets; stale until rescanned.', {query:z.string().min(2).max(256),limit:positive.max(100).default(10)}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_pause', 'Pause an owned confirmed full-text scan.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_resume', 'Explicitly resume an interrupted or paused owned scan.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_cancel', 'Cancel an owned full-text scan; already indexed text remains until rescanned.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
   tool('search_files', 'Start an owned bounded file/content search. Explicit provider selection never silently falls back.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000), provider:z.enum(['direct','everything']).optional(), entry_type:z.enum(['files','directories','all']).default('files'), sort:z.enum(['path','name']).optional(), metadata:z.boolean().default(false) }, ['files:read'], 'user', 'read'),
   tool('list_providers', 'Inspect search providers and current owner/device/function preferences. Does not activate software.', {}, ['files:read'], 'user', 'read'),
   tool('set_provider_preference', 'Set or clear this owner/device/function search preference; null restores the stable direct default. Does not install or start software.', {capability:z.enum(['files.name','files.content']),provider:z.enum(['direct','everything']).nullable()}, ['files:write'], 'user', 'write'),
