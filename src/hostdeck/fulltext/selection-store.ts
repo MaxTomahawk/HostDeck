@@ -48,7 +48,8 @@ function equalPath(a:string,b:string):boolean{
 /** Native verifier must check effective Windows ACL of the protected files,
  * EVERY replaceable ancestor (DELETE_CHILD/rename), and user-token rights.
  * A JSON literal, MCP boolean or source-level string is not that proof.
- * The current production host does not provide such a verifier: dormant.
+ * Without a trusted verifier this store stays dormant. The host may bind the
+ * private native verifier only from its explicit installer-pinned worker.
  */
 export type FullTextProtectedAclVerifier = (paths:Readonly<{
   protectedDirectory:string;

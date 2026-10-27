@@ -155,19 +155,22 @@ export class FullTextAdapter implements Adapter {
       case 'hostdeck_fulltext_confirm':
         return {...await this.port.confirm(principal,String(args.digest)),engine:FULLTEXT_ENGINE_ID};
       case 'hostdeck_fulltext_start':
-        return this.port.start(principal);
+        return this.port.startDriven(principal);
       case 'hostdeck_fulltext_step':
-        return this.port.step(principal,String(args.run_id),Number(args.max_operations));
+        return this.port.step(principal,String(args.run_id),
+          args.max_operations===undefined?undefined:Number(args.max_operations));
       case 'hostdeck_fulltext_query':
         return this.port.query(principal,String(args.query),Number(args.limit));
       case 'hostdeck_fulltext_pause':
         await this.port.pause(principal,String(args.run_id));return {state:'paused',run_id:args.run_id};
-      case 'hostdeck_fulltext_resume':
-        await this.port.resume(principal,String(args.run_id));return {state:'running',run_id:args.run_id};
+      case 'hostdeck_fulltext_resume':{
+        const result=await this.port.resumeDriven(principal,String(args.run_id));
+        return {state:result.state,run_id:result.runId,driver:result.driver};
+      }
       case 'hostdeck_fulltext_cancel':
         await this.port.cancel(principal,String(args.run_id));return {state:'cancelled',run_id:args.run_id};
       default:throw new Error('FULLTEXT_OPERATION_UNAVAILABLE');
     }
   }
-  close():void{this.port.close();}
+  async close():Promise<void>{await this.port.close();}
 }

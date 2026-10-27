@@ -49,5 +49,5 @@ test('fulltext provider stays dormant and fails closed on unapproved/revoked sel
     selected={indexFile:dbPath,roots:[data],formats:['.txt']};
     approved=false;
     await assert.rejects(port.status(caller),/FULLTEXT_OWNER_SELECTION_REVOKED/);
-  }finally{port.close();await rm(base,{recursive:true,force:true});}
+  }finally{await port.close();await rm(base,{recursive:true,force:true});}
 });

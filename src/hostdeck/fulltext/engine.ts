@@ -318,6 +318,17 @@ export class FullTextEngine {
     this.db.prepare('UPDATE runs SET state=?,updated_at=? WHERE id=?').run(value,now(),id);
   }
 
+  /** Internal safety transition only: never access content or resume a run.
+   * Used when the explicit one-shot driver's fresh permission check fails.
+   * The caller must already hold this engine's exact owner and live writer.
+   */
+  interruptDrivenRun(c:FullTextPrincipal,id:string):string {
+    this.guard(c);
+    const run=this.runById(id);
+    if(run.state==='running')this.state(id,'interrupted');
+    return this.runById(id).state;
+  }
+
   /** Explicit new scan. Earlier results stay, marked last_scan_only, until complete. */
   async start(c: FullTextPrincipal): Promise<{runId: string; state: 'running'}> {
     await this.rootsAllowed(c, 'scan');
@@ -690,6 +701,8 @@ export class FullTextEngine {
     state: string; coverage: 'partial_or_unverified'|'complete_bounded_scan';
     visibleDocuments: number; visibleCountTruncated: boolean;
     actualFreshness: 'not_monitored'; configuredRoots: number;
+    run: null | {runId:string;state:string;processed:number;updatedAt:string;
+      contentPartial:boolean;traversalPartial:boolean;totalTasks:'unknown'};
     visibleFormatCoverage: Array<{format:FullTextFormat;indexed:number;unqualified:number;reasons:Record<string,number>}>;
     visibleDocumentCoverage: FullTextDocumentEvidence[];
     visibleDocumentCoverageTruncated: boolean;
@@ -738,6 +751,12 @@ export class FullTextEngine {
         ? 'complete_bounded_scan':'partial_or_unverified',
       visibleDocuments:visible, visibleCountTruncated:rows.length>this.config.budgets.maxQueryCandidates,
       actualFreshness:'not_monitored', configuredRoots:this.config.roots.length,
+      run:run?{runId:run.id,state:run.state,
+        processed:Number.isSafeInteger(run.processed)&&run.processed>=0?run.processed:0,
+        updatedAt:run.updated_at,
+        contentPartial:run.incomplete!==0,
+        traversalPartial:run.traversal_incomplete!==0,
+        totalTasks:'unknown' as const}:null,
       visibleFormatCoverage:[...coverage.values()],
       visibleDocumentCoverage,
       visibleDocumentCoverageTruncated:evidenceTruncated||rows.length>this.config.budgets.maxQueryCandidates,
