@@ -34,12 +34,12 @@ function related(name:string,marker:string):string {
   if(root==='footnotes'||root==='endnotes'){
     const singular=root.slice(0,-1);
     return '<?xml version="1.0" encoding="UTF-8"?>'
-      +'<w:'+root+' xmlns:w="'+W+'><w:'+singular+' w:id="5">'+content
+      +'<w:'+root+' xmlns:w="'+W+'"><w:'+singular+' w:id="5">'+content
       +'</w:'+singular+'></w:'+root+'>';
   }
   if(root==='comments'){
     return '<?xml version="1.0" encoding="UTF-8"?>'
-      +'<w:comments xmlns:w="'+W+'><w:comment w:id="0" w:author="Fixture">'+content
+      +'<w:comments xmlns:w="'+W+'"><w:comment w:id="0" w:author="Fixture">'+content
       +'</w:comment></w:comments>';
   }
   return part(root,marker);
@@ -123,8 +123,10 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
     const xml=zip.file('xl/worksheets/sheet1.xml')!.asText();
     assert.match(xml,/<f>A6\*2<\/f>/,'raw OOXML formula source');
     assert.match(xml,/<v>99<\/v>/,'independent XML stale cache, not calculated by HostDeck');
-    assert.ok(Object.keys(zip.files).some(x=>/^xl\/comments\/comment\d+\.xml$/.test(x)),
-      'separate OOXML comment part must exist');
+    const commentParts=Object.keys(zip.files).filter(x=>/^xl\/comments[1-9]\d*\.xml$/.test(x));
+    assert.equal(commentParts.length,1,'ExcelJS must write its actual xl/comments1.xml-style part');
+    const commentsXml=zip.file(commentParts[0])!.asText();
+    assert.ok(commentsXml.includes('NOTE_é_中文'),'ZIP comment XML must contain fixture note');
     const r=await extractDocument(f,root,limits);
     assert.equal(r.status,'indexed');
     assert.equal(r.coverage,'partial');
