@@ -50,6 +50,13 @@ test('real HTTP MCP fulltext: dormant discovery, owner-approved index, actual re
     stateDirectory:state,workspace,
     protectedOwnerDirectory:protectedDir,
     verifyProtectedOwnerAcl:syntheticBoundary,
+    // Synthetic metadata for the HTTP/PolicyGate oracle ONLY. Actual Windows
+    // attribute and executable-identity evidence is in the opt-in native test.
+    nativeAttributes:{attributes:async(paths,authorize)=>{
+      for(const item of paths)if(await authorize(item)!==true)throw new Error('FULLTEXT_DENIED');
+      return paths.map((_,index)=>({index,status:'ok' as const,hidden:false,system:false,
+        reparse:false,hidden_component:false,system_component:false,directory:false}));
+    }},
     reauthorize:(name,args)=>facade.reauthorize(name,args),
     additionalReadDeny:async r=>extraDenied.has(r.path),
   });
