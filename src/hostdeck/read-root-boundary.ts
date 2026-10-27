@@ -12,7 +12,7 @@
  */
 import path from 'node:path';
 import { RuntimeError } from './runtime-error.js';
-import { safeRealpath, within } from './fulltext/policy.js';
+import { safeRealpath, within, isExcludedSource } from './fulltext/policy.js';
 
 export interface ReadRootOwner {
   readonly ownerId: string;
@@ -24,10 +24,14 @@ export interface ProtectedReadRootSelection {
   readonly owner: ReadRootOwner;
   /** Verified by the protected local source; not a self-declared MCP revision. */
   readonly revision: string;
-  /** Explicitly approved non-volume absolute directory roots. */
+  /** Explicitly approved directory roots (fixed-volume root requires separate qualification). */
   readonly roots: readonly string[];
   /** Explicit owner exclusions, in addition to protected runtime paths. */
   readonly excludedRoots: readonly string[];
+  /** Only actual fixed local volumes verified by native DriveInfo may appear here. */
+  readonly fixedVolumeRoots?: readonly string[];
+  /** Bound to approved protected selection content, never an MCP claim. */
+  readonly digest?: string;
 }
 
 export type ReadOnlyOperation = 'name_search' | 'content_search' |
@@ -104,12 +108,18 @@ export async function resolveSelectedReadPath(
       selection.roots.length > 128 || selection.excludedRoots.length > 256 ||
       !Array.isArray(protectedPaths) || protectedPaths.length === 0) denied();
 
-  // A broad disk-root selection needs its own fixed-volume qualification,
-  // protective exclusions, approval and budgets. It is NOT implicit here.
+  // Explicit fixed local volume roots are supported only when the separately
+  // protected selection source has performed genuine DriveInfo qualification.
+  // The caller cannot select roots from MCP arguments or broadUserAuthority.
   const candidateRoots: string[] = [];
   for (const approved of selection.roots) {
-    if (typeof approved !== 'string' || !path.isAbsolute(approved) ||
-        equals(path.resolve(approved), path.parse(approved).root)) denied();
+    if (typeof approved !== 'string' || !path.isAbsolute(approved)) denied();
+    const volume = equals(path.resolve(approved), path.parse(approved).root);
+    if (volume && (
+      process.platform !== 'win32' ||
+      !/^[A-Za-z]:\\$/.test(approved) ||
+      !selection.fixedVolumeRoots?.some(qualified => equals(approved, qualified))
+    )) denied();
     // Reject aliases and reparse points for the entire trusted root chain.
     candidateRoots.push(await safeRoot(approved));
   }
@@ -122,6 +132,18 @@ export async function resolveSelectedReadPath(
   const canonical = await safeRoot(absolute);
   if (!within(root, canonical)) denied();
 
+  const fixedVolumeRoots = selection.fixedVolumeRoots ?? [];
+  if (fixedVolumeRoots.some(volume => within(volume, canonical))) {
+    if (isExcludedSource({fixedVolumeRoots: [...fixedVolumeRoots],
+        excludedRoots: [...selection.excludedRoots]} as
+      ReturnType<typeof import('./fulltext/policy.js').normalizeConfig>, canonical)) denied();
+    // Built-in credential/profile exclusions for owner-selected broad volumes.
+    const parts = path.relative(root, canonical).split(path.sep)
+      .map(part => part.toLowerCase());
+    if (parts.some(part => ['.ssh','.gnupg','.aws','.azure','.kube',
+       '.config','ntuser.dat','ntuser.dat.log1','ntuser.dat.log2',
+       'credentials','vault'].includes(part))) denied();
+  }
   for (const raw of [...selection.excludedRoots, ...protectedPaths]) {
     const excluded = await safeRoot(raw);
     if (within(excluded, canonical)) denied();
