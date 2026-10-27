@@ -110,11 +110,12 @@ export class ReadRootAccess {
     } finally { await handle?.close(); }
   }
 
-  async readBytes(scope: ReadRootScope, owner: ReadRootOwner,
-    operation: ReadOnlyOperation, maxBytes: number): Promise<Buffer> {
-    return this.withFile(scope, owner, operation, maxBytes, async file => {
-      // Existing bounded file-read budget, even when the source grows during
-      // the open-handle read. Never allocate from attacker-controlled size.
+  async readBytesVerified(scope: ReadRootScope, owner: ReadRootOwner,
+    operation: ReadOnlyOperation, maxBytes: number): Promise<{
+      bytes:Buffer;identity:{dev:string;ino:string;mtimeNs:string;size:string};
+    }> {
+    return this.withFile(scope, owner, operation, maxBytes, async (file,stat) => {
+      // Bounded by the existing content/read-file maximum even while growing.
       const output=Buffer.alloc(maxBytes+1);
       let length=0;
       while(length<output.length){
@@ -123,8 +124,15 @@ export class ReadRootAccess {
         length+=read.bytesRead;
       }
       if(length>maxBytes)throw new RuntimeError('LIMIT_EXCEEDED');
-      return output.subarray(0,length);
+      return {bytes:output.subarray(0,length),identity:{
+        dev:stat.dev.toString(),ino:stat.ino.toString(),
+        mtimeNs:stat.mtimeNs.toString(),size:stat.size.toString(),
+      }};
     });
+  }
+  async readBytes(scope: ReadRootScope, owner: ReadRootOwner,
+    operation: ReadOnlyOperation, maxBytes: number): Promise<Buffer> {
+    return (await this.readBytesVerified(scope,owner,operation,maxBytes)).bytes;
   }
 
   async metadata(scope: ReadRootScope, owner: ReadRootOwner,
