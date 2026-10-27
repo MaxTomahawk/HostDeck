@@ -179,6 +179,14 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
         ...(config.fulltext_owner_directory?[config.fulltext_owner_directory]:[]),
         ...(config.fulltext_index_directory?[config.fulltext_index_directory]:[]),
         ...(config.browser_executable?[config.browser_executable]:[]),
+        ...(config.remote_tls?[config.remote_tls.pfx_file]:[]),
+        ...(config.everything?[config.everything.executable]:[]),
+        ...(config.privilege_broker?[
+          config.privilege_broker.powershell_executable,
+          config.privilege_broker.submit_script,
+          config.privilege_broker.receipt_script,
+          config.privilege_broker.verification_script,
+        ]:[]),
       ],readRootStore)
     : undefined;
   const files=await FileAdapter.create({workspace,reauthorize,providers,everything,
