@@ -25,11 +25,30 @@ export interface FullTextPortWiring {
   nativeAttributes?: FullTextAttributeProbe;
 }
 
+type DrivenState='scheduled'|'running'|'paused'|'resource_paused'|'cancelled'|'complete'|'interrupted';
+interface DrivenRun {
+  runId:string;
+  principal:FullTextPrincipal;
+  state:DrivenState;
+  stopped:boolean;
+  steps:number;
+  processed:number;
+  lastCode?:string;
+}
+function safeDriverCode(error:unknown):string {
+  const message=error instanceof Error?error.message:'';
+  if (/^FULLTEXT_[A-Z_]+$/.test(message))return message;
+  return 'FULLTEXT_DRIVER_AUTHORIZATION_OR_RUNTIME_LOST';
+}
+
 export class FullTextPort {
   readonly providerId = FULLTEXT_PROVIDER_ID;
   private engine?: FullTextEngine;
   private activePrincipal?: string;
   private activeDigest?: string;
+  private readonly stepLane: {tail:Promise<void>}={tail:Promise.resolve()};
+  private driver?:DrivenRun;
+  private closed=false;
   constructor(private readonly wiring: FullTextPortWiring) {}
 
   private key(c: FullTextPrincipal): string {
@@ -43,6 +62,7 @@ export class FullTextPort {
   }
 
   async confirm(c: FullTextPrincipal, digest: string): Promise<{ready:true;provider:string}> {
+    if(this.closed)throw new Error('FULLTEXT_PORT_CLOSED');
     const config=await this.wiring.loadSelectedConfig(c);
     if (!config || config.roots.length===0) throw new Error('FULLTEXT_ROOTS_NOT_SELECTED');
     const preview=await FullTextEngine.preview(config,c,this.wiring.authorize);
@@ -52,10 +72,12 @@ export class FullTextPort {
     this.engine=await FullTextEngine.openConfirmed(config,c,this.wiring.authorize,digest,this.wiring.nativeAttributes);
     this.activePrincipal=this.key(c);
     this.activeDigest=digest;
+    // Deliberately no driver launch on confirm, including after process crash.
     return {ready:true,provider:this.providerId};
   }
 
   private async require(c: FullTextPrincipal): Promise<FullTextEngine> {
+    if(this.closed)throw new Error('FULLTEXT_PORT_CLOSED');
     if (!this.engine || this.activePrincipal!==this.key(c) || !this.activeDigest)
       throw new Error('FULLTEXT_NOT_CONFIGURED');
     const config=await this.wiring.loadSelectedConfig(c);
@@ -66,21 +88,115 @@ export class FullTextPort {
     return this.engine;
   }
 
-  async start(c:FullTextPrincipal): Promise<{runId:string;state:'running'}> {
+  async start(c:FullTextPrincipal):Promise<{runId:string;state:'running'}> {
     return (await this.require(c)).start(c);
   }
-  async step(c:FullTextPrincipal, runId:string, maxOperations?:number):Promise<FullTextScanReceipt> {
-    return (await this.require(c)).step(c,runId,maxOperations);
+
+  /**
+   * Only the MCP fulltext_start/resume adapter invokes this one-shot driver.
+   * Direct engine/port starts stay manual, preserving existing test semantics.
+   * No cron, watcher, periodic polling or automatic resume on confirmation.
+   */
+  async startDriven(c:FullTextPrincipal):Promise<{runId:string;state:'running';driver:'scheduled'}> {
+    const started=await this.start(c);
+    this.launch(c,started.runId);
+    return {...started,driver:'scheduled'};
   }
-  async pause(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).pause(c,runId);}
-  async resume(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).resume(c,runId);}
-  async cancel(c:FullTextPrincipal, runId:string):Promise<void> {await (await this.require(c)).cancel(c,runId);}
-  async query(c:FullTextPrincipal, phrase:string, limit?:number):Promise<FullTextSearchPage> {
+  async resumeDriven(c:FullTextPrincipal,id:string):Promise<{state:'running';runId:string;driver:'scheduled'}> {
+    await this.resume(c,id);
+    this.launch(c,id);
+    return {state:'running',runId:id,driver:'scheduled'};
+  }
+
+  private launch(c:FullTextPrincipal,runId:string):void {
+    if(this.closed)throw new Error('FULLTEXT_PORT_CLOSED');
+    const previous=this.driver;
+    if(previous && !previous.stopped && ['scheduled','running'].includes(previous.state))
+      throw new Error('FULLTEXT_DRIVER_ALREADY_RUNNING');
+    previous && (previous.stopped=true);
+    const token:DrivenRun={runId,principal:{...c},state:'scheduled',stopped:false,steps:0,processed:0};
+    this.driver=token;
+    this.schedule(token);
+  }
+  private schedule(token:DrivenRun):void {
+    if(this.closed||token.stopped||this.driver!==token)return;
+    // One immediate continuation for an explicitly started run; no auto-start.
+    // ALS request context is inherited, so EVERY step re-enters PolicyGate.
+    setImmediate(()=>{if(!this.closed&&!token.stopped&&this.driver===token)
+      void this.pump(token);});
+  }
+  private async pump(token:DrivenRun):Promise<void> {
+    if(this.closed||token.stopped||this.driver!==token)return;
+    token.state='running';
+    try {
+      const receipt=await this.step(token.principal,token.runId);
+      token.steps++;
+      token.processed+=receipt.processedThisStep;
+      token.state=receipt.state;
+      if(receipt.reason)token.lastCode=receipt.reason;
+      if(receipt.state==='running'&&!token.stopped)this.schedule(token);
+      else token.stopped=true; // includes complete, resource_paused, pause, cancel
+    }catch(error){
+      // Authorization/selection loss must never leave an apparently active
+      // durable run continuing without a live policy context. This is an
+      // owner-scoped, index-only safety transition; NO source path is touched.
+      const code=safeDriverCode(error);
+      let state='interrupted';
+      try{state=this.engine?.interruptDrivenRun(token.principal,token.runId)??state;}
+      catch { /* No automatic recovery, no raw error/path disclosure. */ }
+      token.lastCode=code;
+      token.state=(['complete','cancelled','paused','resource_paused','interrupted'].includes(state)
+        ? state:'interrupted') as DrivenState;
+      token.stopped=true;
+    }
+  }
+
+  async step(c:FullTextPrincipal,runId:string,maxOperations?:number):Promise<FullTextScanReceipt> {
+    if(this.closed)throw new Error('FULLTEXT_PORT_CLOSED');
+    // Shared per-engine serialization: a manual MCP step waits behind the
+    // in-flight driver step rather than invoking engine.step concurrently.
+    const work=this.stepLane.tail.then(async()=>
+      (await this.require(c)).step(c,runId,maxOperations));
+    this.stepLane.tail=work.then(()=>undefined,()=>undefined);
+    const receipt=await work;
+    if(this.driver?.runId===runId&&receipt.state!=='running'){
+      this.driver.state=receipt.state;
+      this.driver.stopped=true;
+      if(receipt.reason)this.driver.lastCode=receipt.reason;
+    }
+    return receipt;
+  }
+  async pause(c:FullTextPrincipal,runId:string):Promise<void> {
+    await (await this.require(c)).pause(c,runId);
+    if(this.driver?.runId===runId){this.driver.stopped=true;this.driver.state='paused';}
+  }
+  async resume(c:FullTextPrincipal,runId:string):Promise<void> {
+    await (await this.require(c)).resume(c,runId);
+  }
+  async cancel(c:FullTextPrincipal,runId:string):Promise<void> {
+    await (await this.require(c)).cancel(c,runId);
+    if(this.driver?.runId===runId){this.driver.stopped=true;this.driver.state='cancelled';}
+  }
+  async query(c:FullTextPrincipal,phrase:string,limit?:number):Promise<FullTextSearchPage> {
     return (await this.require(c)).search(c,phrase,limit);
   }
   async status(c:FullTextPrincipal):ReturnType<FullTextEngine['status']> {
-    return (await this.require(c)).status(c);
+    const durable=await (await this.require(c)).status(c);
+    const current=this.driver?.runId===durable.run?.runId?this.driver:undefined;
+    return {...durable,driver:current?
+      {state:current.state,runId:current.runId,steps:current.steps,processedInProcess:current.processed,
+        ...(current.lastCode?{lastCode:current.lastCode}:{})}:
+      {state:'inactive' as const}};
   }
 
-  close():void {this.engine?.close();this.engine=undefined;this.activePrincipal=undefined;this.activeDigest=undefined;}
+  async close():Promise<void> {
+    if(this.closed)return;
+    this.closed=true;
+    if(this.driver)this.driver.stopped=true;
+    // Wait for the *same* step lane used by manual+driver operations before
+    // releasing writer lock; main awaits this before closing native helper.
+    await this.stepLane.tail;
+    try{this.engine?.close();}
+    finally{this.engine=undefined;this.activePrincipal=undefined;this.activeDigest=undefined;}
+  }
 }
