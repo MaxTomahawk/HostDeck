@@ -263,11 +263,12 @@ export class FullTextNativeBridge {
    * argument. The worker compares it with GetFileInformationByHandle before
    * returning any names. Unsupported or stale workers fail closed.
    */
-  async directoryPage(file: string, expectedIno: bigint, offset: number,
+  async directoryPage(file: string, expectedDev: bigint, expectedIno: bigint, offset: number,
     limit: number, authorize: (file: string) => Promise<boolean>): Promise<{
       names: string[]; more: boolean; nextOffset: number;
     }> {
     if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
+        expectedDev <= 0n || expectedDev > 18446744073709551615n ||
         expectedIno <= 0n || expectedIno > 18446744073709551615n ||
         !Number.isSafeInteger(offset) || offset < 0 || offset > 100000 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 192)
@@ -276,7 +277,8 @@ export class FullTextNativeBridge {
     try { allowed = await authorize(file) === true; } catch { /* deny */ }
     if (!allowed) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
     const result = await this.queued('directory_page', {
-      path: file, expected_ino: expectedIno.toString(), offset, limit,
+      path: file, expected_dev: expectedDev.toString(),
+      expected_ino: expectedIno.toString(), offset, limit,
     }) as Record<string, unknown>;
     if (!result || !Array.isArray(result.names) ||
         result.names.length > limit || typeof result.more !== 'boolean' ||
