@@ -3,6 +3,8 @@ import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
+import { observeDiagnosticsProvenance, unavailableDiagnosticsProvenance } from './diagnostics-provenance.js';
 import { interpretJobReceipt, type RunnerProtocol } from './job-receipt.js';
 
 export interface StateContext { ownerId: string; deviceId: string; executorId: string }
@@ -144,7 +146,32 @@ export class StateServices {
     if(name==='apply_artifact'){const x=this.owned(this.artifacts,a.artifact_id,c);if(!x)return null;const workspace=path.resolve(this.options.workspace),requested=String(a.path??''),dest=path.resolve(workspace,requested),rel=path.relative(workspace,dest);if(rel==='..'||rel.startsWith(`..${path.sep}`)||path.isAbsolute(rel))throw new Error('FORBIDDEN');const b=await readFile(x.path);if(hash(b)!==x.sha256)throw new Error('ARTIFACT_INTEGRITY');return {destination:dest,bytes:b,mimeType:x.mimeType,sha256:x.sha256}}
     if(name==='read_events'){return this.events.filter(e=>e.ownerId===c.ownerId&&e.deviceId===c.deviceId&&e.sequence>Number(a.after??0)).sort((x,y)=>x.sequence-y.sequence).slice(0,Number(a.limit??100)).map(({ownerId,...e})=>e)}
     if(name==='device_status'){for(const j of this.jobs.values())if(j.ownerId===c.ownerId&&j.deviceId===c.deviceId&&j.executorId===c.executorId&&['queued','running','cancelling','uncertain'].includes(j.status)&&!j.runnerContainmentUncertain)await this.reconcile(j);return {device_id:this.options.deviceId,status:'ready',jobs:[...this.jobs.values()].filter(j=>j.ownerId===c.ownerId&&j.deviceId===c.deviceId&&j.executorId===c.executorId).length,storage:'local'}}
-    if(name==='diagnostics'){const jobs=a.include_jobs===true?[...this.jobs.values()].filter(j=>j.ownerId===c.ownerId&&j.deviceId===c.deviceId&&j.executorId===c.executorId).map(j=>({job_id:j.id,status:j.status,created_at:j.created,updated_at:j.updated})):undefined;const data=Buffer.from(JSON.stringify({device_id:this.options.deviceId,generated_at:new Date().toISOString(),state:'ready',...(jobs?{jobs}:{})},null,2));const id=await this.saveArtifact(c.ownerId,c.deviceId,c.executorId,data,'diagnostics.json');return {artifact_id:id,sha256:this.artifacts.get(id)!.sha256,size:data.length}}
+    if(name==='diagnostics'){
+       const jobs=a.include_jobs===true?[...this.jobs.values()]
+         .filter(j=>j.ownerId===c.ownerId&&j.deviceId===c.deviceId&&j.executorId===c.executorId)
+         .map(j=>({job_id:j.id,status:j.status,created_at:j.created,updated_at:j.updated})):undefined;
+       // Paths originate exclusively from this loaded module, the running Node
+       // executable and trusted internal StateOptions. Request args supply no paths.
+       // Only seven fixed release components plus manifest.json may be inspected.
+       let provenance;
+       try {
+         provenance=await observeDiagnosticsProvenance({
+           moduleFile:fileURLToPath(import.meta.url),
+           nodeExecutable:process.execPath,
+           nativeExecutable:this.options.desktopWorkerExecutable,
+         });
+       } catch {
+         // A provenance reader failure must not break ordinary owner diagnostics.
+         // Never expose exception messages, paths or environment data.
+         provenance=unavailableDiagnosticsProvenance();
+       }
+       const data=Buffer.from(JSON.stringify({
+         device_id:this.options.deviceId,generated_at:new Date().toISOString(),
+         state:'ready',provenance,...(jobs?{jobs}:{}),
+       },null,2));
+       const id=await this.saveArtifact(c.ownerId,c.deviceId,c.executorId,data,'diagnostics.json');
+       return {artifact_id:id,sha256:this.artifacts.get(id)!.sha256,size:data.length};
+     }
     throw new Error('UNKNOWN_OPERATION');
   }
 }
