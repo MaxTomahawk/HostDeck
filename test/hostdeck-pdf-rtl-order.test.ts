@@ -73,6 +73,12 @@ test('unknown Arabic diacritics, direction, markup and geometry fail closed', ()
   assert.throws(
     () => restoreQualifiedPdfArabic('ةَدْرَو',captureInline('ةَدْرَو')),
     /PDF_RTL_ORDER_UNQUALIFIED/);
+  const marked = [...'ﻋَﻠﻰ'].map((glyph,index) =>
+    item(glyph,42+index*6,baseline, /^\p{M}$/u.test(glyph)?'ltr':'rtl',
+      /^\p{M}$/u.test(glyph)?0:6));
+  assert.throws(
+    () => restoreQualifiedPdfArabic('ﻋَﻠﻰ',marked),
+    /PDF_RTL_ORDER_UNQUALIFIED/, 'Combining marks are not qualified by glyph reversal');
   assert.throws(
     () => restoreQualifiedPdfArabic('ﻢﻜﻴﻠﻋ ؟',captureInline('ﻢﻜﻴﻠﻋ ؟')),
     /PDF_RTL_ORDER_UNQUALIFIED/);
