@@ -283,7 +283,8 @@ export class FullTextNativeBridge {
         result.next_offset !== offset + result.names.length ||
         result.names.some(name => typeof name !== 'string' ||
           name.length < 1 || name.length > 255 ||
-          name === '.' || name === '..' || /[\\/:\\u0000]/.test(name)) ||
+          name === '.' || name === '..' || name.includes('\\') ||
+          name.includes('/') || name.includes(':') || name.includes('\0')) ||
         (result.more && result.names.length === 0))
       throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
     return { names: result.names as string[], more: result.more,
