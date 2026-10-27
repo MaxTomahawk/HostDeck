@@ -114,7 +114,7 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
     ws.getCell('A3').value={text:'LINK_LABEL_é_中文',hyperlink:'https://example.org/fixture?q=2'};
     ws.getCell('A4').value='NOTE_ANCHOR';
     ws.getCell('A4').note='NOTE_é_中文';
-    ws.getCell('A5').value={formula:'A6*2',result:12};
+    ws.getCell('A5').value={formula:'A6*2',result:99}; // intentionally stale XML cache
     ws.getCell('A6').value=6;
     ws.getCell('A7').value={formula:'A6+1'};
     ws.getCell('A8').value={error:'#DIV/0!'};
@@ -122,7 +122,7 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
     const zip=new (pizzipPackage.load())(await readFile(f));
     const xml=zip.file('xl/worksheets/sheet1.xml')!.asText();
     assert.match(xml,/<f>A6\*2<\/f>/,'raw OOXML formula source');
-    assert.match(xml,/<v>12<\/v>/,'independent XML cached value, not calculated by HostDeck');
+    assert.match(xml,/<v>99<\/v>/,'independent XML stale cache, not calculated by HostDeck');
     assert.ok(Object.keys(zip.files).some(x=>/^xl\/comments\/comment\d+\.xml$/.test(x)),
       'separate OOXML comment part must exist');
     const r=await extractDocument(f,root,limits);
@@ -130,7 +130,7 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
     assert.equal(r.coverage,'partial');
     for(const fragment of ['2024-05-06','RICH_é_中文','LINK_LABEL_é_中文',
       'https://example.org/fixture?q=2','NOTE_é_中文',
-      'Formula source: =A6*2','Cached result (not calculated): 12',
+      'Formula source: =A6*2','Cached result (not calculated): 99',
       'Formula source: =A6+1'])
       assert.ok(r.text?.includes(fragment),'qualified source field not searchable: '+fragment);
     assert.ok(r.limitations?.includes('formula_cache_missing'),'missing cache must not be calculated');
