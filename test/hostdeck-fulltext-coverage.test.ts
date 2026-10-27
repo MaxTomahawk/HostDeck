@@ -65,6 +65,14 @@ async function docxFixture(file:string):Promise<{tail:string;markers:string[]}>{
   rels=rels.replace('</Relationships>',inserts+'</Relationships>');
   zip.file('word/_rels/document.xml.rels',rels);
   for(let i=0;i<targets.length;i++)zip.file('word/'+targets[i],related(names[i],markers[i]));
+  // Proper independent OPC content types, so this is a valid multi-part
+  // document rather than merely a ZIP with unreferenced Word filenames.
+  const typeNames=['header','footer','footnotes','endnotes','comments'];
+  const types=typeNames.map((type,i)=>'<Override PartName="/word/'+targets[i]
+    +'" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.'+type+'+xml"/>').join('');
+  const manifest=zip.file('[Content_Types].xml')!.asText();
+  assert.ok(manifest.includes('</Types>'));
+  zip.file('[Content_Types].xml',manifest.replace('</Types>',types+'</Types>'));
   await writeFile(file,zip.generate({type:'nodebuffer',compression:'DEFLATE'}));
   const reread=new (pizzipPackage.load())(await readFile(file));
   assert.ok(reread.file('word/document.xml')!.asText().includes(tail));
@@ -106,6 +114,7 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
     ws.getCell('A5').value={formula:'A6*2',result:12};
     ws.getCell('A6').value=6;
     ws.getCell('A7').value={formula:'A6+1'};
+    ws.getCell('A8').value={error:'#DIV/0!'};
     await writeFile(f,Uint8Array.from(await book.xlsx.writeBuffer()));
     const zip=new (pizzipPackage.load())(await readFile(f));
     const xml=zip.file('xl/worksheets/sheet1.xml')!.asText();
@@ -122,6 +131,8 @@ test('XLSX independent XML formula/cache/note versus parsed dates, rich text and
       'Formula source: =A6+1'])
       assert.ok(r.text?.includes(fragment),'qualified source field not searchable: '+fragment);
     assert.ok(r.limitations?.includes('formula_cache_missing'),'missing cache must not be calculated');
+    assert.ok(r.limitations?.includes('xlsx_unsupported_cell_value'),
+      'Excel error object must not become invented text or full-coverage PASS');
     assert.ok(!r.text?.includes('Cached result (not calculated): 7'));
   }finally{await rm(root,{recursive:true,force:true});}
 });
