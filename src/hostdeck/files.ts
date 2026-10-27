@@ -41,11 +41,11 @@ function ownerMatches(a: FileOwnerContext, b: FileOwnerContext): boolean {
 }
 
 function safePattern(pattern: string, literal: boolean): RegExp {
-  if (pattern.length > 256) throw new Error('SEARCH_PATTERN_LIMIT');
+  if (pattern.length > 256) throw new RuntimeError('SEARCH_PATTERN_LIMIT');
   if (literal) return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   // Avoid quantified groups, alternation and nested/overlapping quantifiers that can stall the service.
-  if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new Error('SEARCH_REGEX_FEATURE_DENIED');
-  try { return new RegExp(pattern, 'i'); } catch { throw new Error('SEARCH_PATTERN_INVALID'); }
+  if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new RuntimeError('SEARCH_REGEX_FEATURE_DENIED');
+  try { return new RegExp(pattern, 'i'); } catch { throw new RuntimeError('SEARCH_PATTERN_INVALID'); }
 }
 
 function visibleName(name: string, includeHidden: boolean): boolean { return includeHidden || !name.startsWith('.'); }
