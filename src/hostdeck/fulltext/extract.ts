@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { SaxesParser } from 'saxes';
-import { DocumentAdapter, checkOfficeArchive } from '../documents.js';
+import { checkOfficeArchive, readPdfTextFromBuffer } from '../documents.js';
 import { requireSafeOfficeXml } from '../office-xml.js';
 import { pizzipPackage } from '../../utils/files/docx.js';
 import { exceljsPackage } from '../../utils/files/excel.js';
 import type { DocumentCoverage, FullTextBudgets, FullTextFormat } from './types.js';
+import { safeRealpath, within } from './policy.js';
 
 const textFormats = new Set<FullTextFormat>(['.txt','.md','.csv','.json']);
 const fullTextFormats = new Set<FullTextFormat>(['.txt','.md','.csv','.json','.docx','.xlsx','.pdf']);
@@ -21,6 +24,54 @@ const DOCX_TARGETS: Record<string,{file:RegExp;root:string}> = {
   endnotes: {file:/^endnotes\.xml$/,root:'endnotes'},
   comments: {file:/^comments\.xml$/,root:'comments'},
 };
+
+const SOURCE_READ_CHUNK = 64 * 1024;
+
+/**
+ * Read at most maxBytes + ONE sentinel byte from an already-opened descriptor.
+ * The caller may have stat'ed the handle before concurrent growth begins.
+ * No fs.readFile(), preallocation based on a mutable file size, or unbounded
+ * retry is permitted. Preserve source identity/timestamps for the caller's
+ * later content-hash verification.
+ */
+export async function readOpenedSourceBounded(
+  handle: FileHandle, initial: Stats, maxBytes: number,
+): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('FULLTEXT_BUDGET_INVALID');
+  if (!initial.isFile()) throw new Error('FULLTEXT_NOT_FILE');
+  if (initial.size > maxBytes) throw new Error('FULLTEXT_SOURCE_SIZE_CHANGED');
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  while (bytes <= maxBytes) {
+    const length = Math.min(SOURCE_READ_CHUNK, maxBytes + 1 - bytes);
+    const chunk = Buffer.allocUnsafe(length);
+    const result = await handle.read(chunk, 0, length, null);
+    if (result.bytesRead === 0) break;
+    bytes += result.bytesRead;
+    if (bytes > maxBytes) throw new Error('FULLTEXT_SOURCE_SIZE_CHANGED');
+    chunks.push(chunk.subarray(0, result.bytesRead));
+  }
+  const after = await handle.stat();
+  if (after.size !== bytes || after.size !== initial.size ||
+      after.dev !== initial.dev || after.ino !== initial.ino ||
+      after.mtimeMs !== initial.mtimeMs)
+    throw new Error('FULLTEXT_SOURCE_CHANGED');
+  return Buffer.concat(chunks, bytes);
+}
+
+async function readSourceBounded(
+  file: string, maxBytes: number,
+): Promise<{input: Buffer; oversized?:never} | {input?:never; oversized:number}> {
+  const handle = await fs.open(file, 'r');
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error('FULLTEXT_NOT_FILE');
+    if (stat.size > maxBytes) return { oversized: stat.size };
+    return { input: await readOpenedSourceBounded(handle, stat, maxBytes) };
+  } finally {
+    await handle.close();
+  }
+}
 
 export interface ExtractedDocument {
   status: DocumentCoverage;
@@ -287,11 +338,16 @@ async function parseXlsx(input:Buffer,budgets:FullTextBudgets):Promise<{text:str
 export async function extractDocument(file:string,root:string,budgets:FullTextBudgets):Promise<ExtractedDocument>{
   const format=path.extname(file).toLowerCase() as FullTextFormat;
   if(!fullTextFormats.has(format))throw new Error('FULLTEXT_FORMAT_UNSUPPORTED');
-  const stat=await fs.stat(file);
-  if(!stat.isFile())throw new Error('FULLTEXT_NOT_FILE');
-  if(stat.size>budgets.maxFileBytes)return {status:'size_limit',format,bytes:stat.size,sha256:''};
-  const input=await fs.readFile(file);
-  if(input.length>budgets.maxFileBytes)throw new Error('FULLTEXT_SOURCE_SIZE_CHANGED');
+  // Keep the root/path qualification that DocumentAdapter previously enforced
+  // for PDFs, while handling each format from a bounded source buffer.
+  const realRoot=await safeRealpath(root);
+  const realFile=await safeRealpath(file);
+  if(!within(realRoot,realFile))throw new Error('FULLTEXT_OUTSIDE_ROOT');
+  const source=await readSourceBounded(realFile,budgets.maxFileBytes);
+  if(source.oversized!==undefined)return {
+    status:'size_limit',format,bytes:source.oversized,sha256:'',
+  };
+  const input=source.input!;
   const sha256=createHash('sha256').update(input).digest('hex');
   const base={format,bytes:input.length,sha256};
   let text:string,limitations:string[]|undefined;
@@ -300,7 +356,7 @@ export async function extractDocument(file:string,root:string,budgets:FullTextBu
       try{text=utf8.decode(input);}
       catch{return {...base,status:'invalid_utf8'};}
     }else if(format==='.docx'||format==='.xlsx'){
-      const verified=await checkOfficeArchive(file,format);
+      const verified=await checkOfficeArchive(realFile,format,input);
       if(!verified.equals(input))throw new Error('FULLTEXT_SOURCE_CHANGED');
       if(format==='.docx'){
         const found=parseDocx(verified,budgets);
@@ -311,26 +367,24 @@ export async function extractDocument(file:string,root:string,budgets:FullTextBu
         if(found.cells===0)return {...base,status:'unsupported_office_value',coverage:'partial',limitations};
       }
     }else{
-      const document=await DocumentAdapter.create({workspace:root});
-      const response=await document.handle('hostdeck_read_document',{path:file}) as {
-        content?:unknown;metadata?:Record<string,unknown>;
-      };
-      if(!Array.isArray(response.content) || response.content.some(
-        part=>!part||typeof part!=='object'||typeof (part as {text?:unknown}).text!=='string'))
-        throw new Error('FULLTEXT_UNQUALIFIED_PDF_RESULT');
-      text=(response.content as Array<{text:string}>).map(part=>part.text).join('\n');
+      // Parse precisely the prebounded input. A path-based second PDF open
+      // would reintroduce the post-stat unbounded memory race.
+      const pdf=await readPdfTextFromBuffer(input);
+      text=pdf.text.join('\n');
       if(/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(text))
         return {...base,status:'pdf_rtl_unqualified'};
       if(!text.trim())return {...base,status:'ocr_required'};
     }
     text=checkedText(text,budgets);
-    const current=createHash('sha256').update(await fs.readFile(file)).digest('hex');
+    const after=await readSourceBounded(realFile,budgets.maxFileBytes);
+    if(after.oversized!==undefined)throw new Error('FULLTEXT_SOURCE_CHANGED');
+    const current=createHash('sha256').update(after.input!).digest('hex');
     if(current!==sha256)throw new Error('FULLTEXT_SOURCE_CHANGED');
     return {...base,status:'indexed',text,
       ...((format==='.docx'||format==='.xlsx')?{coverage:'partial' as const,limitations}: {})};
   }catch(error){
     const code=error instanceof Error?error.message:'';
-    if(code==='FULLTEXT_SOURCE_CHANGED')throw error;
+    if(code==='FULLTEXT_SOURCE_CHANGED'||code==='FULLTEXT_SOURCE_SIZE_CHANGED')throw error;
     if(code==='FULLTEXT_TEXT_LIMIT')return {...base,status:'text_limit'};
     if(code==='FULLTEXT_OCR_REQUIRED')return {...base,status:'ocr_required'};
     if(code==='FULLTEXT_UNSUPPORTED_OFFICE_VALUE'||code==='FULLTEXT_UNQUALIFIED_OFFICE_RESULT')
