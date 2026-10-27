@@ -98,22 +98,26 @@ export class FullTextPort {
    * No cron, watcher, periodic polling or automatic resume on confirmation.
    */
   async startDriven(c:FullTextPrincipal):Promise<{runId:string;state:'running';driver:'scheduled'}> {
+    this.assertNoActiveDriver();
     const started=await this.start(c);
     this.launch(c,started.runId);
     return {...started,driver:'scheduled'};
   }
   async resumeDriven(c:FullTextPrincipal,id:string):Promise<{state:'running';runId:string;driver:'scheduled'}> {
+    this.assertNoActiveDriver();
     await this.resume(c,id);
     this.launch(c,id);
     return {state:'running',runId:id,driver:'scheduled'};
   }
 
-  private launch(c:FullTextPrincipal,runId:string):void {
+  private assertNoActiveDriver():void {
     if(this.closed)throw new Error('FULLTEXT_PORT_CLOSED');
-    const previous=this.driver;
-    if(previous && !previous.stopped && ['scheduled','running'].includes(previous.state))
+    if(this.driver&&!this.driver.stopped&&['scheduled','running'].includes(this.driver.state))
       throw new Error('FULLTEXT_DRIVER_ALREADY_RUNNING');
-    previous && (previous.stopped=true);
+  }
+  private launch(c:FullTextPrincipal,runId:string):void {
+    this.assertNoActiveDriver();
+    if(this.driver)this.driver.stopped=true;
     const token:DrivenRun={runId,principal:{...c},state:'scheduled',stopped:false,steps:0,processed:0};
     this.driver=token;
     this.schedule(token);
@@ -180,7 +184,7 @@ export class FullTextPort {
   async query(c:FullTextPrincipal,phrase:string,limit?:number):Promise<FullTextSearchPage> {
     return (await this.require(c)).search(c,phrase,limit);
   }
-  async status(c:FullTextPrincipal):ReturnType<FullTextEngine['status']> {
+  async status(c:FullTextPrincipal) {
     const durable=await (await this.require(c)).status(c);
     const current=this.driver?.runId===durable.run?.runId?this.driver:undefined;
     return {...durable,driver:current?
