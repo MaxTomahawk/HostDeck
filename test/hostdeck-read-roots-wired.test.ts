@@ -146,6 +146,23 @@ test('revoking approval before the next result page withholds all paths, counts 
   }finally{await f.cleanup();}
 });
 
+test('stale search-page identities do not disclose a replaced source or old snippet',async()=>{
+  const f=await fixture();
+  try{
+    const request=await f.adapter.handle('hostdeck_search_files',{
+      ...local(f.readRoot),pattern:'READ_ROOT_CONTENT',mode:'content',provider:'direct'},owner) as any;
+    const first=await finishes(f.adapter,request.search_id);
+    assert.equal(first.items.length,1);
+    const old=path.join(f.readRoot,'old-result.txt');
+    await fs.rename(f.source,old);
+    await fs.writeFile(f.source,'NEW_FILE_SAME_PATH');
+    const next=await f.adapter.handle('hostdeck_search_results',{
+      device_id:owner.deviceId,search_id:request.search_id,offset:0,limit:10},owner) as any;
+    assert.deepEqual(next.items,[],'stale snippet/object identity is not disclosed');
+    assert.equal(await fs.readFile(f.source,'utf8'),'NEW_FILE_SAME_PATH');
+  }finally{await f.cleanup();}
+});
+
 test('actual opened file object swap while reading is denied, not disclosed',async()=>{
   const f=await fixture();
   try{
@@ -159,7 +176,7 @@ test('actual opened file object swap while reading is denied, not disclosed',asy
       // a real symlink (reparse point) to a different sibling file.
       try{await fs.symlink(f.other,f.source,'file');}
       catch(error){
-        if((error as NodeJS.ErrnoException).code!=='EPERM')throw error;
+        if(!['EPERM','EACCES','ENOTSUP'].includes(String((error as NodeJS.ErrnoException).code)))throw error;
         await fs.writeFile(f.source,'SWAPPED_NEW_FILE');
       }
       return bytes;
@@ -181,7 +198,7 @@ test('actual root replacement/reparse while descriptor is open is denied',async 
       try{
         await fs.symlink(f.otherRoot,f.readRoot,process.platform==='win32'?'junction':'dir');
       }catch(error){
-        if((error as NodeJS.ErrnoException).code!=='EPERM')throw error;
+        if(!['EPERM','EACCES','ENOTSUP'].includes(String((error as NodeJS.ErrnoException).code)))throw error;
         // The root identity swap is still real. The reparse-specific
         // variant cannot be claimed if this Windows token denies junctions.
         t.diagnostic('Reparse branch SKIP: junction permission denied; root swap still tested');
