@@ -258,6 +258,39 @@ export class FullTextNativeBridge {
   }
 
   /**
+   * Enumerate ONLY against the directory handle opened by the pinned worker.
+   * The expected inode is taken from a fresh trusted fs.stat, never an MCP
+   * argument. The worker compares it with GetFileInformationByHandle before
+   * returning any names. Unsupported or stale workers fail closed.
+   */
+  async directoryPage(file: string, expectedIno: bigint, offset: number,
+    limit: number, authorize: (file: string) => Promise<boolean>): Promise<{
+      names: string[]; more: boolean; nextOffset: number;
+    }> {
+    if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
+        expectedIno <= 0n || expectedIno > 18446744073709551615n ||
+        !Number.isSafeInteger(offset) || offset < 0 || offset > 100000 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 192)
+      throw error('FULLTEXT_NATIVE_INVALID_ARGUMENTS');
+    let allowed = false;
+    try { allowed = await authorize(file) === true; } catch { /* deny */ }
+    if (!allowed) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
+    const result = await this.queued('directory_page', {
+      path: file, expected_ino: expectedIno.toString(), offset, limit,
+    }) as Record<string, unknown>;
+    if (!result || !Array.isArray(result.names) ||
+        result.names.length > limit || typeof result.more !== 'boolean' ||
+        result.next_offset !== offset + result.names.length ||
+        result.names.some(name => typeof name !== 'string' ||
+          name.length < 1 || name.length > 255 ||
+          name === '.' || name === '..' || /[\\/:\\u0000]/.test(name)) ||
+        (result.more && result.names.length === 0))
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    return { names: result.names as string[], more: result.more,
+      nextOffset: result.next_offset as number };
+  }
+
+  /**
    * Qualify only the existing object supplied by the trusted coordinator.
    * Read-only, no owner records/index requirement and NO approval side effect.
    * The result is normalized: native paths, SIDs and arbitrary fields never
