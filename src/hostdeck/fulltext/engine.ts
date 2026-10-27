@@ -317,37 +317,50 @@ export class FullTextEngine {
     await this.auth(c,'scan',task.root,task.path);
     const dir = await safeRealpath(task.path);
     if (!within(task.root,dir)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
-    if(await excludedByFileAttributes(dir,this.config.includeHidden))
+    if(!await this.nativeEligible(c,task.root,dir,'scan'))
       throw new Error('FULLTEXT_SCAN_ROOT_BECAME_HIDDEN');
     let count = 0, incomplete = false;
-    const handle = await fs.opendir(dir);
-    try {
-      for await (const entry of handle) {
-        if (Date.now() >= deadline) { incomplete = true; break; }
-        count++;
-        if (count > this.config.budgets.maxEntriesPerDirectory) { incomplete = true; break; }
-        if (!this.config.includeHidden && entry.name.startsWith('.')) continue;
-        if (entry.name.includes(':') || entry.isSymbolicLink()) { incomplete = true; continue; }
-        const child = path.join(dir,entry.name);
-        if(isExcludedSource(this.config,child))continue;
-        if (!within(task.root,child)) { incomplete = true; continue; }
-        const kind = entry.isDirectory()?'dir':entry.isFile()?'file':undefined;
-        if (!kind) { incomplete = true; continue; }
-        if (kind === 'dir' && task.depth >= this.config.budgets.maxDepth) { incomplete = true; continue; }
-        // No unauthorized filenames or counts enter the durable queue.
-        try { await this.auth(c,'scan',task.root,child); }
-        catch { incomplete = true; continue; }
-        // Windows Hidden/System are file attributes, not dot-prefixes.
-        // Check before queuing any child path or reading its content.
-        if(await excludedByFileAttributes(child,this.config.includeHidden))continue;
-        // Authorization may yield control; verify directory identity again
-        // before committing any discovered child name to the durable queue.
+    const pending:Array<{child:string;kind:'dir'|'file'}>=[];
+    const flush=async()=>{
+      if(!pending.length)return;
+      // One persistent native request per bounded batch, NOT attrib.exe
+      // per file. Native bridge reauthorizes every member before dispatch.
+      const candidates=pending.map(item=>item.child);
+      const included=await this.nativeBatch(c,task.root,candidates,'scan');
+      for(let index=0;index<pending.length;index++){
+        if(!included[index])continue;
+        const {child,kind}=pending[index];
+        // No native result is an ACL grant or protection against path swaps.
+        await this.auth(c,'scan',task.root,child);
         await this.verifyRoot(task.root);
         await safeRealpath(dir);
-        if (this.runById(task.run_id).state !== 'running') throw new Error('FULLTEXT_STEP_STOPPED');
+        await safeRealpath(child);
+        if(this.runById(task.run_id).state!=='running')throw new Error('FULLTEXT_STEP_STOPPED');
         this.db.prepare('INSERT OR IGNORE INTO queue(path,root,depth,kind,run_id) VALUES(?,?,?,?,?)')
           .run(child,task.root,task.depth+1,kind,task.run_id);
       }
+      pending.length=0;
+    };
+    const handle = await fs.opendir(dir);
+    try {
+      for await (const entry of handle) {
+        if(Date.now()>=deadline){incomplete=true;break;}
+        count++;
+        if(count>this.config.budgets.maxEntriesPerDirectory){incomplete=true;break;}
+        if(!this.config.includeHidden&&entry.name.startsWith('.'))continue;
+        if(entry.name.includes(':')||entry.isSymbolicLink()){incomplete=true;continue;}
+        const child=path.join(dir,entry.name);
+        if(isExcludedSource(this.config,child))continue;
+        if(!within(task.root,child)){incomplete=true;continue;}
+        const kind=entry.isDirectory()?'dir':entry.isFile()?'file':undefined;
+        if(!kind){incomplete=true;continue;}
+        if(kind==='dir'&&task.depth>=this.config.budgets.maxDepth){incomplete=true;continue;}
+        try{await this.auth(c,'scan',task.root,child);}
+        catch{incomplete=true;continue;}
+        pending.push({child,kind});
+        if(pending.length===64)await flush();
+      }
+      await flush();
     } finally { await handle.close().catch(() => undefined); }
     if (incomplete) this.markTraversalPartial(task.run_id);
     return incomplete;
@@ -369,7 +382,7 @@ export class FullTextEngine {
     if (!stat.isFile()) return 'skipped';
     // A queued file may have gained +H after the containing directory was
     // enumerated. Do not open its bytes when includeHidden=false.
-    if(await excludedByFileAttributes(file,this.config.includeHidden))return 'skipped';
+    if(!await this.nativeEligible(c,task.root,file,'index'))return 'skipped';
     if (run.read_bytes + stat.size > this.config.budgets.maxTotalSourceBytes)
       throw new Error('FULLTEXT_SOURCE_BUDGET_EXCEEDED');
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as {n:number}).n;
@@ -387,7 +400,7 @@ export class FullTextEngine {
     await this.verifyRoot(task.root);
     await safeRealpath(file);
     if(isExcludedSource(this.config,file))throw new Error('FULLTEXT_SOURCE_EXCLUDED_DURING_SCAN');
-    if(await excludedByFileAttributes(file,this.config.includeHidden))
+    if(!await this.nativeEligible(c,task.root,file,'index'))
       throw new Error('FULLTEXT_SOURCE_BECAME_HIDDEN');
     if (!sameIdentity(sourceIdentity,await identity(file)))
       throw new Error('FULLTEXT_SOURCE_IDENTITY_CHANGED');
@@ -563,7 +576,7 @@ export class FullTextEngine {
         await this.auth(c,'snippet',row.root,row.path);
         const canonical = await safeRealpath(row.path);
         if (!within(row.root,canonical)) throw new Error('FULLTEXT_OUTSIDE_ROOT');
-        if(await excludedByFileAttributes(canonical,this.config.includeHidden))
+        if(!await this.nativeEligible(c,row.root,canonical,'snippet'))
           throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
       } catch { authorizationGaps=true; continue; }
       const body = this.db.prepare('SELECT body FROM docs_fts WHERE rowid=?').get(row.id) as {body:string}|undefined;
@@ -604,7 +617,7 @@ export class FullTextEngine {
       if(isExcludedSource(this.config,row.path)){hiddenByAcl=true;continue;}
       try {
         await this.auth(c,'metadata',row.root,row.path);
-        if(await excludedByFileAttributes(row.path,this.config.includeHidden))throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
+        if(!await this.nativeEligible(c,row.root,row.path,'metadata'))throw new Error('FULLTEXT_RESULT_BECAME_HIDDEN');
         const format=path.extname(row.path).toLowerCase() as FullTextFormat;
         const entry=coverage.get(format);
         if (row.state==='indexed') {
