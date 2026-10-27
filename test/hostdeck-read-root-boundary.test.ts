@@ -60,7 +60,9 @@ test('original FileAdapter and UserRuntime still deny external paths even with a
 test('Everything query matches outside the workspace are dropped despite a broader provider index', async () => {
   const f = await fixture();
   const everything = {
-    sessionId: 1, status: async () => ({ installed: true, running: true, healthy: true }),
+    sessionId: 1, status: async () => ({ installed: true, enabled: true, running: true,
+      compatible: true, healthy: true, reason: 'fixture', version: 'fixture',
+      instance: 'fixture', session_id: 1, qualified: 'not_independently_accepted' as const }),
     query: async () => ({
       paths: [f.outside], truncated: false, version: 'fixture',
       instance: 'fixture', session_id: 1, runtime_id: 'fixture',
