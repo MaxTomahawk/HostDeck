@@ -85,7 +85,13 @@ function repairLine(items: readonly PdfDirectionalItem[]): string {
       asciiDigits = true;
     } else unqualified();
   }
-  if (!rtlGlyphs || (latin && asciiDigits)) unqualified();
+  // PDF.js per-glyph dir=rtl, a common y, and increasing visual x do NOT
+  // establish the paragraph base direction. The presence of an LTR island
+  // (Latin OR ASCII digits) cannot be used to infer an LTR-major paragraph:
+  // the same visual stream can have multiple incompatible logical orders.
+  // Reject all such mixed-direction lines until explicit base-direction
+  // evidence is qualified. Do not silently return a plausible false repair.
+  if (!rtlGlyphs || latin || asciiDigits) unqualified();
 
   // We only accept these unambiguous token classes; literal FTS/Unicode bidi
   // metadata cannot tell us how other script punctuation was laid out.
@@ -94,28 +100,11 @@ function repairLine(items: readonly PdfDirectionalItem[]): string {
       !ARABIC_TOKEN.test(part) && !LATIN_WORD.test(part) && !ASCII_NUMBER.test(part)))
     unqualified();
 
-  if (!latin) {
-    // Visual RTL baseline: reverse the *token order* but keep ASCII numerals
-    // internally left-to-right (e.g. visual "عالم 123 مرحبا").
-    return parts.reverse().map(part =>
-      ARABIC_TOKEN.test(part) ? reversePresentationGlyphs(part) : part).join('');
-  }
-
-  // LTR-major baseline: retain Latin positions and reverse only each adjoining
-  // RTL island (including inter-word spaces), never the whole mixed line.
-  const rebuilt: string[] = [];
-  for (let i = 0; i < parts.length;) {
-    if (!ARABIC_TOKEN.test(parts[i])) {
-      rebuilt.push(parts[i++]);
-      continue;
-    }
-    let end = i;
-    while (end + 2 < parts.length && SPACE.test(parts[end + 1]) &&
-           ARABIC_TOKEN.test(parts[end + 2])) end += 2;
-    rebuilt.push(reversePresentationGlyphs(parts.slice(i, end + 1).join('')));
-    i = end + 1;
-  }
-  return rebuilt.join('');
+  // Only the presentation-glyph, Arabic-and-spaces-only baseline has a
+  // qualified reconstruction route. Never infer paragraph direction from
+  // Latin/numeric presence or from a plausible normalized output.
+  return parts.reverse().map(part =>
+    ARABIC_TOKEN.test(part) ? reversePresentationGlyphs(part) : part).join('');
 }
 
 /**
