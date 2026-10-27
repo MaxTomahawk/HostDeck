@@ -84,9 +84,9 @@ The existing \`hostdeck_edit_document\` API retains its established \`text_repla
 ## B007 explicitly configured owner read/search roots — source candidate
 
 The existing installer-controlled HostDeck configuration may optionally include a
-**protected** \`read_roots\` object:
+**protected** `read_roots` object:
 
-\`\`\`json
+```json
 {
   "owner_id": "authorized_owner_identifier",
   "revision": "read_scope_rev1",
@@ -94,12 +94,12 @@ The existing installer-controlled HostDeck configuration may optionally include 
   "excluded_roots": ["X:\\ExampleData\\Private"],
   "fixed_volume_roots": []
 }
-\`\`\`
+```
 
 This object is a field **inside the existing main config**, not a new
 selection/approval file. It has no MCP setter. When absent, all read, list,
 search, write, document and process paths keep their pre-existing workspace-only
-boundaries. Grant scopes or \`broadUserAuthority\`, search hits, tool arguments and
+boundaries. Grant scopes or `broadUserAuthority`, search hits, tool arguments and
 provider preference do not create roots.
 
 The existing PolicyGate controls scope, owner, device, executor, grant revision
@@ -107,19 +107,19 @@ and eligible session. Each external read refreshes the original, physically
 protected config file by verified native effective-ACL check and actual open
 file identity, binds the configured owner and config bytes/revision, and
 requires the existing pinned, non-elevated FullTextNativeBridge. Its original
-\`attributes_batch\` checks Windows Hidden/System/reparse on every ancestor;
-the existing \`qualifyFixedVolumes\` performs Windows DriveInfo.Fixed checks for
+`attributes_batch` checks Windows Hidden/System/reparse on every ancestor;
+the existing `qualifyFixedVolumes` performs Windows DriveInfo.Fixed checks for
 any explicitly listed complete drive root. An unqualified native worker,
 config ACL, directory handle, root or attribute state denies the external read.
 
-\`hostdeck_list_directory\` and direct directory search reuse FileAdapter's
+`hostdeck_list_directory` and direct directory search reuse FileAdapter's
 bounds while enumerating names through the **already-existing native worker**,
-extended only with a bounded \`directory_page\` operation. The worker compares
+extended only with a bounded `directory_page` operation. The worker compares
 the actual opened directory HANDLE's FileID against the independently observed
 target before emitting names; rechecked root/config/owner/grant and directory
-identity are mandatory before disclosure. Node \`opendir\` is retained for
+identity are mandatory before disclosure. Node `opendir` is retained for
 workspace-only paths, because its handle is not available to that native
-identity check. Existing \`hostdeck_read_file\`, \`hostdeck_file_info\`, direct
+identity check. Existing `hostdeck_read_file`, `hostdeck_file_info`, direct
 name/content search and Everything name search can read from the selected
 external roots only; every retained page rechecks scope and individual
 FileID/mtime/size before publishing paths, snippets, metadata or counts.
