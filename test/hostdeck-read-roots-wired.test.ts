@@ -155,12 +155,18 @@ test('actual opened file object swap while reading is denied, not disclosed',asy
     await assert.rejects(f.access.withFile(scope as any,owner,'read_file',1024,async fd=>{
       const bytes=await fd.readFile();
       await fs.rename(f.source,moved);
-      // Real filesystem path identity is now different, even though fd
-      // still refers to the old open object. Do not disclose its bytes.
-      await fs.writeFile(f.source,'SWAPPED_NEW_FILE');
+      // The descriptor remains bound to the old object. Where permitted, use
+      // a real symlink (reparse point) to a different sibling file.
+      try{await fs.symlink(f.other,f.source,'file');}
+      catch(error){
+        if((error as NodeJS.ErrnoException).code!=='EPERM')throw error;
+        await fs.writeFile(f.source,'SWAPPED_NEW_FILE');
+      }
       return bytes;
     }),/READ_ROOT_(?:DENIED|CHANGED)/);
-    assert.equal(await fs.readFile(f.source,'utf8'),'SWAPPED_NEW_FILE');
+    const latest=await fs.lstat(f.source);
+    assert.ok(latest.isSymbolicLink()||
+      (await fs.readFile(f.source,'utf8'))==='SWAPPED_NEW_FILE');
   }finally{await f.cleanup();}
 });
 
