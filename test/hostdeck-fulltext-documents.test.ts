@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile , realpath} from 'node:fs/promises';
@@ -42,7 +43,7 @@ test('ground-truth DOCX/XLSX/PDF extractors use existing qualified parsers; no i
     assert.equal((await extractDocument(imageOnly,corpus,budget)).status,'ocr_required');
 
     const preview=await FullTextEngine.preview(config,principal,authorize);
-    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes);
     const id=(await engine.start(principal)).runId;
     let last='running';
     for(let i=0;i<20;i++){
