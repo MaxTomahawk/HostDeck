@@ -53,18 +53,41 @@ test('HD-REQ-0030 RED baseline is not logical; item-qualified repair preserves u
   assert.ok(expected.includes('België, 中文'));
 });
 
-test('observed Arabic numbers and an LTR Arabic island retain digit and Latin order', () => {
-  const observed = 'ﻢﻟﺎﻋ 123 ﺎﺒﺣﺮﻣ\nHello ﺎﺒﺣﺮﻣ World';
-  const rawItems = [
-    ...captureInline('ﻢﻟﺎﻋ 123 ﺎﺒﺣﺮﻣ'),
-    item('',42,baseline-40,'ltr',0,true),
-    ...captureInline('Hello ﺎﺒﺣﺮﻣ World').map(part => ({
-      ...part,
-      transform:[1,0,0,1,part.transform![4],baseline-40],
-    })),
-  ];
-  assert.equal(restoreQualifiedPdfArabic(observed,rawItems),
-    'مرحبا 123 عالم\nHello مرحبا World');
+test('HD-B007 root RED: mixed Latin island cannot establish paragraph base direction', () => {
+  // Root's genuine source-review RED: the same increasing-x RTL glyph
+  // transcript admits incompatible logical orders. The previous synthetic
+  // label "an LTR Arabic island retain digit and Latin order" was NOT
+  // paragraph-direction evidence. Do not turn it into a false repair PASS.
+  const observed = 'ﻢﻟﺎﻋ API ﺎﺒﺣﺮﻣ';
+  const items = captureInline(observed);
+  assert.equal(items.map(i=>i.str).join(''),observed);
+  assert.ok(items.filter(i=>/^\\p{Script=Arabic}$/u.test(i.str))
+    .every(i=>i.dir==='rtl'));
+  assert.throws(
+    () => restoreQualifiedPdfArabic(observed,items),
+    /PDF_RTL_ORDER_UNQUALIFIED/,
+    'RTL-major "مرحبا API عالم" must NOT be silently changed to "عالم API مرحبا"');
+
+  // Preserve the previous reported mixed-script fixtures as negative
+  // oracles. Their old positive assertions were never qualified.
+  for (const mixed of [
+    'ﻢﻟﺎﻋ 123 ﺎﺒﺣﺮﻣ',
+    'Hello ﺎﺒﺣﺮﻣ World',
+    'ﻢﻟﺎﻋ API ﺎﺒﺣﺮﻣ',
+  ]) {
+    assert.throws(
+      () => restoreQualifiedPdfArabic(mixed,captureInline(mixed)),
+      /PDF_RTL_ORDER_UNQUALIFIED/,
+      'Arabic+Latin/numerals must fail closed without base-direction evidence');
+  }
+});
+
+test('previously logical Unicode Arabic is not falsely claimed as repaired', () => {
+  const logical = 'السلام عليكم';
+  assert.throws(
+    () => restoreQualifiedPdfArabic(logical,captureInline(logical)),
+    /PDF_RTL_ORDER_UNQUALIFIED/,
+    'No presentation glyph or base-direction proof: keep the original oracle open');
 });
 
 test('unknown Arabic diacritics, direction, markup and geometry fail closed', () => {
