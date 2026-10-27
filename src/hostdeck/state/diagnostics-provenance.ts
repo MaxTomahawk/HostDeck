@@ -298,3 +298,20 @@ export async function observeDiagnosticsProvenance(input: ProvenanceInputs): Pro
     source_binding: 'unknown',
   };
 }
+
+/** Diagnostic availability must not depend on provenance being observable. */
+export function unavailableDiagnosticsProvenance(): DiagnosticsProvenance {
+  return {
+    schema: 1, scope: 'known_release_components', layout: 'unavailable',
+    manifest: {
+      observation: 'unbound', observed_sha256: null, size_bytes: null,
+      schema_status: 'unknown', expected_digest_sha256: null, digest_binding: 'unknown',
+    },
+    components: COMPONENT_IDS.map(component_id => ({
+      component_id, observation: 'unbound', observed_sha256: null,
+      expected_sha256: null, comparison: 'unknown', size_bytes: null,
+    })),
+    component_comparison: 'unknown', signature_binding: 'unknown',
+    source_binding: 'unknown',
+  };
+}
