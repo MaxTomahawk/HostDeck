@@ -152,35 +152,68 @@ export class FileAdapter {
     }
   }
 
-  private async listDirectory(args: Record<string, unknown>): Promise<unknown> {
-    const base = await this.guardPath(args.path);
-    if (!base.stat?.isDirectory()) throw new Error('FILES_NOT_A_DIRECTORY');
-    const depth = args.depth as number;
-    const limit = args.limit as number;
-    const deadline = Date.now() + 3000;
-    const results: Array<Record<string, unknown>> = [];
-    const queue: Array<{ dir: string; level: number }> = [{ dir: base.absolute, level: 0 }];
-    let visited = 0; let skippedLinks = 0; let outputBytes = 0; let truncated = false;
-    while (queue.length) {
-      if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-      const current = queue.shift()!;
-      const directory = await fs.opendir(current.dir);
-      for await (const entry of directory) {
-        if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-        if (!visibleName(entry.name, false)) continue;
-        visited++;
-        const full = path.join(current.dir, entry.name);
-        const stat = await fs.lstat(full);
-        if (isReparseOrLink(stat)) { skippedLinks++; continue; }
-        const isDirectory = stat.isDirectory();
-        const result = { path: this.relative(full), name: entry.name, type: isDirectory ? 'directory' : stat.isFile() ? 'file' : 'other', size: stat.isFile() ? stat.size : undefined, modified: stat.mtime.toISOString(), depth: current.level + 1 };
-        const bytes = Buffer.byteLength(JSON.stringify(result));
-        if (outputBytes + bytes > MAX_SEARCH_RESULT_BYTES) { truncated = true; break; }
-        results.push(result); outputBytes += bytes;
-        if (isDirectory && current.level + 1 < depth) queue.push({ dir: full, level: current.level + 1 });
+  private async listDirectory(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    const base=await this.guardReadPath(args.path,context,'list_directory');
+    if(!base.stat.isDirectory())throw new RuntimeError('FILES_NOT_A_DIRECTORY');
+    const depth=args.depth as number,limit=args.limit as number;
+    const deadline=Date.now()+3000;
+    const results:Array<Record<string,unknown>>=[];
+    const queue:Array<{dir:string;level:number}>=[{dir:base.absolute,level:0}];
+    let visited=0,skippedLinks=0,outputBytes=0,truncated=false;
+    while(queue.length){
+      if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+        truncated=true;break;
+      }
+      const current=queue.shift()!;
+      const guarded=await this.guardReadPath(current.dir,context,'list_directory');
+      if(!guarded.stat.isDirectory())continue;
+      if(base.readScope&&(!guarded.readScope||
+          guarded.readScope.digest!==base.readScope.digest||
+          guarded.readScope.revision!==base.readScope.revision))
+        throw new RuntimeError('READ_ROOT_REVOKED');
+      const scan=async(directory:Awaited<ReturnType<typeof fs.opendir>>):Promise<void>=>{
+        for await(const entry of directory){
+          if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+            truncated=true;break;
+          }
+          if(!visibleName(entry.name,false))continue;
+          const full=path.join(current.dir,entry.name);
+          let item:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+          try{item=await this.guardReadPath(full,context,'list_directory');}
+          catch{skippedLinks++;continue;}
+          if(isReparseOrLink(item.stat)){skippedLinks++;continue;}
+          if(base.readScope&&(!item.readScope||
+              item.readScope.digest!==base.readScope.digest||
+              item.readScope.revision!==base.readScope.revision))continue;
+          visited++;
+          const isDirectory=item.stat.isDirectory();
+          const result={path:this.displayRead(item.absolute,item.readScope),
+            name:entry.name,type:isDirectory?'directory':item.stat.isFile()?'file':'other',
+            size:item.stat.isFile()?item.stat.size:undefined,
+            modified:item.stat.mtime.toISOString(),depth:current.level+1,
+            ...(item.readScope?{root_scope:item.readScope.root}: {})};
+          const bytes=Buffer.byteLength(JSON.stringify(result));
+          if(outputBytes+bytes>MAX_SEARCH_RESULT_BYTES){truncated=true;break;}
+          results.push(result);outputBytes+=bytes;
+          if(isDirectory&&current.level+1<depth)
+            queue.push({dir:item.absolute,level:current.level+1});
+        }
+      };
+      if(guarded.readScope){
+        await this.options!.readRoots!.withDirectory(guarded.readScope,context,
+          'list_directory',scan);
+      }else{
+        const directory=await fs.opendir(guarded.absolute);
+        try{await scan(directory);}finally{await directory.close().catch(()=>{});}
       }
     }
-    return { directory: this.relative(base.absolute), entries: results, truncated, visited, skipped_reparse_points: skippedLinks };
+    // A selection revoked during enumeration must withhold EVERY result.
+    if(base.readScope)await this.options!.readRoots!.assertScope(base.readScope,
+      context,'list_directory');
+    return {directory:this.displayRead(base.absolute,base.readScope),
+      entries:results,truncated,visited,skipped_reparse_points:skippedLinks,
+      ...(base.readScope?{root_scope:base.readScope.root}: {})};
   }
 
   private async createDirectory(name: string, args: Record<string, unknown>): Promise<unknown> {
