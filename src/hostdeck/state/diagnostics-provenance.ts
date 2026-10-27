@@ -15,7 +15,7 @@ export const COMPONENT_IDS = [
 ] as const;
 export type ComponentId = typeof COMPONENT_IDS[number];
 export type Observation = 'observed' | 'missing' | 'unreadable' | 'reparse' |
-  'not_regular' | 'too_large' | 'time_limit' | 'unstable' | 'unbound';
+  'not_regular' | 'empty' | 'too_large' | 'time_limit' | 'unstable' | 'unbound';
 export type Comparison = 'match' | 'mismatch' | 'unknown';
 export interface ComponentProvenance {
   component_id: ComponentId;
@@ -134,7 +134,7 @@ async function inspectFile(
   }
   let rootStat: BigIntStats;
   let rootReal: string;
-  let fileRelativeBefore: string;
+  let fileRelativeBefore = '';
   try {
     rootStat = await lstat(root, { bigint: true });
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return unavailable('reparse');
@@ -170,6 +170,7 @@ async function inspectFile(
       return unavailable('too_large');
     }
     const size = Number(before.size);
+    if (size === 0) return unavailable('empty');
     const hasher = createHash('sha256');
     const buffer = Buffer.allocUnsafe(CHUNK);
     const blocks: Buffer[] | undefined = id === 'manifest' ? [] : undefined;
