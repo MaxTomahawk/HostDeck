@@ -284,8 +284,11 @@ test('StateServices emits fresh owner/device scoped artifacts without caller pat
     assert.match(first.sha256, /^[a-f0-9]{64}$/);
     assert.equal(await state.handle('read_artifact', { artifact_id: first.artifact_id },
       { ...context, ownerId: 'owner-B' }), null);
-    assert.equal(await state.handle('read_artifact', { artifact_id: first.artifact_id },
-      { ...context, deviceId: 'device-B' }), null);
+    await assert.rejects(
+      state.handle('read_artifact', { artifact_id: first.artifact_id },
+        { ...context, deviceId: 'device-B' }),
+      /FORBIDDEN/,
+    );
     const content = await state.handle('read_artifact', {
       artifact_id: first.artifact_id, offset: 0, length: 65536,
     }, context) as {data_base64: string; sha256: string};
