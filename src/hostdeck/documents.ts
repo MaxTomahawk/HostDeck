@@ -84,7 +84,7 @@ export async function checkOfficeArchive(file: string, extension: '.docx' | '.xl
 
 /** Existing bounded unpdf text-layer semantics, now with an item-verified
  * Arabic logical-order repair. No OCR, writing, or font-engine changes. */
-export async function readPdfTextFromBuffer(bytes: Uint8Array): Promise<{text: string[]; totalPages: number}> {
+export async function readPdfTextFromBuffer(bytes: Uint8Array, selectedPages?: readonly number[]): Promise<{text: string[]; totalPages: number}> {
   if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   const { getDocumentProxy, extractText } = await import('unpdf');
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
@@ -95,8 +95,10 @@ export async function readPdfTextFromBuffer(bytes: Uint8Array): Promise<{text: s
     // Only RTL-bearing pages require an extra PDF.js item-level read. The
     // serialized unpdf string alone has already lost glyph direction/geometry.
     // Unsupported BiDi layouts fail closed with PDF_RTL_ORDER_UNQUALIFIED.
-    for (let i = 0; i < pages.length; i++) {
-      if (!/\p{Script=Arabic}/u.test(pages[i])) continue;
+    const selected = selectedPages ?? pages.map((_page, index) => index);
+    for (const i of new Set(selected)) {
+      if (!Number.isInteger(i) || i < 0 || i >= result.totalPages) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
+      if (!/\p{Script=Arabic}/u.test(pages[i] ?? '')) continue;
       const page = await pdf.getPage(i + 1);
       const details = await page.getTextContent();
       pages[i] = restoreQualifiedPdfArabic(pages[i], details.items);
@@ -349,8 +351,9 @@ export class DocumentAdapter {
       const stat = await fs.stat(file);
       if (stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
       const bytes = await fs.readFile(file);
-      const result = await readPdfTextFromBuffer(bytes);
-      const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
+      const requested = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : undefined;
+      const result = await readPdfTextFromBuffer(bytes, requested);
+      const selected = requested ?? result.text.map((_text, index) => index);
       if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
       const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
       return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
