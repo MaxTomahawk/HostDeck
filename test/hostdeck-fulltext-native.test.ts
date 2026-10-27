@@ -231,9 +231,10 @@ test('existing protected config is physical-ACL-positive while a user-writable f
   // The real pre-existing protected source, not an admin ACL fabricated for
   // testing. The environment override is an explicit local test input.
   // Neither target paths nor protected contents are emitted in test output.
+  const programFiles = process.env.ProgramW6432 ?? process.env.ProgramFiles;
   const target = process.env.HOSTDECK_TEST_PROTECTED_FULLTEXT_OBJECT ??
-    (process.env.ProgramFiles
-      ? path.win32.join(process.env.ProgramFiles, 'HostDeck', 'config', 'facade.json')
+    (programFiles
+      ? path.win32.join(programFiles, 'HostDeck', 'config', 'facade.json')
       : undefined);
   if (!target) {
     t.skip('Existing protected configuration object not configured; real positive NOT_RUN');
@@ -257,6 +258,11 @@ test('existing protected config is physical-ACL-positive while a user-writable f
     assert.equal(negative.code, 'FULLTEXT_NATIVE_ACL_UNQUALIFIED');
     assert.equal(negative.scope, 'physical_filesystem_snapshot_only');
     assert.match(negative.reason ?? '', /^[A-Z][A-Z0-9_]+$/);
+    if (negative.failedComponentRole !== undefined) {
+      assert.equal(negative.failedComponentIndex, negative.componentsChecked,
+        'negative failure identifies a component index, not the private path');
+      assert.ok(['root', 'ancestor', 'target'].includes(negative.failedComponentRole));
+    }
     assert.ok(!JSON.stringify(negative).includes(writable),
       'negative receipt must not disclose physical path');
 
