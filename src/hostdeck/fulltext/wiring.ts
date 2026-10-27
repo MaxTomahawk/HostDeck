@@ -9,11 +9,13 @@ import type {
  * Everything/file contracts or the MCP gateway. The integrating HostDeck
  * facade must supply a live PolicyGate-backed authorizer on EVERY call.
  */
-export const FULLTEXT_PROVIDER_ID = 'local.sqlite-fts5.document-content.v1';
+// Public manager-compatible ID; internal engine identity is versioned separately.
+export const FULLTEXT_PROVIDER_ID = 'fulltext_sqlite';
+export const FULLTEXT_ENGINE_ID = 'local.sqlite-fts5.document-content.v1';
 
 export interface FullTextPortWiring {
   /** Trusted protected local settings; null until actual roots are selected. */
-  loadSelectedConfig: () => Promise<FullTextConfig | null>;
+  loadSelectedConfig: (principal: FullTextPrincipal) => Promise<FullTextConfig | null>;
   /** Independent proof of an owner-approved exact digest, not caller truth. */
   isOwnerConfirmed: (principal: FullTextPrincipal, digest: string) => Promise<boolean>;
   /** Checks fresh device/executor and root/file privileges per operation. */
@@ -32,13 +34,13 @@ export class FullTextPort {
   }
 
   async preview(c: FullTextPrincipal): Promise<FullTextPreview | {configured:false;reason:'ROOTS_NOT_SELECTED'}> {
-    const config=await this.wiring.loadSelectedConfig();
+    const config=await this.wiring.loadSelectedConfig(c);
     if (!config) return {configured:false,reason:'ROOTS_NOT_SELECTED'};
     return FullTextEngine.preview(config,c,this.wiring.authorize);
   }
 
   async confirm(c: FullTextPrincipal, digest: string): Promise<{ready:true;provider:string}> {
-    const config=await this.wiring.loadSelectedConfig();
+    const config=await this.wiring.loadSelectedConfig(c);
     if (!config || config.roots.length===0) throw new Error('FULLTEXT_ROOTS_NOT_SELECTED');
     const preview=await FullTextEngine.preview(config,c,this.wiring.authorize);
     if (preview.digest!==digest || await this.wiring.isOwnerConfirmed(c,digest)!==true)
@@ -53,7 +55,7 @@ export class FullTextPort {
   private async require(c: FullTextPrincipal): Promise<FullTextEngine> {
     if (!this.engine || this.activePrincipal!==this.key(c) || !this.activeDigest)
       throw new Error('FULLTEXT_NOT_CONFIGURED');
-    const config=await this.wiring.loadSelectedConfig();
+    const config=await this.wiring.loadSelectedConfig(c);
     if (!config) throw new Error('FULLTEXT_OWNER_SELECTION_REVOKED');
     const preview=await FullTextEngine.preview(config,c,this.wiring.authorize);
     if (preview.digest!==this.activeDigest || await this.wiring.isOwnerConfirmed(c,this.activeDigest)!==true)
