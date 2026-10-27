@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
@@ -33,7 +34,7 @@ async function exercise(label:string,swap:Swap,allowedCodes:RegExp):Promise<void
     await writeFile(doc,'original owned content');
     await writeFile(path.join(outside,'unapproved.txt'),'PRIVATE_MARKER_NOT_FOR_INDEX');
     const preview=await FullTextEngine.preview(config,principal,authorize);
-    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes);
     const id=(await engine.start(principal)).runId;
     // First step traverses directory, second step reaches owned file.
     const first=await engine.step(principal,id,1);
