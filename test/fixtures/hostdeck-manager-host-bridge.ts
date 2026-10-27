@@ -9,6 +9,7 @@ type FixtureState = {
   ready:boolean;
   managerMounts:number;
   providerRequests:number;
+  deviceRequests:number;
   unexpectedRequests:string[];
   sendInitial:()=>Promise<void>;
   sendRepeated:(count:number)=>Promise<void>;
@@ -43,7 +44,7 @@ const result={
   content:[{type:'text',text:'HostDeck manager context'}],
 };
 const state:FixtureState={
-  ready:false,managerMounts:0,providerRequests:0,unexpectedRequests:[],
+  ready:false,managerMounts:0,providerRequests:0,deviceRequests:0,unexpectedRequests:[],
   sendInitial:async()=>{
     await bridge.sendToolInput(input);
     await bridge.sendToolResult(result);
@@ -96,6 +97,8 @@ const state:FixtureState={
     return {
       managerMounts:state.managerMounts,
       providerRequests:state.providerRequests,
+      deviceRequests:state.deviceRequests,
+      deviceReadiness:[...doc.querySelectorAll('.manager-note')].some(node=>node.textContent?.includes('HostDeck device is ready (device_status readback)')),
       unexpectedRequests:[...state.unexpectedRequests],
       totalDomNodes:doc.querySelectorAll('*').length,
       device:(doc.querySelector('#device') as HTMLInputElement|null)?.value,
@@ -109,7 +112,12 @@ const state:FixtureState={
   close:async()=>{state.observer?.disconnect();await bridge.close();},
 };
 window.__hostdeckFixture=state;
-bridge.oncalltool=async({name})=>{
+bridge.oncalltool=async({name,arguments:args})=>{
+  if(name==='hostdeck_device_status'&&args?.device_id==='fixture-device'){
+    state.deviceRequests++;
+    const result={device_id:'fixture-device',status:'ready'};
+    return {content:[{type:'text' as const,text:JSON.stringify(result)}],structuredContent:{result}};
+  }
   if(name==='hostdeck_list_providers'){
     state.providerRequests++;
     return {

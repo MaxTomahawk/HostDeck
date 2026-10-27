@@ -63,7 +63,7 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       const route=(request.url??'').split('?')[0];
       if(route==='/host.html'){
         response.writeHead(200,{'content-type':'text/html','cache-control':'no-store'}).end(
-          '<!doctype html><html><head><meta charset="utf-8"></head><body>'+
+          '<!doctype html><html><head><meta charset="utf-8"><title>HostDeck isolated SDK fixture</title></head><body>'+
           '<iframe id="hosted-app" title="Isolated HostDeck manager" '+
           'style="width:900px;height:680px"></iframe>'+
           '<script type="module" src="/host-fixture.js"></script></body></html>');
@@ -90,6 +90,7 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
   });
   let browser:Browser|undefined,launchPending:Promise<Browser>|undefined;
   let failure:unknown;
+  const pageErrors:string[]=[];
   try{
     await step('start private loopback HTTP listener',()=>new Promise<void>((resolve,reject)=>{
       const fail=(error:Error)=>{server.off('listening',ready);reject(error)};
@@ -106,11 +107,15 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
     },18_000);
     const page=await step('load official SDK-hosted iframe',async()=>{
       const page=await browser!.newPage();
+      page.on('pageerror',error=>pageErrors.push(String(error)));
+      await page.setViewport({width:1200,height:850});
       page.setDefaultTimeout(6_000);
       page.setDefaultNavigationTimeout(8_000);
       await page.goto('http://127.0.0.1:'+addr.port+'/host.html',{
         waitUntil:'domcontentloaded',timeout:8_000});
       await page.waitForFunction(()=>(window as any).__hostdeckFixture?.ready===true);
+      assert.equal(await page.title(),'HostDeck isolated SDK fixture');
+      assert.ok(page.url().endsWith('/host.html'));
       return page;
     },15_000);
     await step('set DOM mount observer before first result',()=>page.evaluate(()=>{
@@ -120,13 +125,20 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       await page.evaluate(async()=>{await (window as any).__hostdeckFixture.sendInitial()});
       await page.waitForFunction(()=>document.querySelector<HTMLIFrameElement>('#hosted-app')
         ?.contentDocument?.querySelector('#provider-status')?.textContent?.includes('Live status read'));
+      await page.waitForFunction(()=>(window as any).__hostdeckFixture.snapshot().deviceReadiness===true);
       const stats=await page.evaluate(()=>(window as any).__hostdeckFixture.snapshot());
+      assert.equal(stats.deviceReadiness,true);
+      assert.equal(stats.deviceRequests,1);
       assert.equal(stats.managerMounts,1);
       assert.equal(stats.providerRequests,1);
       assert.equal(stats.managerCount,1);
       assert.equal(stats.device,'fixture-device');
       assert.deepEqual(stats.unexpectedRequests,[]);
     });
+    if(process.env.HOSTDECK_TEST_SCREENSHOT_PATH){
+      assert.ok(path.isAbsolute(process.env.HOSTDECK_TEST_SCREENSHOT_PATH));
+      await step('capture only the isolated synthetic SDK fixture',()=>page.screenshot({path:process.env.HOSTDECK_TEST_SCREENSHOT_PATH as `${string}.png`,fullPage:false}));
+    }
     await step('user navigates to Files with a retained input',async()=>{
       await page.evaluate(()=>{
         const iframe=document.querySelector<HTMLIFrameElement>('#hosted-app')!;
@@ -144,6 +156,7 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       const after=await page.evaluate(()=>(window as any).__hostdeckFixture.snapshot());
       assert.equal(after.managerMounts,1,'duplicate cannot remount manager');
       assert.equal(after.providerRequests,1,'duplicate cannot fetch providers');
+      assert.equal(after.deviceRequests,1,'duplicate cannot refetch device readiness');
       assert.equal(after.managerCount,0,'Files remains active');
       assert.equal(after.fileInput,'keep-user-navigation.txt','navigation input preserved');
       assert.equal(after.device,'fixture-device');
@@ -161,6 +174,7 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       const stats=await page.evaluate(()=>(window as any).__hostdeckFixture.snapshot());
       assert.equal(stats.managerMounts,1);
       assert.equal(stats.providerRequests,1);
+      assert.equal(stats.deviceRequests,1);
       assert.equal(stats.managerCount,0);
       assert.equal(stats.fileInput,'keep-user-navigation.txt');
       assert.equal(stats.device,'fixture-device');
@@ -168,6 +182,7 @@ test('100 supported SDK notifications do not remount iframe or steal user naviga
       assert.equal(stats.totalDomNodes,prior.totalDomNodes);
       assert.deepEqual(stats.unexpectedRequests,[]);
     });
+    assert.deepEqual(pageErrors,[],'isolated manager must not have uncaught page errors');
     await step('close test-only SDK bridge',async()=>{
       await page.evaluate(async()=>{await (window as any).__hostdeckFixture.close()});
     });

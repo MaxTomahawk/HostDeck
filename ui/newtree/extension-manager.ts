@@ -7,6 +7,7 @@ import {
   filterManagerEntries, groupManagerEntries, supportedPreferenceOptions,
   type ManagerEntry, type ProviderSnapshot, type LiveFunction,
 } from './extension-catalog.js';
+import {readDeviceReadiness} from './extension-device-readiness.js';
 
 export interface ManagerConnection {
   call: (name: string, args?: Record<string, unknown>) => Promise<any>;
@@ -58,6 +59,8 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   liveStatus.id = 'provider-status';
   liveStatus.setAttribute('role', 'status');
   liveStatus.setAttribute('aria-live', 'polite');
+  const deviceReadiness = add(host, 'p', 'HostDeck device readiness: not verified. Provider readiness is separate.', 'manager-note');
+  deviceReadiness.setAttribute('role', 'status');
   add(host, 'p', 'Lifecycle actions are not exposed by the current HostDeck provider API. Install, enable, start, stop, configure, update, repair and rollback are unavailable here.', 'manager-note');
 
   const nav = add(host, 'div', undefined, 'manager-tabs');
@@ -349,6 +352,13 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     liveStatus.setAttribute('aria-busy', 'true');
     liveStatus.textContent = 'Loading live provider status from HostDeck…';
     const ordinal = ++requestedSerial, deviceAtStart = connection.deviceId();
+    deviceReadiness.textContent = 'Checking HostDeck device readiness independently of provider health…';
+    void readDeviceReadiness(endpoint, deviceAtStart).then(readiness => {
+      if (!current() || connection.deviceId() !== deviceAtStart || ordinal !== requestedSerial) return;
+      deviceReadiness.textContent = readiness === 'ready'
+        ? 'HostDeck device is ready (device_status readback). Extensions remain separately unqualified.'
+        : 'HostDeck device readiness is unknown. Provider status and qualifications remain separate.';
+    });
     try {
       const value = assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
       if (!current() || connection.deviceId() !== deviceAtStart || ordinal !== requestedSerial) return;
