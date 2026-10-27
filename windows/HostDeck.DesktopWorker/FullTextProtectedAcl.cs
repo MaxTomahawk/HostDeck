@@ -20,13 +20,21 @@ internal static class FullTextProtectedAcl
     private const uint ReadControl = 0x00020000, ReadAttributes = 0x0080;
     private const uint FileShareReadWriteDelete = 0x0007, OpenExisting = 3;
     private const uint OpenReparsePoint = 0x00200000, BackupSemantics = 0x02000000;
-    private const uint OwnerSecurity = 0x00000001, DaclSecurity = 0x00000004;
+    private const uint OwnerSecurity = 0x00000001, GroupSecurity = 0x00000002,
+        DaclSecurity = 0x00000004;
     private const uint MaximumAllowed = 0x02000000;
     private const uint Delete = 0x00010000, WriteDac = 0x00040000, WriteOwner = 0x00080000;
     // File write data/add child, append data/add subdir, EA, delete_child,
     // attributes, standard rights and generic write/all.
     private const uint Dangerous = 0x00000002 | 0x00000004 | 0x00000010 | 0x00000040 |
         0x00000100 | Delete | WriteDac | WriteOwner | 0x40000000 | 0x10000000;
+    // Directory FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY mean creation of
+    // *unrelated entries*, not replacing an existing protected descendant.
+    // This concession applies ONLY to ancestors, never the protected leaf.
+    // DELETE, FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER, metadata changes
+    // and generic write/all remain denied at every path component.
+    private const uint AncestorDangerous = Dangerous & ~(0x00000002u | 0x00000004u);
+    private const byte InheritOnlyAce = 0x08;
     private const uint GenericRead = 0x00120089, GenericWrite = 0x00120116;
     private const uint GenericExecute = 0x001200a0, GenericAll = 0x001f01ff;
     private static readonly HashSet<string> TrustedSids = new(StringComparer.OrdinalIgnoreCase) {
@@ -77,7 +85,8 @@ internal static class FullTextProtectedAcl
                     {
                         var last = i == elements.Count - 1;
                         reason = QualifyObject(elements[i], last, impersonation);
-                        if (reason != "OK") return Refuse(reason, inspected);
+                        if (reason != "OK") return Refuse(reason, inspected,
+                            i == 0 ? "root" : last ? "target" : "ancestor");
                         inspected++;
                     }
                     return new { verified = true, status = "verified", code = "FULLTEXT_NATIVE_ACL_VERIFIED",
@@ -95,9 +104,12 @@ internal static class FullTextProtectedAcl
         }
     }
 
-    private static object Refuse(string reason, int inspected)
+    private static object Refuse(string reason, int inspected, string? componentRole = null)
         => new { verified = false, status = "unqualified", code = "FULLTEXT_NATIVE_ACL_UNQUALIFIED",
-            reason, components_checked = inspected, scope = "physical_filesystem_snapshot_only" };
+            reason, components_checked = inspected,
+            failed_component_index = componentRole is null ? (int?)null : inspected,
+            failed_component_role = componentRole,
+            scope = "physical_filesystem_snapshot_only" };
 
     private static string QualifyObject(string name, bool last, nint token)
     {
@@ -112,16 +124,22 @@ internal static class FullTextProtectedAcl
         if (!last && (info.FileAttributes & 0x10) == 0) return "ANCESTOR_NOT_DIRECTORY";
         if (last && (info.FileAttributes & 0x10) == 0 && info.NumberOfLinks != 1)
             return "TARGET_HARDLINKED";
-        var code = GetSecurityInfo(handle, 1 /* SE_FILE_OBJECT */, OwnerSecurity | DaclSecurity,
-            out var owner, out _, out var dacl, out _, out var sd);
+        var code = GetSecurityInfo(handle, 1 /* SE_FILE_OBJECT */,
+            OwnerSecurity | GroupSecurity | DaclSecurity,
+            out var owner, out var group, out var dacl, out _, out var sd);
         if (code != 0 || sd == 0) return "SECURITY_DESCRIPTOR_DENIED";
         try
         {
             if (owner == 0 || !IsValidSid(owner) || !TrustedSid(owner))
                 return "OWNER_NOT_TRUSTED";
-            if (dacl == 0 || !TrustedWriters(dacl))
+            // Windows AccessCheck requires a self-consistent descriptor with
+            // owner and primary group SID, not owner + DACL only.
+            if (group == 0 || !IsValidSid(group))
+                return "GROUP_SID_UNAVAILABLE";
+            var deniedRights = last ? Dangerous : AncestorDangerous;
+            if (dacl == 0 || !TrustedWriters(dacl, deniedRights))
                 return "DACL_WRITER_UNQUALIFIED";
-            if (!TokenCannotWrite(sd, token))
+            if (!TokenCannotWrite(sd, token, deniedRights))
                 return "EFFECTIVE_WRITE_POSSIBLE";
             return "OK";
         }
@@ -134,7 +152,7 @@ internal static class FullTextProtectedAcl
         return TrustedSids.Contains(new SecurityIdentifier(sid).Value);
     }
 
-    private static bool TrustedWriters(nint dacl)
+    private static bool TrustedWriters(nint dacl, uint deniedRights)
     {
         // ACL header: revision(1), flags(1), size(2), aceCount(2).
         var length = (ushort)Marshal.ReadInt16(dacl, 2);
@@ -144,6 +162,7 @@ internal static class FullTextProtectedAcl
         {
             if (!GetAce(dacl, i, out var ace) || ace == 0) return false;
             byte type = Marshal.ReadByte(ace, 0);
+            byte flags = Marshal.ReadByte(ace, 1);
             ushort size = (ushort)Marshal.ReadInt16(ace, 2);
             if (size < 16 || type is not (0 or 1)) {
                 // Object, callback, conditional and unknown ACE forms require
@@ -152,15 +171,20 @@ internal static class FullTextProtectedAcl
             }
             if (type == 0 /* ACCESS_ALLOWED_ACE_TYPE */)
             {
+                // INHERIT_ONLY ACEs do NOT grant the SID access on this
+                // directory. They are assessed when they become effective on
+                // a child whose own DACL is independently inspected.
+                if ((flags & InheritOnlyAce) != 0) continue;
                 uint rights = unchecked((uint)Marshal.ReadInt32(ace, 4));
-                if ((rights & Dangerous) != 0 && !TrustedSid(ace + 8))
+                if ((rights & deniedRights) != 0 && !TrustedSid(ace + 8))
                     return false;
             }
         }
         return true;
     }
 
-    private static bool TokenCannotWrite(nint securityDescriptor, nint impersonation)
+    private static bool TokenCannotWrite(nint securityDescriptor, nint impersonation,
+        uint deniedRights)
     {
         var mapping = new GenericMapping { Read = GenericRead, Write = GenericWrite,
             Execute = GenericExecute, All = GenericAll };
@@ -172,7 +196,7 @@ internal static class FullTextProtectedAcl
                 ref mapping, privilegeSet, ref privilegeLength,
                 out var granted, out var accessible);
             // Invalid or unknowable effective access fails closed.
-            return ok && accessible && (granted & Dangerous) == 0;
+            return ok && accessible && (granted & deniedRights) == 0;
         }
         finally { Marshal.FreeHGlobal(privilegeSet); }
     }
@@ -264,10 +288,14 @@ internal static class FullTextProtectedAcl
                     FileShareReadWriteDelete, 0, OpenExisting,
                     BackupSemantics | OpenReparsePoint, 0);
                 if (handle.IsInvalid) return false;
-                if (GetSecurityInfo(handle, 1, OwnerSecurity | DaclSecurity,
-                    out _, out _, out _, out _, out var sd) != 0 || sd == 0) return false;
+                if (GetSecurityInfo(handle, 1,
+                    OwnerSecurity | GroupSecurity | DaclSecurity,
+                    out var owner, out var group, out _, out _, out var sd) != 0 ||
+                    sd == 0) return false;
                 try
                 {
+                    if (owner == 0 || !IsValidSid(owner) ||
+                        group == 0 || !IsValidSid(group)) return false;
                     if (!EffectiveGrantedAccess(sd, impersonation, out var allowed))
                         return false;
                     // SQLite index, WAL, SHM and writerlock companion require
