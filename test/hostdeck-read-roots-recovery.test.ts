@@ -13,7 +13,7 @@ const owner={ownerId:'fixture_owner',deviceId:'fixture_device',
 const sid='S-1-5-21-1000';
 type Config={version:1;device_id:string;executor_id:string;
   expected_user_sid:string;workspace:string;read_roots?:{
-    revision:string;roots:string[];excluded_roots:string[];
+    owner_id:string;revision:string;roots:string[];excluded_roots:string[];
     fixed_volume_roots:string[]}};
 const code=(e:unknown)=>e instanceof Error?e.message:String(e);
 
@@ -59,7 +59,7 @@ async function fixture(){
   };
   const config:Config={version:1,device_id:owner.deviceId,
     executor_id:owner.executorId,expected_user_sid:sid,workspace,
-    read_roots:{revision:'read_config_rev_1',roots:[external],
+    read_roots:{owner_id:owner.ownerId,revision:'read_config_rev_1',roots:[external],
       excluded_roots:[excluded],fixed_volume_roots:[]}};
   const writeConfig=async()=>fs.writeFile(configFile,JSON.stringify(config));
   await writeConfig();
@@ -99,7 +99,7 @@ test('unconfigured or unqualified config remains workspace-only',async()=>{
       /READ_ROOT_DENIED/);
     await assert.rejects(f.adapter.handle('hostdeck_list_directory',{
       ...args(f.external),depth:1,limit:50},owner),/READ_ROOT_DENIED/);
-    f.config.read_roots={revision:'read_config_rev_2',roots:[f.external],
+    f.config.read_roots={owner_id:owner.ownerId,revision:'read_config_rev_2',roots:[f.external],
       excluded_roots:[f.excluded],fixed_volume_roots:[]};
     await f.writeConfig();
     const noNative=new ReadRootAccess(f.workspace,[f.protectedDir],
