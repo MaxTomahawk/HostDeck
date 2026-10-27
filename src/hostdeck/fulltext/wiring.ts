@@ -6,9 +6,9 @@ import type {
 } from './types.js';
 
 /**
- * Isolated facade/provider port. Deliberately NOT registered in existing
- * Everything/file contracts or the MCP gateway. The integrating HostDeck
- * facade must supply a live PolicyGate-backed authorizer on EVERY call.
+ * Isolated facade/provider port, separate from Everything/file search. The
+ * FullTextAdapter exposes its own scoped MCP operations; the integrating
+ * facade supplies a live PolicyGate-backed authorizer on EVERY call.
  */
 // Public manager-compatible ID; internal engine identity is versioned separately.
 export const FULLTEXT_PROVIDER_ID = 'fulltext_sqlite';
