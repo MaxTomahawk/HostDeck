@@ -141,6 +141,7 @@ async function inspectFile(
     rootReal = await realpath(root);
   } catch (error) { return unavailable(fail(error)); }
   const final = path.join(root, ...parts);
+  const ancestors: Array<{ path: string; stat: BigIntStats }> = [];
   try {
     let current = root;
     for (let i = 0; i < parts.length; i++) {
@@ -148,6 +149,7 @@ async function inspectFile(
       const item = await lstat(current, { bigint: true });
       if (item.isSymbolicLink()) return unavailable('reparse');
       if (i < parts.length - 1 && !item.isDirectory()) return unavailable('not_regular');
+      if (i < parts.length - 1) ancestors.push({ path: current, stat: item });
       if (i === parts.length - 1 && !item.isFile()) return unavailable('not_regular');
     }
     const resolved = await realpath(final);
@@ -198,6 +200,12 @@ async function inspectFile(
     }
     if (relAfter === '..' || relAfter.startsWith('..' + path.sep) ||
         path.isAbsolute(relAfter)) return unavailable('unstable');
+    for (const ancestor of ancestors) {
+      const current = await lstat(ancestor.path, { bigint: true });
+      if (current.isSymbolicLink() || !sameIdentity(ancestor.stat, current)) {
+        return unavailable('unstable');
+      }
+    }
     if (Date.now() >= budget.deadline) return unavailable('time_limit');
     const sha256 = hasher.digest('hex');
     return { observation: 'observed', sha256, size,
