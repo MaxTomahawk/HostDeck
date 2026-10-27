@@ -14,10 +14,11 @@ import { within } from './fulltext/policy.js';
 import { resolveSelectedReadPath, type ReadRootCandidate,
   type ReadOnlyOperation, type ReadRootOwner } from './read-root-boundary.js';
 import type { ReadRootSelectionStore } from './read-root-selection-store.js';
+import type { FullTextNativeBridge } from './fulltext-native-bridge.js';
 
 type Stat = import('node:fs').BigIntStats;
 type OpenFile = Awaited<ReturnType<typeof fs.open>>;
-type OpenDirectory = Awaited<ReturnType<typeof fs.opendir>>;
+type NativeRead = Pick<FullTextNativeBridge, 'attributes' | 'directoryPage'>;
 export interface TrustedReadRootReader {
   selected: ReadRootSelectionStore['selected'];
 }
@@ -39,6 +40,7 @@ export class ReadRootAccess {
     readonly workspace: string,
     private readonly protectedPaths: readonly string[],
     private readonly selectionSource?: TrustedReadRootReader,
+    private readonly native?: NativeRead,
   ) {
     if (!path.isAbsolute(workspace) || !Array.isArray(protectedPaths) ||
         !protectedPaths.length) denied();
@@ -57,7 +59,20 @@ export class ReadRootAccess {
       selection: selected, protectedPaths: this.protectedPaths, operation,
     });
     if (!answer.external) return answer;
-    if (!selected?.digest || !selected.revision) denied();
+    if (!selected?.digest || !selected.revision || !this.native) denied();
+    // Existing native bridge is bound to the pinned, non-elevated Windows
+    // executor. Unlike lexical dot-name filtering, this observes actual
+    // Hidden/System/reparse attributes on EVERY ancestor, fail-closed.
+    const allowed = [answer.root, answer.absolute];
+    let attributes: Awaited<ReturnType<NativeRead['attributes']>>;
+    try {
+      attributes = await this.native.attributes(allowed,
+        async input => allowed.some(value => key(value) === key(input)));
+    } catch { return denied(); }
+    if (attributes.length !== allowed.length || attributes.some(item =>
+        item.status !== 'ok' || item.reparse !== false ||
+        item.hidden_component !== false || item.system_component !== false ||
+        item.hidden !== false || item.system !== false)) denied();
     const rootStat = await identity(answer.root);
     if (!rootStat.isDirectory() || rootStat.ino === 0n) denied();
     return { ...answer, revision: selected.revision, digest: selected.digest,
@@ -159,21 +174,51 @@ export class ReadRootAccess {
       modified: after.mtime.toISOString() };
   }
 
-  /** Check the path and root AGAIN after opendir before exposing names. */
+  /**
+   * Directory names come ONLY from the opened, inode-matched native handle.
+   * Node's fs.opendir exposes no identity of its actual directory handle on
+   * Windows; path stats bracketing opendir permit swap-and-restore. Never use
+   * that path for an external enumeration.
+   */
   async withDirectory<T>(scope: ReadRootScope, owner: ReadRootOwner,
     operation: ReadOnlyOperation,
-    use: (dir: OpenDirectory) => Promise<T>): Promise<T> {
-    const initial = await this.assertScope(scope, owner, operation);
-    const before = await identity(initial.absolute);
+    use: (entries: AsyncIterable<{name: string}>) => Promise<T>): Promise<T> {
+    if (!this.native) denied();
+    await this.assertScope(scope, owner, operation);
+    const before = await identity(scope.absolute);
     if (!before.isDirectory() || before.ino === 0n) denied();
-    const dir = await fs.opendir(scope.absolute);
-    try {
-      await this.assertScope(scope, owner, operation);
-      const result = await use(dir);
-      const after = await identity(scope.absolute);
-      if (!same(before, after)) changed();
-      await this.assertScope(scope, owner, operation);
-      return result;
-    } finally { await dir.close().catch(() => {}); }
+    const native = this.native!;
+    const access = this;
+    async function* entries(): AsyncIterable<{name:string}> {
+      let offset = 0;
+      while (offset <= 100000) {
+        await access.assertScope(scope, owner, operation);
+        const now = await identity(scope.absolute);
+        if (!same(before, now)) changed();
+        let page: Awaited<ReturnType<NativeRead['directoryPage']>>;
+        try {
+          page = await native.directoryPage(scope.absolute, before.ino,
+            offset, 192, async selected => key(selected) === key(scope.absolute));
+        } catch { return changed(); }
+        await access.assertScope(scope, owner, operation);
+        const after = await identity(scope.absolute);
+        if (!same(before, after)) changed();
+        for (const name of page.names) {
+          if (!name || name === '.' || name === '..' ||
+              name.includes('\\') || name.includes('/') ||
+              name.includes(':') || name.includes('\0')) changed();
+          yield {name};
+        }
+        if (!page.more) return;
+        if (page.nextOffset <= offset) changed();
+        offset = page.nextOffset;
+      }
+      changed(); // bounded traversal: no unbounded enumeration
+    }
+    const result = await use(entries());
+    const after = await identity(scope.absolute);
+    if (!same(before, after)) changed();
+    await this.assertScope(scope, owner, operation);
+    return result;
   }
 }
