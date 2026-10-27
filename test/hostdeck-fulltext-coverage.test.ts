@@ -64,7 +64,10 @@ async function docxFixture(file:string):Promise<{tail:string;markers:string[]}>{
   assert.ok(rels.includes('</Relationships>'));
   rels=rels.replace('</Relationships>',inserts+'</Relationships>');
   zip.file('word/_rels/document.xml.rels',rels);
-  for(let i=0;i<targets.length;i++)zip.file('word/'+targets[i],related(names[i],markers[i]));
+  for(let i=0;i<targets.length;i++){
+    const prefix=i===0?'H'.repeat(120):i===1?'F'.repeat(120):'';
+    zip.file('word/'+targets[i],related(names[i],prefix+markers[i]));
+  }
   // Proper independent OPC content types, so this is a valid multi-part
   // document rather than merely a ZIP with unreferenced Word filenames.
   const typeNames=['header','footer','footnotes','endnotes','comments'];
