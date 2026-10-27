@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -59,6 +60,7 @@ internal static class FullTextNative
                 object result = operation switch
                 {
                     "attributes_batch" => Attributes(args),
+                    "directory_page" => DirectoryPage(args),
                     "effective_acl" => FullTextProtectedAcl.Qualify(RequiredPath(args)),
                     "owner_boundary" => FullTextProtectedAcl.QualifyBoundary(
                         RequiredPath(args, "protectedDirectory"),
@@ -135,6 +137,117 @@ internal static class FullTextNative
             GetDriveTypeW(full.Substring(0, 3)) != 3 /* DRIVE_FIXED */)
             throw new WorkerError("FULLTEXT_NATIVE_PATH_DENIED");
         return full;
+    }
+
+    // Existing pinned, non-elevated native worker: bounded READ-ONLY directory
+    // enumeration against the opened HANDLE, never a separate path walk.
+    // FileIdBothDirectoryInfo is FILE_INFO_BY_HANDLE_CLASS 10; filename offset
+    // is 104 bytes in the Windows FILE_ID_BOTH_DIR_INFO ABI on x64.
+    private const uint ListDirectory = 0x0001, ShareAll = 0x0007;
+    private const uint OpenExisting = 3, BackupSemantics = 0x02000000;
+    private const uint OpenReparsePoint = 0x00200000;
+    private const int FileIdBothDirectoryInfo = 10, NameOffset = 104;
+    private const int DirectoryBufferBytes = 32768, DirectoryMaxNames = 192;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeFileTime { public uint Low; public uint High; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleInformation {
+        public uint Attributes;
+        public NativeFileTime Creation, Access, Write;
+        public uint VolumeSerial, SizeHigh, SizeLow, Links, FileIdHigh, FileIdLow;
+    }
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateDirectoryHandle(string name,
+        uint access, uint share, IntPtr security, uint disposition, uint flags,
+        IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle,
+        out ByHandleInformation information);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,
+        int informationClass, byte[] buffer, uint bufferLength);
+
+    private static object DirectoryPage(JsonElement args)
+    {
+        var requested = RequiredPath(args);
+        if (!args.TryGetProperty("expected_ino", out var inodeRaw) ||
+            inodeRaw.ValueKind != JsonValueKind.String ||
+            !ulong.TryParse(inodeRaw.GetString(), out var expectedInode) ||
+            expectedInode == 0 ||
+            !args.TryGetProperty("offset", out var offsetRaw) ||
+            !offsetRaw.TryGetInt32(out var offset) ||
+            offset is < 0 or > 100000 ||
+            !args.TryGetProperty("limit", out var limitRaw) ||
+            !limitRaw.TryGetInt32(out var limit) ||
+            limit is < 1 or > DirectoryMaxNames)
+            throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
+
+        var stopwatch = Stopwatch.StartNew();
+        using var handle = CreateDirectoryHandle(requested, ListDirectory,
+            ShareAll, IntPtr.Zero, OpenExisting,
+            BackupSemantics | OpenReparsePoint, IntPtr.Zero);
+        if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info))
+            throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_UNQUALIFIED");
+        var actualInode = ((ulong)info.FileIdHigh << 32) | info.FileIdLow;
+        if (actualInode != expectedInode || (info.Attributes & Directory) == 0 ||
+            (info.Attributes & (Hidden | SystemAttribute | Reparse)) != 0)
+            throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_CHANGED");
+
+        var names = new List<string>();
+        var current = 0;
+        var chars = 0;
+        var more = false;
+        var end = false;
+        var buffer = new byte[DirectoryBufferBytes];
+        while (!end && !more)
+        {
+            if (stopwatch.ElapsedMilliseconds >= MaxBatchMs)
+                throw new WorkerError("FULLTEXT_NATIVE_BATCH_DEADLINE");
+            if (!GetFileInformationByHandleEx(handle, FileIdBothDirectoryInfo,
+                buffer, (uint)buffer.Length))
+            {
+                if (Marshal.GetLastWin32Error() == 18 /* ERROR_NO_MORE_FILES */) break;
+                throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_UNQUALIFIED");
+            }
+            var at = 0;
+            while (at < buffer.Length)
+            {
+                if (at + NameOffset > buffer.Length)
+                    throw new WorkerError("FULLTEXT_NATIVE_PROTOCOL_INVALID");
+                var next = BitConverter.ToUInt32(buffer, at);
+                var length = BitConverter.ToUInt32(buffer, at + 60);
+                if ((length & 1) != 0 || length > 32768 ||
+                    (ulong)at + NameOffset + length > (ulong)buffer.Length)
+                    throw new WorkerError("FULLTEXT_NATIVE_PROTOCOL_INVALID");
+                var name = Encoding.Unicode.GetString(buffer, at + NameOffset, (int)length);
+                if (name != "." && name != "..")
+                {
+                    if (name.Length is < 1 or > 255 ||
+                        name.Contains('\0') || name.Contains('\\') ||
+                        name.Contains('/') || name.Contains(':'))
+                        throw new WorkerError("FULLTEXT_NATIVE_PROTOCOL_INVALID");
+                    if (current++ >= offset)
+                    {
+                        if (names.Count >= limit || chars + name.Length > 12000)
+                        {
+                            more = true; break;
+                        }
+                        names.Add(name);
+                        chars += name.Length;
+                    }
+                }
+                if (next == 0) { end = false; break; }
+                if (next < NameOffset || (ulong)at + next >= (ulong)buffer.Length)
+                    throw new WorkerError("FULLTEXT_NATIVE_PROTOCOL_INVALID");
+                at += checked((int)next);
+            }
+        }
+        if (!GetFileInformationByHandle(handle, out var ending) ||
+            ending.FileIdHigh != info.FileIdHigh ||
+            ending.FileIdLow != info.FileIdLow ||
+            ending.VolumeSerial != info.VolumeSerial)
+            throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_CHANGED");
+        return new { names, more, next_offset = offset + names.Count };
     }
 
     private static object Attributes(JsonElement args)
