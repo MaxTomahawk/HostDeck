@@ -170,6 +170,9 @@ export class FileAdapter {
 
   private async listDirectory(args: Record<string, unknown>,
     context: FileOwnerContext): Promise<unknown> {
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_list_directory',args);
     const base=await this.guardReadPath(args.path,context,'list_directory');
     if(!base.stat.isDirectory())throw new RuntimeError('FILES_NOT_A_DIRECTORY');
     const depth=args.depth as number,limit=args.limit as number;
@@ -188,7 +191,7 @@ export class FileAdapter {
           guarded.readScope.digest!==base.readScope.digest||
           guarded.readScope.revision!==base.readScope.revision))
         throw new RuntimeError('READ_ROOT_REVOKED');
-      const scan=async(directory:Awaited<ReturnType<typeof fs.opendir>>):Promise<void>=>{
+      const scan=async(directory:AsyncIterable<{name:string}>):Promise<void>=>{
         for await(const entry of directory){
           if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
             truncated=true;break;
@@ -225,8 +228,10 @@ export class FileAdapter {
       }
     }
     // A selection revoked during enumeration must withhold EVERY result.
-    if(base.readScope)await this.options!.readRoots!.assertScope(base.readScope,
-      context,'list_directory');
+    if(base.readScope){
+      await this.authorize('hostdeck_list_directory',args);
+      await this.options!.readRoots!.assertScope(base.readScope,context,'list_directory');
+    }
     return {directory:this.displayRead(base.absolute,base.readScope),
       entries:results,truncated,visited,skipped_reparse_points:skippedLinks,
       ...(base.readScope?{root_scope:base.readScope.root}: {})};
@@ -369,6 +374,11 @@ export class FileAdapter {
     this.pruneSearches();
     if (this.searches.size >= 100) throw new Error('SEARCH_CAPACITY_REACHED');
     const mode=args.mode==='content'?'content_search':'name_search';
+    // Current PolicyGate/grant revision must be checked before any external
+    // root metadata or search handle can be disclosed.
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_search_files',args);
     const root=await this.guardReadPath(args.path,context,mode);
     const pattern = args.pattern as string;
     const literal = args.literal as boolean;
@@ -407,15 +417,20 @@ export class FileAdapter {
         if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
         if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
         // Do not expose engine counts or unchecked paths, even on malformed replies.
-        if(!inside(job.root,candidate)||!inside(this.workspace,candidate))continue;
-        let safe:Awaited<ReturnType<FileAdapter['guardPath']>>;
-        try{safe=await this.guardPath(candidate);}catch{continue;}
-        if(!safe.stat||(!safe.stat.isFile()&&!safe.stat.isDirectory()))continue;
+        if(!inside(job.root,candidate)||
+            (!job.readScope&&!inside(this.workspace,candidate)))continue;
+        let safe:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{safe=await this.guardReadPath(candidate,job.owner,'name_search');}
+        catch{continue;}
+        if(job.readScope&&(!safe.readScope||
+            safe.readScope.digest!==job.readScope.digest||
+            safe.readScope.revision!==job.readScope.revision))continue;
+        if(!safe.stat.isFile()&&!safe.stat.isDirectory())continue;
         const fromRoot=path.relative(job.root,safe.absolute);
         if(!job.rootIsFile&&fromRoot==='')continue;
         const components=fromRoot?fromRoot.split(path.sep):[];
         if(components.length>21){job.coverageTruncated=true;continue;}
-        const relative=this.relative(safe.absolute);
+        const relative=this.displayRead(safe.absolute,safe.readScope);
         if(seen.has(relative))continue;seen.add(relative);
         if(!job.includeHidden&&components.some(p=>p.startsWith('.')))continue;
         job.visited++;
@@ -475,7 +490,7 @@ export class FileAdapter {
             currentPath.readScope.revision!==job.readScope.revision))continue;
         if(isReparseOrLink(currentPath.stat))continue;
         if(currentPath.stat.isDirectory()){
-          const scan=async(dir:Awaited<ReturnType<typeof fs.opendir>>)=>{
+          const scan=async(dir:AsyncIterable<{name:string}>)=>{
             for await(const entry of dir){
               if(!visibleName(entry.name,job.includeHidden))continue;
               if(job.stopped||job.truncated||Date.now()>job.deadline)break;
@@ -570,20 +585,57 @@ export class FileAdapter {
     return job;
   }
 
-  private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
-    const job = this.searchFor(args.search_id as string, context);
+  private async searchResults(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    const job=this.searchFor(args.search_id as string,context);
+    const access=this.options?.readRoots;
+    const operation=job.mode==='content'?'content_search':'name_search';
     if(job.provider==='everything') {
       await this.authorize('hostdeck_search_results',args);
       await this.authorizeEverythingSearch(job);
-    }
-    const offset = args.offset as number; const limit = args.limit as number;
-    // Sorted snapshots are published only when sealed, so page offsets cannot shift.
+    } else if(job.readScope) await this.authorize('hostdeck_search_results',args);
+    if(job.readScope) await access!.assertScope(job.readScope,context,operation);
+    const offset=args.offset as number,limit=args.limit as number;
     const matches=job.sort&&!job.done?[]:job.matches;
-    const items:SearchMatch[]=[];
-    for(const match of matches.slice(offset,offset+limit))try{await this.guardPath(match.path);items.push(match);}catch{/* Changed targets never become extra read authority. */}
+    const authorized:SearchMatch[]=[];
+    // Every retained result is checked BEFORE computing even total_results,
+    // not only the entries inside the requested page. No stale count/metadata.
+    const candidates=job.readScope?matches:matches.slice(offset,offset+limit);
+    for(const match of candidates){
+      try{
+        const checked=await this.guardReadPath(match.path,context,operation);
+        if(job.readScope&&(!checked.readScope||
+            checked.readScope.digest!==job.readScope.digest||
+            checked.readScope.revision!==job.readScope.revision))continue;
+        if(match.privateIdentity){
+          const current=await fs.stat(checked.absolute,{bigint:true});
+          const prior=match.privateIdentity;
+          if(current.dev.toString()!==prior.dev||
+             current.ino.toString()!==prior.ino||
+             current.mtimeNs.toString()!==prior.mtimeNs||
+             current.size.toString()!==prior.size)continue;
+        }
+        const {privateIdentity:_privateIdentity,...publicItem}=match;
+        authorized.push(publicItem);
+      }catch{/* Failed/replaced targets cannot be disclosed. */}
+    }
     if(job.provider==='everything')await this.authorizeEverythingSearch(job);
+    if(job.readScope){
+      await this.authorize('hostdeck_search_results',args);
+      await access!.assertScope(job.readScope,context,operation);
+    }
     if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
-    return { search_id: job.id,provider:job.provider,...(job.provenance?{provenance:job.provenance}:{}), items, offset, total_results:matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':job.stopped ? 'stopped' : job.error ? 'failed' : job.truncated?'partial':'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit,matches.length),snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS };
+    const total=job.readScope?authorized.length:matches.length;
+    const items=job.readScope?authorized.slice(offset,offset+limit):authorized;
+    return {search_id:job.id,provider:job.provider,
+      ...(job.provenance?{provenance:job.provenance}:{}),
+      items,offset,total_results:total,complete:job.done,
+      truncated:job.truncated,stopped:job.stopped,
+      state:job.done?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
+        job.stopped?'stopped':job.error?'failed':job.truncated?'partial':'complete':'running',
+      ...(job.error?{error:job.error}:{}),
+      next_offset:Math.min(offset+limit,total),
+      snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS};
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
