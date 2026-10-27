@@ -170,7 +170,11 @@ internal static class FullTextNative
     private static object DirectoryPage(JsonElement args)
     {
         var requested = RequiredPath(args);
-        if (!args.TryGetProperty("expected_ino", out var inodeRaw) ||
+        if (!args.TryGetProperty("expected_dev", out var deviceRaw) ||
+            deviceRaw.ValueKind != JsonValueKind.String ||
+            !ulong.TryParse(deviceRaw.GetString(), out var expectedDev) ||
+            expectedDev == 0 ||
+            !args.TryGetProperty("expected_ino", out var inodeRaw) ||
             inodeRaw.ValueKind != JsonValueKind.String ||
             !ulong.TryParse(inodeRaw.GetString(), out var expectedInode) ||
             expectedInode == 0 ||
@@ -189,7 +193,9 @@ internal static class FullTextNative
         if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info))
             throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_UNQUALIFIED");
         var actualInode = ((ulong)info.FileIdHigh << 32) | info.FileIdLow;
-        if (actualInode != expectedInode || (info.Attributes & Directory) == 0 ||
+        if (actualInode != expectedInode ||
+            (ulong)info.VolumeSerial != expectedDev ||
+            (info.Attributes & Directory) == 0 ||
             (info.Attributes & (Hidden | SystemAttribute | Reparse)) != 0)
             throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_CHANGED");
 
