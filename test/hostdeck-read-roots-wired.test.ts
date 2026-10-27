@@ -82,6 +82,26 @@ test('default workspace-only even with records but without a qualified native AC
   }finally{await f.cleanup();}
 });
 
+test('only an explicit Windows fixed-volume record reaches actual DriveInfo qualification',async t=>{
+  if(process.platform!=='win32'){t.skip('Windows native DriveInfo qualification only');return;}
+  const f=await fixture();
+  try{
+    const fixed=path.parse(f.readRoot).root;
+    const selected={...f.selected,revision:'fixed_volume_fixture',
+      selection:{roots:[fixed],excludedRoots:[f.protectedDirectory,f.excluded],
+        fixedVolumeRoots:[fixed]}};
+    const approval={...f.approval,revision:selected.revision,
+      contentDigest:readRootContentDigest(selected)};
+    await fs.writeFile(path.join(f.protectedDirectory,'read-roots-selection.json'),
+      JSON.stringify(selected));
+    await fs.writeFile(path.join(f.protectedDirectory,'read-roots-approval.json'),
+      JSON.stringify(approval));
+    const accepted=await f.store.selected(owner);
+    assert.deepEqual(accepted?.fixedVolumeRoots,[fixed]);
+    assert.equal(accepted?.digest,approval.contentDigest);
+    // Store qualification alone performs NO broad-drive query or scan.
+  }finally{await f.cleanup();}
+});
 test('protected exact owner selection permits sibling root list/name/content and matching readback/metadata only',async()=>{
   const f=await fixture();
   try{
