@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
@@ -56,7 +57,7 @@ test('OCR-required blank PDF keeps recall partial but fully traversed delete pur
     const scanned=path.join(f.root,'empty.pdf');
     await writeFile(scanned,await pdf.save());
     const preview=await FullTextEngine.preview(f.config,caller,allow);
-    engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest);
+    engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest,syntheticFullTextAttributes);
     await complete(engine,(await engine.start(caller)).runId);
     const before=rows(f.config.indexFile);
     assert.equal(before.docs.length,2);
@@ -92,7 +93,7 @@ for(const mode of ['acl','depth','entry_limit'] as const){
     let engine:FullTextEngine|undefined;
     try{
       const preview=await FullTextEngine.preview(f.config,caller,allow);
-      engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest);
+      engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest,syntheticFullTextAttributes);
       await complete(engine,(await engine.start(caller)).runId);
       await rm(f.old);
       if(mode==='acl'){
@@ -134,7 +135,7 @@ test('legacy incomplete-only run migrates fail-closed; only new traversals start
     }finally{legacy.close();}
     const allow:FullTextAuthorizer=async()=>true;
     const preview=await FullTextEngine.preview(f.config,caller,allow);
-    engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest);
+    engine=await FullTextEngine.openConfirmed(f.config,caller,allow,preview.digest,syntheticFullTextAttributes);
     const db=new DatabaseSync(f.config.indexFile,{readOnly:true});
     try{
       const old=db.prepare('SELECT incomplete,traversal_incomplete FROM runs WHERE id=?').get('legacy-fixture') as

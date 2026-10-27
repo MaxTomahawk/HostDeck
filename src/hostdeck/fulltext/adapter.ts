@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {constants as fsFlags} from 'node:fs';
 import type {Adapter} from '../gateway.js';
+import type {FullTextNativeBridge} from '../fulltext-native-bridge.js';
 import type {ExecutionContext} from '../security.js';
 import {FullTextPort,FULLTEXT_PROVIDER_ID,FULLTEXT_ENGINE_ID} from './wiring.js';
 import {FullTextSelectionStore,type FullTextProtectedAclVerifier} from './selection-store.js';
@@ -36,6 +37,8 @@ export interface FullTextAdapterOptions{
   protectedOwnerDirectory?:string;
   /** Mandatory trusted native effective-ACL verifier. NOT a caller boolean. */
   verifyProtectedOwnerAcl?:FullTextProtectedAclVerifier;
+  /** PR22 persistent native metadata bridge; no attrib.exe or synthetic fallback. */
+  nativeAttributes?:Pick<FullTextNativeBridge,'attributes'>;
   /** Must be bound to HostDeckFacade.reauthorize and active ALS context. */
   reauthorize:Reauthorize;
   /** Optional MORE restrictive local policy; true never bypasses native checks. */
@@ -60,6 +63,21 @@ export class FullTextAdapter implements Adapter {
       loadSelectedConfig:c=>this.store.selected(c),
       isOwnerConfirmed:(c,digest)=>this.store.confirmed(c,digest),
       authorize:request=>this.authorized(request),
+      nativeAttributes:options.nativeAttributes
+        ? (paths,principal,root,action)=>options.nativeAttributes!.attributes(paths,
+            async file=>{
+              // Native attribute batches also cover ancestor directories inside
+              // the selected root. 'index'/'snippet'/'metadata' require a
+              // file leaf; applying that leaf rule to an ancestor would deny
+              // every nested document. Use the equivalent live read/index
+              // POLICY scope with directory-readable semantics here. The
+              // engine separately reauthorizes the actual file as
+              // 'index' or 'metadata'/'snippet' before effects or disclosure.
+              const directorySafeAction:FullTextAction=READ_ACTIONS.has(action)?'search':'scan';
+              try{return await this.authorized({principal,root,path:file,action:directorySafeAction});}
+              catch{return false;}
+            })
+        : undefined,
     });
   }
 

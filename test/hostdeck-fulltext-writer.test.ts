@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
@@ -81,17 +82,17 @@ test('same process second live writer denied without changing runs, queue or met
   let first:FullTextEngine|undefined,second:FullTextEngine|undefined;
   try{
     const preview=await FullTextEngine.preview(config,principal,authorize);
-    first=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest);
+    first=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes);
     const started=await first.start(principal);
     const prior=snapshot(config.indexFile);
-    await assert.rejects(FullTextEngine.openConfirmed(config,principal,authorize,preview.digest),
+    await assert.rejects(FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes),
       /FULLTEXT_WRITER_BUSY/);
     assert.equal(snapshot(config.indexFile),prior,'rejected opener mutated index tables');
     assert.equal((await first.status(principal)).state,'running');
     // Ordinary close releases the OS lock; a subsequent opener sees truthful
     // interrupted recovery, never an automatic resume or duplicate writer.
     first.close();first=undefined;
-    second=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest);
+    second=await FullTextEngine.openConfirmed(config,principal,authorize,preview.digest,syntheticFullTextAttributes);
     assert.equal((await second.status(principal)).state,'interrupted');
     await second.resume(principal,started.runId);
     assert.equal((await second.status(principal)).state,'running');
@@ -112,7 +113,7 @@ test('two real child processes: live contention, normal close, crash, OS lock re
     assert.equal(snapshot(graceful.config.indexFile),snapshotBefore);
     assert.equal((await (async()=>{
       const p=await FullTextEngine.preview(graceful.config,principal,authorize);
-      return FullTextEngine.openConfirmed(graceful.config,principal,authorize,p.digest);
+      return FullTextEngine.openConfirmed(graceful.config,principal,authorize,p.digest,syntheticFullTextAttributes);
     })().then(()=>false,error=>error?.message==='FULLTEXT_WRITER_BUSY')),true);
     const closing=receive(first,/^CLOSED$/);
     first.stdin.write('CLOSE\n');

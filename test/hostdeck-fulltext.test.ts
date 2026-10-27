@@ -1,3 +1,4 @@
+import {syntheticFullTextAttributes} from './fixtures/fulltext-test-native-attributes.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, writeFile, rename, rm, access, symlink , realpath} from 'node:fs/promises';
@@ -37,18 +38,18 @@ test('manual SQLite FTS5: explicit roots, Han bigrams, updates, rename/delete an
     const empty=await FullTextEngine.preview(noRoots,principal,auth);
     assert.equal(empty.activated,false);
     assert.equal(empty.requiresSelectedRoots,true);
-    await assert.rejects(FullTextEngine.openConfirmed(noRoots,principal,auth,empty.digest),/FULLTEXT_SELECTION_NOT_CONFIRMED/);
+    await assert.rejects(FullTextEngine.openConfirmed(noRoots,principal,auth,empty.digest,syntheticFullTextAttributes),/FULLTEXT_SELECTION_NOT_CONFIRMED/);
     assert.equal(await access(database).then(()=>true,()=>false),false,'preview must not create any index');
     const preview=await FullTextEngine.preview(config,principal,auth);
     assert.equal(preview.activated,false);
     assert.equal(preview.machine.gpuUsed,false);
-    await assert.rejects(FullTextEngine.openConfirmed(config,principal,auth,'invalid-digest'),/FULLTEXT_SELECTION_NOT_CONFIRMED/);
+    await assert.rejects(FullTextEngine.openConfirmed(config,principal,auth,'invalid-digest',syntheticFullTextAttributes),/FULLTEXT_SELECTION_NOT_CONFIRMED/);
     await writeFile(file('alpha.txt'),'alpha oldmarker unique');
     await writeFile(file('han.txt'),'开头中文文件末尾');
     await writeFile(file('latin.txt'),'België Café cafe\u0301');
     await writeFile(file('arabic.txt'),'السلام عليكم');
     await writeFile(file('delete.txt'),'todelete oldmarker');
-    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest,syntheticFullTextAttributes);
     await completeScan(engine,(await engine.start(principal)).runId);
     const status=await engine.status(principal);
     assert.equal(status.state,'complete');
@@ -92,7 +93,7 @@ test('manual SQLite FTS5: explicit roots, Han bigrams, updates, rename/delete an
     // Persisted crash/restart states are not claimed as succeeded. No watcher.
     const pending=await engine.start(principal);
     engine.close();engine=undefined;
-    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest,syntheticFullTextAttributes);
     assert.equal((await engine.status(principal)).state,'interrupted');
     await engine.resume(principal,pending.runId);
     await completeScan(engine,pending.runId);
@@ -133,7 +134,7 @@ test('no automatic indexing of a volume root; symlinks cannot leave own corpus',
     }
     await writeFile(path.join(external,'hidden.txt'),'SECRET_OUTSIDE_ROOT_FIXTURE');
     const preview=await FullTextEngine.preview(config,principal,auth);
-    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest);
+    engine=await FullTextEngine.openConfirmed(config,principal,auth,preview.digest,syntheticFullTextAttributes);
     const scan=await engine.start(principal);
     for(let i=0;i<10;i++){
       const receipt=await engine.step(principal,scan.runId);
