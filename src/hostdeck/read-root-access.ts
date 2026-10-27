@@ -113,10 +113,17 @@ export class ReadRootAccess {
   async readBytes(scope: ReadRootScope, owner: ReadRootOwner,
     operation: ReadOnlyOperation, maxBytes: number): Promise<Buffer> {
     return this.withFile(scope, owner, operation, maxBytes, async file => {
-      // readFile on the opened handle is bound to the object, not a fresh path.
-      const data = await file.readFile();
-      if (data.length > maxBytes) throw new RuntimeError('LIMIT_EXCEEDED');
-      return data;
+      // Existing bounded file-read budget, even when the source grows during
+      // the open-handle read. Never allocate from attacker-controlled size.
+      const output=Buffer.alloc(maxBytes+1);
+      let length=0;
+      while(length<output.length){
+        const read=await file.read(output,length,output.length-length,length);
+        if(!read.bytesRead)break;
+        length+=read.bytesRead;
+      }
+      if(length>maxBytes)throw new RuntimeError('LIMIT_EXCEEDED');
+      return output.subarray(0,length);
     });
   }
 
@@ -127,7 +134,7 @@ export class ReadRootAccess {
     const target = await fs.lstat(scope.absolute, { bigint: true });
     if (target.isSymbolicLink()) denied();
     if (target.isFile()) {
-      return this.withFile(scope, owner, operation, 1024 * 1024 * 1024,
+      return this.withFile(scope, owner, operation, Number.MAX_SAFE_INTEGER,
         async (_file, stat) => ({
           size: Number(stat.size), isDirectory: false, isFile: true,
           modified: stat.mtime.toISOString(),
@@ -140,7 +147,8 @@ export class ReadRootAccess {
     const after = await identity(scope.absolute);
     if (!same(before, after) || before.mtimeNs !== after.mtimeNs) changed();
     await this.assertScope(scope, owner, operation);
-    return { size: 0, isDirectory: true, isFile: false, modified: after.mtime.toISOString() };
+    return { size: Number(after.size), isDirectory: true, isFile: false,
+      modified: after.mtime.toISOString() };
   }
 
   /** Check the path and root AGAIN after opendir before exposing names. */
