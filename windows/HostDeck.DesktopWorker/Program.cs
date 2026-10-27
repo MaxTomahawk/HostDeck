@@ -18,6 +18,12 @@ internal static class Program
     {
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
+        // Private read-only file metadata/ACL transport. Reuse one bounded
+        // stdio worker for batches; no public MCP or desktop operation added.
+        if (args.Length == 1 && args[0] == "--fulltext-native") {
+            await FullTextNative.Run();
+            return;
+        }
         if (args.Length == 1 && args[0] == "--everything") {
             try {
                 var ipcLine = Console.In.ReadLine();
