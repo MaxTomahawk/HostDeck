@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseToolArguments } from './contracts.js';
 import {RuntimeError} from './runtime-error.js';
 import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
-import type {EverythingClient} from './everything.js';
+import {everythingNameNeedle, type EverythingClient} from './everything.js';
 
 const execFile = promisify(execFileCallback);
 const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference','hostdeck_set_provider_enabled'] as const;
@@ -48,48 +48,6 @@ function safePattern(pattern: string, literal: boolean): RegExp {
   try { return new RegExp(pattern, 'i'); } catch { throw new RuntimeError('SEARCH_PATTERN_INVALID'); }
 }
 
-
-/**
- * A mandatory literal fragment of the validated Node regexp. Everything uses
- * PCRE on full paths, while Node remains the final filename/relative-path
- * matcher. Never forward a user regexp or Everything search operators.
- */
-function everythingNameNeedle(pattern: string, literal: boolean): string {
-  if (literal) return pattern;
-  let best = '', current = '', inClass = false, bestScore = -Infinity;
-  const score = (value: string) => [...value].reduce((n, ch) => n + (/[\p{L}\p{N}]/u.test(ch) ? 2 : -1), 0);
-  const flush = () => {
-    if (current && score(current) > bestScore) { best = current; bestScore = score(current); }
-    current = '';
-  };
-  const escapedLiteral = new Set(['\\', '.', '^', '$', '[', ']', '/', '-']);
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    if (ch === '\\') {
-      const escaped = pattern[++i];
-      if (inClass) continue;
-      if (escapedLiteral.has(escaped)) { current += escaped; continue; }
-      if (escaped === 'x' || escaped === 'u') {
-        const width = escaped === 'x' ? 2 : 4, hex = pattern.slice(i + 1, i + 1 + width);
-        if (hex.length !== width || !/^[0-9a-fA-F]+$/.test(hex))
-          throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
-        const code = parseInt(hex, 16);
-        if (code === 0) throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
-        current += String.fromCharCode(code); i += width; continue;
-      }
-      if ('dDwWsSbB'.includes(escaped)) { flush(); continue; }
-      throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
-    }
-    if (inClass) { if (ch === ']') inClass = false; continue; }
-    if (ch === '[') { flush(); inClass = true; continue; }
-    if (ch === '.' || ch === '^' || ch === '$') { flush(); continue; }
-    current += ch;
-  }
-  flush();
-  if (!best || /[\x00-\x1f]/.test(best))
-    throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
-  return best;
-}
 
 function visibleName(name: string, includeHidden: boolean): boolean { return includeHidden || !name.startsWith('.'); }
 function psQuote(value: string): string { return `'${value.replace(/'/g, "''")}'`; }
@@ -359,7 +317,7 @@ export class FileAdapter {
     if(provider==='everything')this.authorizeEverythingSession(context);
     const regex=safePattern(pattern,literal);
     // Every native result must satisfy a name predicate before the IPC offset-0 cap.
-    const everythingNeedle=provider==='everything'?everythingNameNeedle(pattern,literal):undefined;
+    const everythingNeedle=provider==='everything'?everythingNameNeedle(regex):undefined;
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
       regex, includeHidden: args.include_hidden as boolean,
