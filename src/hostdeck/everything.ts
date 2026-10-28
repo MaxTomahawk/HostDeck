@@ -11,7 +11,7 @@ export interface EverythingStatus {
 }
 export interface EverythingSnapshot {paths:string[];truncated:boolean;version:string;instance:string;session_id:number;runtime_id:string;}
 /** A required literal substring of the validated Node name match, never vendor search syntax. */
-export interface EverythingNameFilter {workspace:string;needle:string;}
+export interface EverythingNameFilter {workspace:string;needle:string;nameScope:'workspace_relative'|'absolute';}
 
 /**
  * A mandatory literal fragment of the already validated Node regexp. Everything uses
@@ -99,7 +99,7 @@ export class EverythingClient {
       });
       child.stdin.end(JSON.stringify({operation,root,timeout_ms:timeout,executable:this.options.executable,
         sha256:this.options.sha256,version:this.options.version,instance:this.options.instance,
-        ...(filter?{workspace:filter.workspace,name_filter:filter.needle}:{}),
+        ...(filter?{workspace:filter.workspace,name_filter:filter.needle,name_scope:filter.nameScope}:{}),
         session_id:this.options.identity.session_id,sid:this.options.identity.sid,logon_id:this.options.identity.logon_id})+'\n');
     });
   }
