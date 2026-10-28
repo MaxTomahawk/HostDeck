@@ -46,6 +46,7 @@ async function fixture(){
   await fs.writeFile(path.join(separate,'other.txt'),'OTHER_MARKER');
   let nativeAttribute:'ok'|'hidden'|'system'|'reparse'='ok';
   let forceHandleMismatch=false;
+  let pinHook:(()=>Promise<void>)|undefined;
   const calls:string[]=[];
   const native={
     probeProtectedObjectAcl:async(_file:string)=>({
@@ -59,7 +60,10 @@ async function fixture(){
         hidden:nativeAttribute==='hidden',system:nativeAttribute==='system',
         reparse:nativeAttribute==='reparse',
         hidden_component:nativeAttribute==='hidden',
-        system_component:nativeAttribute==='system',directory:null,
+        system_component:nativeAttribute==='system',
+        hidden_below_volume:nativeAttribute==='hidden',
+        system_below_volume:nativeAttribute==='system',
+        directory:null,
       }));
     },
     directoryPage:async(target:string, expectedDev:bigint, expected:bigint, offset:number,limit:number,_authorize:unknown)=>{
@@ -69,6 +73,16 @@ async function fixture(){
       const size=(await fs.readdir(target)).length;
       return {names,more:offset+names.length<size,nextOffset:offset+names.length};
     },
+    // A synthetic handle-receipt seam. Real Windows share-lock behavior is an
+    // independent root qualification gate, not claimed by this fixture.
+    pinFile:async(target:string,root:string,scope:{dev:bigint;ino:bigint})=>{
+      const observed=await fs.stat(target,{bigint:true});
+      await pinHook?.();
+      return {id:'0123456789abcdef0123456789abcdef',dev:observed.dev,
+        ino:observed.ino,rootDev:scope.dev,rootIno:scope.ino};
+    },
+    verifyFilePin:async(_pin:unknown)=>{},
+    releaseFilePin:async(_pin:unknown)=>{},
   };
   const config:Config={version:1,device_id:owner.deviceId,
     executor_id:owner.executorId,expected_user_sid:sid,workspace,
@@ -88,6 +102,7 @@ async function fixture(){
     config,configFile,writeConfig,store,access,adapter,runtime,native,calls,
     setNativeAttribute:(v:typeof nativeAttribute)=>{nativeAttribute=v;},
     forceMismatch:(v:boolean)=>{forceHandleMismatch=v;},
+    setPinHook:(hook:(()=>Promise<void>)|undefined)=>{pinHook=hook;},
     cleanup:async()=>{await runtime.dispose();await cleanupFixture(root,'hostdeck-read-root-recovery-');}};
 }
 function args(p:string){return {device_id:owner.deviceId,path:p};}
@@ -245,6 +260,46 @@ test('replaced retained match suppresses both snippet and stale match count',asy
   }finally{await f.cleanup();}
 });
 
+
+
+test('negative: outside junction swapped after native pin cannot pass opened fd identity',async t=>{
+  const f=await fixture();
+  const backup=path.join(f.root,'external-previous');
+  let renamed=false,junction=false;
+  try{
+    // Both files and the junction are owned by this synthetic disposable
+    // fixture. No personal data, actual user roots or installed config.
+    await fs.writeFile(path.join(f.separate,'owned.txt'),'SYNTHETIC_OUTSIDE_FIXTURE');
+    try{
+      await fs.rename(f.external,backup);renamed=true;
+      await fs.symlink(f.separate,f.external,process.platform==='win32'?'junction':'dir');
+      junction=true;
+      await fs.rm(f.external,{force:true});junction=false;
+      await fs.rename(backup,f.external);renamed=false;
+    }catch(error){
+      if(!['EPERM','EACCES','ENOTSUP'].includes(
+        String((error as NodeJS.ErrnoException).code)))throw error;
+      t.skip('Controlled junction creation unavailable to this test token');
+      return;
+    }
+    // After initial live approval, the (synthetic) native pin records the
+    // admitted leaf then temporarily substitutes the root BEFORE Node fs.open.
+    // Real native pin keeps ancestor/leaf handles non-deletable instead.
+    f.setPinHook(async()=>{
+      await fs.rename(f.external,backup);renamed=true;
+      await fs.symlink(f.separate,f.external,process.platform==='win32'?'junction':'dir');
+      junction=true;
+    });
+    await assert.rejects(f.runtime.invoke('hostdeck_read_file',args(f.source),owner),
+      /READ_ROOT_(?:DENIED|CHANGED)/,
+      'A path that resolves to an outside file cannot satisfy pinned FileID');
+  }finally{
+    f.setPinHook(undefined);
+    if(junction){await fs.rm(f.external,{force:true});junction=false;}
+    if(renamed){await fs.rename(backup,f.external);renamed=false;}
+    await f.cleanup();
+  }
+});
 
 test('Everything stays selected and enabled, but emits only authorized external hits',async()=>{
   const f=await fixture();
