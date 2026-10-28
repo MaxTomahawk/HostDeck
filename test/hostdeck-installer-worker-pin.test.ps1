@@ -100,7 +100,55 @@ try {
             $passed++
         }
     }
-    Write-Output "Worker-pin Windows file/ACL and mocked-SCM failure cases: $passed PASS. Installed lifecycle NOT_RUN."
+    # Exercise the production Rollback-HostDeck Verify-Release helper without
+    # invoking the protected installer, SCM or any installed HostDeck paths.
+    $rollbackTokens = $null; $rollbackErrors = $null
+    $rollbackAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $source 'windows/install/Rollback-HostDeck.ps1'),
+        [ref]$rollbackTokens, [ref]$rollbackErrors)
+    Assert ($rollbackErrors.Count -eq 0) 'Rollback script must parse.'
+    foreach ($name in @('Assert-NoReparse', 'Verify-Release')) {
+        $definition = @($rollbackAst.FindAll({
+            param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]
+        }, $false) | Where-Object Name -eq $name)
+        Assert ($definition.Count -eq 1) 'Expected exactly one production release validator helper.'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+    }
+
+    $releaseFixture = Join-Path $ownedRoot 'rollback-release-integrity'
+    $requiredFiles = @(
+        'service/HostDeck.Lifecycle.exe', 'desktop/HostDeck.DesktopWorker.exe',
+        'tray/HostDeck.Tray.exe', 'agent/node.exe',
+        'agent/dist/hostdeck/main.js', 'agent/ui/newtree/index.html',
+        'licenses/Node.LICENSE'
+    )
+    $releaseEntries = @(
+        foreach ($relative in $requiredFiles) {
+            $filePath = Join-Path $releaseFixture $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $filePath) -Force | Out-Null
+            [IO.File]::WriteAllText($filePath, 'Owned fixture: ' + $relative)
+            @{path=$relative; sha256=(Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()}
+        }
+    )
+    $releaseManifest = Join-Path $releaseFixture 'manifest.json'
+    @{schema=1; files=@($releaseEntries)} | ConvertTo-Json -Depth 5 |
+        Set-Content -LiteralPath $releaseManifest -Encoding utf8
+    Verify-Release $releaseFixture
+    $passed++
+
+    # A syntactically valid, hash-consistent manifest must not pass rollback
+    # if it omits an essential agent/UI/license component still on disk.
+    foreach ($missing in @('agent/node.exe', 'agent/dist/hostdeck/main.js',
+            'agent/ui/newtree/index.html', 'licenses/Node.LICENSE')) {
+        @{schema=1; files=@($releaseEntries | Where-Object { $_.path -cne $missing })} |
+            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $releaseManifest -Encoding utf8
+        $refused = $false
+        try { Verify-Release $releaseFixture }
+        catch { $refused = $_.Exception.Message -eq 'Incomplete previous release.' }
+        Assert $refused ('Rollback must reject missing essential release entry: ' + $missing)
+        $passed++
+    }
+    Write-Output "Windows installer worker-pin, release-integrity and mocked-SCM cases: $passed PASS. Installed lifecycle NOT_RUN."
 } finally {
     $resolved = [IO.Path]::GetFullPath($ownedRoot)
     if ($resolved -ne $ownedRoot -or (Split-Path -Parent $resolved).TrimEnd('\') -ne $temporaryParent.TrimEnd('\') -or
