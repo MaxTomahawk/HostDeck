@@ -173,6 +173,13 @@ internal static class FullTextNative
     private static object DirectoryPage(JsonElement args)
     {
         var requested = RequiredPath(args);
+        if (!args.TryGetProperty("volume_anchor", out var volumeFlag) ||
+            (volumeFlag.ValueKind != JsonValueKind.True &&
+             volumeFlag.ValueKind != JsonValueKind.False))
+            throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
+        var volumeAnchor = volumeFlag.GetBoolean();
+        if (volumeAnchor && !SameFilePath(requested, Path.GetPathRoot(requested)!))
+            throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_UNQUALIFIED");
         if (!args.TryGetProperty("expected_dev", out var deviceRaw) ||
             deviceRaw.ValueKind != JsonValueKind.String ||
             !ulong.TryParse(deviceRaw.GetString(), out var expectedDev) ||
@@ -199,7 +206,8 @@ internal static class FullTextNative
         if (actualInode != expectedInode ||
             (ulong)info.VolumeSerial != expectedDev ||
             (info.Attributes & Directory) == 0 ||
-            (info.Attributes & (Hidden | SystemAttribute | Reparse)) != 0)
+            (info.Attributes & Reparse) != 0 ||
+            ((info.Attributes & (Hidden | SystemAttribute)) != 0 && !volumeAnchor))
             throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_CHANGED");
 
         var names = new List<string>();
