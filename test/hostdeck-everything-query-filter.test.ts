@@ -14,7 +14,7 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
   const parent=await realpath(await mkdtemp(path.join(os.tmpdir(),'hostdeck-query-filter-')));
   const workspace=path.join(parent,'allowed');await mkdir(workspace);
   const context={ownerId:'own-fixture',deviceId:'synthetic-device',executorId:'synthetic-executor',sessionIds:[1]};
-  const names=['CAFÉ.txt','cafe\u0301.txt','中文.txt','[report]!.txt','report9.txt','ordinary.txt'];
+  const names=['CAFÉ.txt','cafe\u0301.txt','中文.txt','[report]!.txt','report9.txt','plus+file.txt','draft(1).txt','ordinary.txt'];
   const candidates=names.map(name=>path.join(workspace,name));
   for(const file of candidates)await writeFile(file,'owned');
   const forbidden=path.join(parent,'excluded.txt');await writeFile(forbidden,'private');
@@ -50,15 +50,18 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     assert.deepEqual((await query('cafe\u0301')).items.map((r:any)=>r.path),['cafe\u0301.txt']);
     assert.deepEqual((await query('中文')).items.map((r:any)=>r.path),['中文.txt']);
     assert.deepEqual((await query('[report]!')).items.map((r:any)=>r.path),['[report]!.txt']);
+    assert.deepEqual((await query('plus+file')).items.map((r:any)=>r.path),['plus+file.txt']);
+    assert.deepEqual((await query('draft(1)')).items.map((r:any)=>r.path),['draft(1).txt']);
     // The native mandatory "report" fragment can over-include the bracket
     // filename; the existing Node regexp remains the final semantic check.
     assert.deepEqual((await query('^report\\d\\.txt$',false)).items.map((r:any)=>r.path),['report9.txt']);
+    assert.deepEqual((await query('^\\u4e2d\\u6587',false)).items.map((r:any)=>r.path),['中文.txt']);
     assert.deepEqual((await query('ext:txt')).items,[]);
     const partial=await query('bulk');assert.equal(partial.state,'partial');
     assert.equal(partial.truncated,true);assert.equal(partial.total_results,0);
 
     assert.deepEqual(requests.map(r=>r.needle),
-      ['café','cafe\u0301','中文','[report]!','report','ext:txt','bulk']);
+      ['café','cafe\u0301','中文','[report]!','plus+file','draft(1)','report','中文','ext:txt','bulk']);
     assert.ok(requests.every(r=>r.root===workspace&&r.workspace===workspace));
     assert.equal(JSON.stringify(accent).includes('excluded.txt'),false);
 
@@ -67,6 +70,7 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     await assert.rejects(query('report|other',false),/SEARCH_REGEX_FEATURE_DENIED/);
     await assert.rejects(query('^\\d$',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
     await assert.rejects(query('[0-9]',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
+    await assert.rejects(query('\\s',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
     await assert.rejects(query('[',false),/SEARCH_PATTERN_INVALID/);
     assert.equal(requests.length,count,'invalid or unsupported regex never starts a vendor query');
   } finally {await rm(parent,{recursive:true,force:true});}
