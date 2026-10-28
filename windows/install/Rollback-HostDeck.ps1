@@ -79,7 +79,7 @@ function Set-WorkerConfigHash([string] $configPath, [hashtable] $original, [stri
     $temporary = $configPath + '.stage-' + [guid]::NewGuid().ToString('N')
     $backup = $configPath + '.worker-pin-backup-' + [guid]::NewGuid().ToString('N')
     try {
-        if (-not [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -eq [Convert]::ToBase64String($original.Bytes)) {
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
             throw 'Protected facade config changed during release transaction.'
         }
         [IO.File]::WriteAllBytes($temporary, [Text.Encoding]::UTF8.GetBytes($replacement))
@@ -96,7 +96,7 @@ function Restore-WorkerConfig([string] $configPath, [string] $backup, [hashtable
         [IO.File]::Replace($backup, $configPath, $discard)
         Remove-Item -LiteralPath $discard -Force
     }
-    if (-not [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -eq [Convert]::ToBase64String($original.Bytes)) {
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
         throw 'Original protected facade bytes not restored; refusing service restart.'
     }
 }
