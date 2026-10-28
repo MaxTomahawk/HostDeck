@@ -268,7 +268,8 @@ test('replaced retained match suppresses both snippet and stale match count',asy
 test('negative: outside junction swapped after native pin cannot pass opened fd identity',async t=>{
   const f=await fixture();
   const backup=path.join(f.root,'external-previous');
-  let renamed=false,junction=false;
+  let renamed=false,junction=false,outsideFdOpened=false,restoredBeforeStat=false;
+  const originalOpen=fs.open;
   try{
     // Both files and the junction are owned by this synthetic disposable
     // fixture. No personal data, actual user roots or installed config.
@@ -293,10 +294,34 @@ test('negative: outside junction swapped after native pin cannot pass opened fd 
       await fs.symlink(f.separate,f.external,process.platform==='win32'?'junction':'dir');
       junction=true;
     });
+    // Capture the real fd opened THROUGH the temporary junction, then restore
+    // the original path before ReadRootAccess can perform its linked stat.
+    // Both path-only stat checks would see the legitimate restored target.
+    (fs as unknown as {open:typeof fs.open}).open=(async(
+      file:Parameters<typeof fs.open>[0],
+      flags:Parameters<typeof fs.open>[1],
+      mode?:number,
+    )=>{
+      const fd=await originalOpen(file,flags,mode);
+      if(file===f.source&&junction){
+        const observed=await fd.stat({bigint:true});
+        const outside=await fs.stat(path.join(f.separate,'owned.txt'),{bigint:true});
+        assert.equal(observed.ino,outside.ino,'the actual fd was outside scope');
+        assert.equal(observed.dev,outside.dev);
+        outsideFdOpened=true;
+        await fs.unlink(f.external);junction=false;
+        await fs.rename(backup,f.external);renamed=false;
+        restoredBeforeStat=true;
+      }
+      return fd;
+    }) as typeof fs.open;
     await assert.rejects(f.runtime.invoke('hostdeck_read_file',args(f.source),owner),
       /READ_ROOT_(?:DENIED|CHANGED)/,
-      'A path that resolves to an outside file cannot satisfy pinned FileID');
+      'Restored path stats cannot override actual pinned-vs-opened FileID');
+    assert.equal(outsideFdOpened,true,'test must really open the outside fixture');
+    assert.equal(restoredBeforeStat,true,'test must restore the path before later stats');
   }finally{
+    (fs as unknown as {open:typeof fs.open}).open=originalOpen;
     f.setPinHook(undefined);
     if(junction){await fs.unlink(f.external);junction=false;}
     if(renamed){await fs.rename(backup,f.external);renamed=false;}
