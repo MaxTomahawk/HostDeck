@@ -184,16 +184,22 @@ function Get-InstalledPair($p) {
     $root = [string]$p.install_root
     $manifestPath = Join-Path $root 'current\manifest.json'
     $configPath = Join-Path $root 'config\facade.json'
-    $manifestHash = Sha $manifestPath
-    $configHash = Sha $configPath
+    Assert-NoReparse $manifestPath
+    Assert-NoReparse $configPath
+    # The exact bytes used for the hash are also the bytes parsed below.
+    $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+    $configBytes = [IO.File]::ReadAllBytes($configPath)
+    $manifestHash = ShaBytes $manifestBytes
+    $configHash = ShaBytes $configBytes
     $choice = ''
     if ($manifestHash -ceq $p.old.manifest_sha256 -and $configHash -ceq $p.old.config_sha256) {
         $choice = 'old'
     } elseif ($manifestHash -ceq $p.new.manifest_sha256 -and $configHash -ceq $p.new.config_sha256) {
         $choice = 'new'
     } else { Refuse 'CURRENT_PAIR_MISMATCH' }
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
-    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $manifest = $utf8.GetString($manifestBytes).TrimStart([char]0xfeff) | ConvertFrom-Json -ErrorAction Stop
+    $config = $utf8.GetString($configBytes).TrimStart([char]0xfeff) | ConvertFrom-Json -ErrorAction Stop
     if ($manifest.schema -ne 1 -or -not $manifest.files -or
         [string]$config.expected_user_sid -cne [string]$p.enrolled_sid -or
         $config.installed -ne $true) { Refuse 'CURRENT_CONFIG_INVALID' }
@@ -281,6 +287,8 @@ function Run-Once($p, [string] $planSha) {
     $start = Get-InstalledPair $p
     if ($start.choice -cne 'old') { Refuse 'INITIAL_RELEASE_NOT_OLD' }
     Assert-Service $start
+    if ([DateTimeOffset]::UtcNow -ge [DateTimeOffset]::Parse([string]$p.deadline_utc,
+            [Globalization.CultureInfo]::InvariantCulture)) { Refuse 'DEADLINE_EXPIRED' }
     $pidValue = [Diagnostics.Process]::GetCurrentProcess().Id
     Write-Once $p.ready_path ([ordered]@{schema=1;request_id=$p.request_id;plan_sha256=$planSha;
         helper_pid=$pidValue;session_id=$p.session_id;started_utc=[DateTimeOffset]::UtcNow.ToString('o');
