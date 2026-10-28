@@ -56,8 +56,12 @@ function safePattern(pattern: string, literal: boolean): RegExp {
  */
 function everythingNameNeedle(pattern: string, literal: boolean): string {
   if (literal) return pattern;
-  let best = '', current = '', inClass = false;
-  const flush = () => { if (current.length > best.length) best = current; current = ''; };
+  let best = '', current = '', inClass = false, bestScore = -Infinity;
+  const score = (value: string) => [...value].reduce((n, ch) => n + (/[\p{L}\p{N}]/u.test(ch) ? 2 : -1), 0);
+  const flush = () => {
+    if (current && score(current) > bestScore) { best = current; bestScore = score(current); }
+    current = '';
+  };
   const escapedLiteral = new Set(['\\', '.', '^', '$', '[', ']', '/', '-']);
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
