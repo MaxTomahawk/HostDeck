@@ -61,6 +61,9 @@ internal static class FullTextNative
                 {
                     "attributes_batch" => Attributes(args),
                     "directory_page" => DirectoryPage(args),
+                    "pin_read_file" => PinReadFile(args),
+                    "verify_read_pin" => VerifyReadPin(args),
+                    "release_read_pin" => ReleaseReadPin(args),
                     "effective_acl" => FullTextProtectedAcl.Qualify(RequiredPath(args)),
                     "owner_boundary" => FullTextProtectedAcl.QualifyBoundary(
                         RequiredPath(args, "protectedDirectory"),
@@ -254,6 +257,227 @@ internal static class FullTextNative
             ending.VolumeSerial != info.VolumeSerial)
             throw new WorkerError("FULLTEXT_NATIVE_DIRECTORY_CHANGED");
         return new { names, more, next_offset = offset + names.Count };
+    }
+
+
+    // A short-lived descriptor-bound READ lease, NOT an owner permission.
+    // All ancestors, the selected root and the file stay OPEN without
+    // FILE_SHARE_DELETE until the coordinator has finished Node fd readback.
+    // This prevents same-token junction swap-and-restore between native proof
+    // and fs.open, even when the path is momentarily restored for path.stat.
+    private const uint ReadAttributesOnly = 0x0080;
+    private const uint ShareReadWrite = 0x0003; // deliberately NO share-delete
+    private const int MaxPinnedFiles = 16, MaxPinnedComponents = 64;
+    private static readonly TimeSpan PinLease = TimeSpan.FromSeconds(30);
+    private static readonly object PinLock = new();
+    private static readonly Dictionary<string, FilePin> FilePins = new();
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW",
+        CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle file,
+        [Out] StringBuilder buffer, uint capacity, uint flags);
+
+    private sealed class FilePin : IDisposable
+    {
+        internal readonly string Id = Guid.NewGuid().ToString("N");
+        internal readonly string Root;
+        internal readonly string Target;
+        internal readonly List<SafeFileHandle> Handles;
+        internal readonly uint Volume;
+        internal readonly ulong FileId;
+        internal readonly uint RootVolume;
+        internal readonly ulong RootFileId;
+        internal readonly DateTimeOffset Until = DateTimeOffset.UtcNow.Add(PinLease);
+        internal Timer? Expiry;
+
+        internal FilePin(string root, string target, List<SafeFileHandle> handles,
+            ByHandleInformation rootInfo, ByHandleInformation fileInfo)
+        {
+            Root = root; Target = target; Handles = handles;
+            Volume = fileInfo.VolumeSerial; FileId = FileIndex(fileInfo);
+            RootVolume = rootInfo.VolumeSerial; RootFileId = FileIndex(rootInfo);
+        }
+
+        public void Dispose()
+        {
+            Expiry?.Dispose();
+            foreach (var h in Handles) h.Dispose();
+        }
+    }
+
+    private static ulong FileIndex(ByHandleInformation info) =>
+        ((ulong)info.FileIdHigh << 32) | info.FileIdLow;
+
+    private static bool SameFilePath(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(a),
+            Path.TrimEndingDirectorySeparator(b), StringComparison.OrdinalIgnoreCase);
+
+    private static bool InRoot(string root, string file)
+    {
+        var rel = Path.GetRelativePath(root, file);
+        return rel == "." || (rel != ".." &&
+            !rel.StartsWith(@"..\", StringComparison.Ordinal) &&
+            !Path.IsPathFullyQualified(rel));
+    }
+
+    // This is the opened HANDLE's actual normalized final path, not a path
+    // stat taken before/after opening. Unqualified device/UNC aliases deny.
+    private static void RequireHandlePath(SafeFileHandle handle, string expected)
+    {
+        var name = new StringBuilder(MaxPathChars + 32);
+        var n = GetFinalPathNameByHandleW(handle, name, (uint)name.Capacity, 0);
+        if (n == 0 || n >= name.Capacity)
+            throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_UNQUALIFIED");
+        var finalName = name.ToString();
+        if (!finalName.StartsWith(@"\\?\", StringComparison.Ordinal) ||
+            !SameFilePath(finalName.Substring(4), expected))
+            throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_UNQUALIFIED");
+    }
+
+    private static ulong RequiredUInt64(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var raw) ||
+            raw.ValueKind != JsonValueKind.String ||
+            !ulong.TryParse(raw.GetString(), out var value) || value == 0)
+            throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
+        return value;
+    }
+
+    private static string RequiredPinId(JsonElement args)
+    {
+        if (!args.TryGetProperty("pin_id", out var raw) ||
+            raw.ValueKind != JsonValueKind.String ||
+            raw.GetString() is not string id ||
+            !Regex.IsMatch(id, "^[0-9a-f]{32}$", RegexOptions.CultureInvariant))
+            throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
+        return id;
+    }
+
+    private static void ExpireFilePin(string id)
+    {
+        lock (PinLock)
+        {
+            if (FilePins.Remove(id, out var pinned)) pinned.Dispose();
+        }
+    }
+
+    private static object PinReadFile(JsonElement args)
+    {
+        var root = RequiredPath(args, "root");
+        var target = RequiredPath(args);
+        var expectedDev = RequiredUInt64(args, "root_dev");
+        var expectedInode = RequiredUInt64(args, "root_ino");
+        if (!args.TryGetProperty("volume_anchor", out var anchorRaw) ||
+            (anchorRaw.ValueKind != JsonValueKind.True &&
+             anchorRaw.ValueKind != JsonValueKind.False))
+            throw new WorkerError("FULLTEXT_NATIVE_INVALID_ARGUMENTS");
+        var volumeAnchor = anchorRaw.GetBoolean();
+        var driveRoot = Path.GetPathRoot(target)!;
+        if (!InRoot(root, target) ||
+            (volumeAnchor && !SameFilePath(root, driveRoot)))
+            throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_DENIED");
+
+        var components = target.Substring(driveRoot.Length)
+            .Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        if (components.Length + 1 > MaxPinnedComponents)
+            throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_LIMIT");
+        var opened = new List<SafeFileHandle>(components.Length + 1);
+        var transferred = false;
+        var rootSeen = false;
+        var stopwatch = Stopwatch.StartNew();
+        ByHandleInformation rootInfo = default, finalInfo = default;
+        var current = driveRoot;
+        try
+        {
+            for (var i = -1; i < components.Length; i++)
+            {
+                if (stopwatch.ElapsedMilliseconds >= MaxBatchMs)
+                    throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_DEADLINE");
+                if (i >= 0) current = Path.Combine(current, components[i]);
+                var h = CreateDirectoryHandle(current, ReadAttributesOnly,
+                    ShareReadWrite, IntPtr.Zero, OpenExisting,
+                    BackupSemantics | OpenReparsePoint, IntPtr.Zero);
+                if (h.IsInvalid) {
+                    h.Dispose();
+                    throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_UNQUALIFIED");
+                }
+                opened.Add(h);
+                if (!GetFileInformationByHandle(h, out var info) ||
+                    (info.Attributes & Reparse) != 0 ||
+                    (info.Attributes & (Hidden | SystemAttribute)) != 0 &&
+                        !(volumeAnchor && SameFilePath(current, driveRoot)))
+                    throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_DENIED");
+                RequireHandlePath(h, current);
+                if (SameFilePath(current, root)) {
+                    rootSeen = true; rootInfo = info;
+                    if (info.VolumeSerial != expectedDev ||
+                        FileIndex(info) != expectedInode ||
+                        (info.Attributes & Directory) == 0)
+                        throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_CHANGED");
+                }
+                if (i == components.Length - 1) finalInfo = info;
+                else if ((info.Attributes & Directory) == 0)
+                    throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_DENIED");
+            }
+            if (!rootSeen || SameFilePath(root, target) ||
+                (finalInfo.Attributes & Directory) != 0 || FileIndex(finalInfo) == 0)
+                throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_DENIED");
+            var pin = new FilePin(root, target, opened, rootInfo, finalInfo);
+            lock (PinLock)
+            {
+                if (FilePins.Count >= MaxPinnedFiles)
+                    throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_LIMIT");
+                FilePins.Add(pin.Id, pin);
+                // Expiry closes handles and invalidates the receipt. Even if
+                // Node later finishes its read, verify/release will fail.
+                pin.Expiry = new Timer(_ => ExpireFilePin(pin.Id), null,
+                    PinLease, Timeout.InfiniteTimeSpan);
+                transferred = true;
+            }
+            return new {
+                pin_id = pin.Id, dev = pin.Volume.ToString(),
+                ino = pin.FileId.ToString(), root_dev = pin.RootVolume.ToString(),
+                root_ino = pin.RootFileId.ToString(), final_path_verified = true
+            };
+        }
+        finally
+        {
+            if (!transferred) foreach (var h in opened) h.Dispose();
+        }
+    }
+
+    private static object VerifyReadPin(JsonElement args)
+    {
+        var id = RequiredPinId(args);
+        lock (PinLock)
+        {
+            if (!FilePins.TryGetValue(id, out var pin) ||
+                DateTimeOffset.UtcNow >= pin.Until)
+                throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_EXPIRED");
+            // No path reopening or mutable path-only evidence here.
+            var file = pin.Handles[^1];
+            if (!GetFileInformationByHandle(file, out var current) ||
+                current.VolumeSerial != pin.Volume ||
+                FileIndex(current) != pin.FileId)
+                throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_CHANGED");
+            RequireHandlePath(file, pin.Target);
+            return new { verified = true, dev = pin.Volume.ToString(),
+                ino = pin.FileId.ToString() };
+        }
+    }
+
+    private static object ReleaseReadPin(JsonElement args)
+    {
+        var id = RequiredPinId(args);
+        lock (PinLock)
+        {
+            if (!FilePins.Remove(id, out var pin))
+                throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_EXPIRED");
+            var fresh = DateTimeOffset.UtcNow < pin.Until;
+            pin.Dispose();
+            if (!fresh) throw new WorkerError("FULLTEXT_NATIVE_READ_PIN_EXPIRED");
+            return new { released = true };
+        }
     }
 
     private static object Attributes(JsonElement args)
