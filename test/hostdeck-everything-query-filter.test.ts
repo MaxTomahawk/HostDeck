@@ -1,6 +1,6 @@
 import {test,mock} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,rm,realpath,readFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,realpath,stat} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import childProcess from 'node:child_process';
@@ -157,7 +157,7 @@ test('external readScope uses absolute name matching including ancestors and dri
       resolved++;return scope(absolute);
     },
     metadata:async(s:ReturnType<typeof scope>)=>{
-      const item=await import('node:fs/promises').then(fs=>fs.stat(s.absolute));
+      const item=await stat(s.absolute);
       return {isFile:item.isFile(),isDirectory:item.isDirectory(),
         size:item.size,modified:item.mtime.toISOString()};
     },
