@@ -76,11 +76,22 @@ internal static partial class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool GetCursorPos(out NativePoint point);
 
+    // Explicit physical variants for window-bound UIA screen coordinates.
+    // The legacy logical APIs remain in place for other vendor callers.
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool GetPhysicalCursorPos(out NativePoint point);
+
     [DllImport("user32.dll")]
     internal static extern bool SetCursorPos(int x, int y);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool SetPhysicalCursorPos(int x, int y);
+
     [DllImport("user32.dll")]
     internal static extern nint WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll")]
+    internal static extern nint WindowFromPhysicalPoint(NativePoint point);
 
     [DllImport("user32.dll")]
     internal static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, nuint dwExtraInfo);

@@ -19,8 +19,9 @@ public sealed class InputService : IInputService
     public InputActionResult MouseAction(string action, string? button, int? x, int? y, long? targetWindowHandle)
     {
         var (targetX, targetY) = ResolvePoint(x, y, targetWindowHandle);
-        if (!action.Equals("drag", StringComparison.OrdinalIgnoreCase))
-            NativeMethods.SetCursorPos(targetX, targetY);
+        if (!action.Equals("drag", StringComparison.OrdinalIgnoreCase) &&
+            !PositionPointer(targetX, targetY, targetWindowHandle))
+            return new InputActionResult(action, Completed: false, 0);
 
         switch (action.ToLowerInvariant())
         {
@@ -39,10 +40,18 @@ public sealed class InputService : IInputService
                     throw new ArgumentException("Drag requires explicit x and y destination coordinates.");
                 }
 
+                if (targetWindowHandle is long target && !PhysicalPointBelongsToWindow(x.Value, y.Value, target))
+                    return new InputActionResult("drag", Completed: false, 0);
                 MouseDown(button ?? "left");
-                NativeMethods.SetCursorPos(x.Value, y.Value);
-                MouseUp(button ?? "left");
-                return new InputActionResult("drag", Completed: true, 1);
+                try
+                {
+                    var reached = PositionPointer(x.Value, y.Value, targetWindowHandle);
+                    return new InputActionResult("drag", Completed: reached, reached ? 1 : 0);
+                }
+                finally
+                {
+                    MouseUp(button ?? "left");
+                }
             default:
                 throw new ArgumentException($"Unsupported mouse action: {action}");
         }
@@ -223,7 +232,8 @@ public sealed class InputService : IInputService
     public InputActionResult MouseWheel(string direction, int amount, long? targetWindowHandle, int? x, int? y)
     {
         var (targetX, targetY) = ResolvePoint(x, y, targetWindowHandle);
-        NativeMethods.SetCursorPos(targetX, targetY);
+        if (!PositionPointer(targetX, targetY, targetWindowHandle))
+            return new InputActionResult("mouse_wheel", Completed: false, 0);
         var delta = direction.ToLowerInvariant() switch
         {
             "up" => 120 * Math.Abs(amount),
@@ -308,6 +318,34 @@ public sealed class InputService : IInputService
         }
 
         return new InputActionResult("input_sequence", completed == steps.Count, completed);
+    }
+
+    // HostDeck's window-bound pointer positions come from UI Automation
+    // physical screen rectangles. Keep the vendor's legacy logical coordinates
+    // for calls without a window target, but never guess a DPI scale for owned UI.
+    private static bool PositionPointer(int x, int y, long? targetWindowHandle)
+    {
+        if (targetWindowHandle is not long target)
+            return NativeMethods.SetCursorPos(x, y);
+
+        if (!PhysicalPointBelongsToWindow(x, y, target) ||
+            !NativeMethods.SetPhysicalCursorPos(x, y) ||
+            !NativeMethods.GetPhysicalCursorPos(out var actual) ||
+            actual.X != x || actual.Y != y)
+            return false;
+
+        // The pre-existing worker RequireWithin/FocusAndVerify checks remain.
+        // Additionally reject a pointer that would land outside the bound window
+        // (including when GetWindowRect was virtualized for the worker's DPI).
+        return PhysicalPointBelongsToWindow(actual.X, actual.Y, target) &&
+            NativeMethods.GetForegroundWindow() == (nint)target;
+    }
+
+    private static bool PhysicalPointBelongsToWindow(int x, int y, long target)
+    {
+        var hit = NativeMethods.WindowFromPhysicalPoint(new NativePoint(x, y));
+        return hit != nint.Zero &&
+            NativeMethods.GetAncestor(hit, 2u) == (nint)target; // GA_ROOT
     }
 
     private static (int X, int Y) ResolvePoint(int? x, int? y, long? targetWindowHandle)
