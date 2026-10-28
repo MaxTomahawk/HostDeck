@@ -186,6 +186,8 @@ function Get-InstalledPair($p) {
     $configPath = Join-Path $root 'config\facade.json'
     Assert-NoReparse $manifestPath
     Assert-NoReparse $configPath
+    if ((Get-Item -LiteralPath $manifestPath).Length -gt 8388608 -or
+        (Get-Item -LiteralPath $configPath).Length -gt 1048576) { Refuse 'CURRENT_FILE_OVERSIZE' }
     # The exact bytes used for the hash are also the bytes parsed below.
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $configBytes = [IO.File]::ReadAllBytes($configPath)
@@ -298,6 +300,8 @@ function Run-Once($p, [string] $planSha) {
     $installed = Get-InstalledPair $p
     Assert-Service $installed
     Assert-ReleaseReceipt $installed.choice $receipt
+    if ([DateTimeOffset]::UtcNow -ge [DateTimeOffset]::Parse([string]$p.deadline_utc,
+            [Globalization.CultureInfo]::InvariantCulture)) { Refuse 'DEADLINE_EXPIRED' }
     $decision = Get-TrayDecision $p $installed @(Get-UserProcesses $installed)
     $trayPid = $null
     if ($decision -ceq 'launch') {
