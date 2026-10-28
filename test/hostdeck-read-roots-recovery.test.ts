@@ -8,6 +8,19 @@ import {UserRuntime} from '../src/hostdeck/user-runtime.js';
 import {ReadRootAccess} from '../src/hostdeck/read-root-access.js';
 import {ReadRootSelectionStore} from '../src/hostdeck/read-root-selection-store.js';
 
+
+/** Remove only the exact canonical, locally-created tmp child; never follow a junction. */
+async function cleanupFixture(root:string, prefix:string):Promise<void>{
+  const parent=await fs.realpath(os.tmpdir());
+  const canonical=path.resolve(root);
+  if(!path.isAbsolute(canonical) || path.dirname(canonical)!==parent ||
+      !path.basename(canonical).startsWith(prefix) ||
+      (await fs.lstat(canonical)).isSymbolicLink() ||
+      await fs.realpath(canonical)!==canonical)
+    throw new Error('FIXTURE_CLEANUP_OUTSIDE_CANONICAL_TMP');
+  await fs.rm(canonical,{recursive:true,force:true});
+}
+
 const owner={ownerId:'fixture_owner',deviceId:'fixture_device',
   executorId:'fixture_executor',revision:'grant_revision',sessionId:1,sessionIds:[1]};
 const sid='S-1-5-21-1000';
@@ -75,7 +88,7 @@ async function fixture(){
     config,configFile,writeConfig,store,access,adapter,runtime,native,calls,
     setNativeAttribute:(v:typeof nativeAttribute)=>{nativeAttribute=v;},
     forceMismatch:(v:boolean)=>{forceHandleMismatch=v;},
-    cleanup:async()=>{await runtime.dispose();await fs.rm(root,{recursive:true,force:true});}};
+    cleanup:async()=>{await runtime.dispose();await cleanupFixture(root,'hostdeck-read-root-recovery-');}};
 }
 function args(p:string){return {device_id:owner.deviceId,path:p};}
 async function finish(adapter:FileAdapter,id:string,context=owner){
@@ -141,7 +154,7 @@ test('external read/list/direct name/content work only inside the selected root'
     await assert.rejects(f.runtime.invoke('hostdeck_read_file',
       args(path.join(f.excluded,'private.txt')),owner),/READ_ROOT_DENIED/);
     await assert.rejects(f.runtime.invoke('hostdeck_write_file',{
-      ...args(f.source),content:'MUTATION_DENIED',mode:'overwrite'},owner),/PATH_DENIED/);
+      ...args(f.source),content:'MUTATION_DENIED',mode:'rewrite'},owner),/PATH_DENIED/);
     assert.equal(await fs.readFile(f.source,'utf8'),'VISIBLE_MARKER');
   }finally{await f.cleanup();}
 });
@@ -166,13 +179,21 @@ test('grant/session changes, config revision and revocation invalidate old pages
     const started=await f.adapter.handle('hostdeck_search_files',{
       ...args(f.external),pattern:'owned',provider:'direct'},owner) as any;
     assert.equal((await finish(f.adapter,started.search_id)).total_results,1);
-    for(const foreign of [{...owner,ownerId:'other'}, {...owner,revision:'other'},
+    for(const foreign of [{...owner,ownerId:'other'},
       {...owner,sessionIds:[2]}, {...owner,executorId:'other'}]){
       await assert.rejects(f.runtime.invoke('hostdeck_read_file',args(f.source),foreign),
         /READ_ROOT_DENIED/);
       await assert.rejects(f.adapter.handle('hostdeck_search_results',{
         device_id:owner.deviceId,search_id:started.search_id,offset:0,limit:10},foreign));
     }
+    // A newly granted revision may authorize a FRESH read through PolicyGate;
+    // a retained page from the prior grant revision cannot be replayed.
+    const regranted={...owner,revision:'new_grant_rev'};
+    assert.equal((await f.runtime.invoke('hostdeck_read_file',args(f.source),regranted)).content,
+      'VISIBLE_MARKER');
+    await assert.rejects(f.adapter.handle('hostdeck_search_results',{
+      device_id:owner.deviceId,search_id:started.search_id,offset:0,limit:10},regranted),
+      /READ_ROOT_DENIED/);
     f.config.read_roots!.revision='read_config_rev_2';await f.writeConfig();
     await assert.rejects(f.adapter.handle('hostdeck_search_results',{
       device_id:owner.deviceId,search_id:started.search_id,offset:0,limit:10},owner),
