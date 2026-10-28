@@ -27,8 +27,8 @@ export interface ReadRootScope extends ReadRootCandidate {
   readonly digest: string;
   readonly rootIdentity: { dev: bigint; ino: bigint };
 }
-const denied = (): never => { throw new RuntimeError('READ_ROOT_DENIED'); };
-const changed = (): never => { throw new RuntimeError('READ_ROOT_CHANGED'); };
+function denied(): never { throw new RuntimeError('READ_ROOT_DENIED'); }
+function changed(): never { throw new RuntimeError('READ_ROOT_CHANGED'); }
 const same = (a: Stat, b: Stat): boolean =>
   a.dev === b.dev && a.ino !== 0n && a.ino === b.ino;
 const sameDirectory = (a: Stat, b: Stat): boolean =>
