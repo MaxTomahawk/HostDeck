@@ -13,10 +13,13 @@ import {ReadRootSelectionStore} from '../src/hostdeck/read-root-selection-store.
 async function cleanupFixture(root:string, prefix:string):Promise<void>{
   const parent=await fs.realpath(os.tmpdir());
   const canonical=path.resolve(root);
-  if(!path.isAbsolute(canonical) || path.dirname(canonical)!==parent ||
-      !path.basename(canonical).startsWith(prefix) ||
-      (await fs.lstat(canonical)).isSymbolicLink() ||
-      await fs.realpath(canonical)!==canonical)
+  const actual=await fs.realpath(canonical);
+  const equal=(a:string,b:string)=>process.platform==='win32'?
+    a.toLowerCase()===b.toLowerCase():a===b;
+  if(!path.isAbsolute(canonical) || !equal(path.dirname(actual),parent) ||
+      !equal(actual,canonical) ||
+      !path.basename(actual).startsWith(prefix) ||
+      (await fs.lstat(canonical)).isSymbolicLink())
     throw new Error('FIXTURE_CLEANUP_OUTSIDE_CANONICAL_TMP');
   await fs.rm(canonical,{recursive:true,force:true});
 }
@@ -274,7 +277,7 @@ test('negative: outside junction swapped after native pin cannot pass opened fd 
       await fs.rename(f.external,backup);renamed=true;
       await fs.symlink(f.separate,f.external,process.platform==='win32'?'junction':'dir');
       junction=true;
-      await fs.rm(f.external,{force:true});junction=false;
+      await fs.unlink(f.external);junction=false;
       await fs.rename(backup,f.external);renamed=false;
     }catch(error){
       if(!['EPERM','EACCES','ENOTSUP'].includes(
@@ -295,7 +298,7 @@ test('negative: outside junction swapped after native pin cannot pass opened fd 
       'A path that resolves to an outside file cannot satisfy pinned FileID');
   }finally{
     f.setPinHook(undefined);
-    if(junction){await fs.rm(f.external,{force:true});junction=false;}
+    if(junction){await fs.unlink(f.external);junction=false;}
     if(renamed){await fs.rename(backup,f.external);renamed=false;}
     await f.cleanup();
   }
