@@ -10,12 +10,14 @@ export interface EverythingStatus {
   reason:string; version:string; instance:string; session_id:number; qualified:'not_independently_accepted';
 }
 export interface EverythingSnapshot {paths:string[];truncated:boolean;version:string;instance:string;session_id:number;runtime_id:string;}
+/** A required literal substring of the validated Node name match, never vendor search syntax. */
+export interface EverythingNameFilter {workspace:string;needle:string;}
 
 /** One bounded, owned native IPC client per observation/query. Never starts Everything. */
 export class EverythingClient {
   constructor(private readonly options:EverythingOptions) {}
   get sessionId():number{return this.options.identity.session_id;}
-  private request(operation:'status'|'query',root?:string,timeout=5000,signal?:AbortSignal):Promise<any> {
+  private request(operation:'status'|'query',root?:string,timeout=5000,signal?:AbortSignal,filter?:EverythingNameFilter):Promise<any> {
     if(signal?.aborted)return Promise.reject(new RuntimeError('EVERYTHING_CANCELLED'));
     return new Promise((resolve,reject)=>{
       const environment:Record<string,string>={PATHEXT:'.COM;.EXE;.BAT;.CMD'};
@@ -55,12 +57,13 @@ export class EverythingClient {
       });
       child.stdin.end(JSON.stringify({operation,root,timeout_ms:timeout,executable:this.options.executable,
         sha256:this.options.sha256,version:this.options.version,instance:this.options.instance,
+        ...(filter?{workspace:filter.workspace,name_filter:filter.needle}:{}),
         session_id:this.options.identity.session_id,sid:this.options.identity.sid,logon_id:this.options.identity.logon_id})+'\n');
     });
   }
   async status():Promise<EverythingStatus> {return this.request('status');}
-  async query(root:string,timeout:number,signal:AbortSignal):Promise<EverythingSnapshot> {
-    const result=await this.request('query',root,Math.max(1,timeout),signal);
+  async query(root:string,timeout:number,signal:AbortSignal,filter:EverythingNameFilter):Promise<EverythingSnapshot> {
+    const result=await this.request('query',root,Math.max(1,timeout),signal,filter);
     if(!Array.isArray(result.paths)||result.paths.length>100_001||result.paths.some((p:unknown)=>typeof p!=='string'||p.length>32768)
       ||typeof result.truncated!=='boolean'||typeof result.runtime_id!=='string')throw new RuntimeError('EVERYTHING_PROTOCOL_ERROR');
     return result;
