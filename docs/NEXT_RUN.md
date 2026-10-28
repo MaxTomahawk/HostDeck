@@ -1,6 +1,34 @@
 # HostDeck next run
 
-## Active execution plan — 2026-10-27 / HD-DELIVERY-B007
+## Current execution — 28 October / HD-DELIVERY-B007
+
+The full `HD-GOAL-COMPLETE-WINDOWS-001` remains active. The original 140 requirements, eight policies, 18 Everything criteria and 17 quality gates remain authoritative. The owner has deferred expansion of the 79 extension candidates until after the first working delivery; retain the inventory and implement applicable candidates afterward. This does not waive mandatory Windows, security, lifecycle, document, client or release requirements.
+
+**Verified now:** production `e6934dc` is installed through the exact 23-target update 039. Its 23 hashes/owners/ACLs and ten preserved pins pass; the sole config change is the qualified executable hash. Installed MCP exposes 57 tools and passes 13 scoped calls. Existing 88 jobs, 180 artifact hashes/expiry, both vendor INIs and empty provider tables are preserved. External `read_roots` is absent and fulltext remains selected but inactive.
+
+Independent ordinary-ChatGPT evidence `771299a` actually confirms the four precise regex refusals, owned Unicode readback, real Everything provenance/metadata, one-result workspace paging, retained rename behavior, settings preservation and exact cleanup. Its original absolute-path validator error is retained with an explicit correction. This does not accept external roots, source/signature trust or full lifecycle.
+
+Physical qualification 040 uses the installed native worker against the real protected config: five components pass effective-ACL qualification, an executor-writable test location is refused, and the unchanged config is read through actual opened-file identity checks. The probe principal is synthetic and establishes no PolicyGate grant or owner boundary.
+
+Actual recovery 041 deliberately terminates only the exact current HTTP agent with no active jobs. The existing tray restores a new PID/generation automatically in 10.6 seconds. The connected ChatGPT route then reads the owned marker and completes a fresh real Everything query with metadata. Exact cleanup, 13 protected pins and the 88-job/180-artifact/vendor/preference baseline pass. This is one measured current-session recovery, not a performance budget, active-job, service-crash, logon or reboot acceptance.
+
+**Next actions, in order:**
+
+1. Finish bounded existing-service recovery and remaining current-candidate upgrade/rollback/logon/reboot evidence, preserving the real canonical state. Prepare disruptive owner decisions before requesting the actual missing mandate. Do not replay old jobs, installations or probes.
+2. Finish the remaining required security/client, foreground/input, Office/PDF/OCR, clipboard and hosted/mobile/accessibility cases against the existing requirement/evidence matrices. Reuse demonstrated source and independent results; rerun only changed, failed or genuinely unproved paths. The 031 foreground FAIL and 034 unsettled Office export remain failures, not reasons to restart them blindly.
+3. Resolve actual protected owner inputs for production read selections/fulltext activation without inventing approval, grants, corpus scope, infrastructure changes or availability before login. Local physical/native tests are not personal-corpus acceptance.
+4. Complete one integrated independent Windows/ChatGPT acceptance and source/risk review, then integrate reviewed/tested PRs to `main` and complete release/history screening. Historical credential findings still block release; no history rewrite is authorized. Keep GitHub Actions and automatic upstream monitoring inactive.
+
+**Reusable procedure after the first working delivery:** take one existing catalogue candidate; pin the existing local/RDC/fork function and identify the exact adapter gap; verify applicability, version, license, Windows compatibility and authority; reuse ProviderRegistry, PolicyGate, manager and existing engines with minimal code; prove a bounded owned regression and Windows behavior; perform authorized install/effect/rollback/negative/independent checks; update the candidate's existing status and evidence with honest UNKNOWN/SKIP/FAIL. Ordinary chats use the same canonical plan and Operator project. Do not create 79 plans, speculative engines or automatic adoption/install actions.
+
+Git is the content authority; `docs/MASTERPLAN.md` remains on its existing draft branch. Private B007 canon and existing Operator W5 checkpoints retain requirement bindings and raw evidence. All previous failures and evidence remain in Git history and the private audit area. Two earlier owned temporary test directories remain after automatic cleanup rejection; do not replay that rejected cleanup action.
+
+<details>
+<summary>Retained historical execution checkpoints and earlier baselines</summary>
+
+The following notes are retained history. Current ordering is above; historical requests, jobs and probes must not be replayed or read as current acceptance.
+
+## Earlier execution checkpoints — 2026-10-27 / HD-DELIVERY-B007
 
 **Owner scope / 28 October:** the extension candidate inventory is sufficient for the initial working delivery. Further candidate elaboration and implementation follow that delivery, with clear reusable instructions for ordinary chats; they are not additional initial-delivery gates. Keep the existing catalogue and all mandatory product, installer/service, MCP, durable-state, secure remote/ChatGPT, lifecycle, security and acceptance requirements. The existing extension chat checks only for a concrete gap in the continuation instructions; no new candidate research or implementation loop is started.
 
@@ -204,3 +232,5 @@ The HostDeck service also lacked SCM failure actions. Its installer now register
 3. Review and merge the tested product through PR review to `main`, then run public-source and artifact screening for release. The candidate history contains 27 credential findings; a full private backup has been verified, and the owner's disposition is pending. Do not rewrite history by default or release while this remains unresolved.
 
 The installed broker still needs an action-local native-command environment preamble, documented in the global discovery guide; the corrected native runner has been built for future packaging. The installed signed route is the durable local administrative path; no further UAC is needed for the current work. Preserve the original installer, service/session, desktop, jobs/artifacts, remote ingress, ChatGPT, and rollback scope. Use the existing Operator project and GitHub as the work/evidence authorities; do not create Linear plans or run GitHub Actions. No automatic upstream monitoring until full acceptance and explicit owner permission.
+
+</details>
