@@ -40,7 +40,8 @@ function Verify-Release([string] $source) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or
             (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne [string]$item.sha256) { throw 'Release hash mismatch.' }
     }
-    foreach ($required in @('service/HostDeck.Lifecycle.exe', 'desktop/HostDeck.DesktopWorker.exe', 'tray/HostDeck.Tray.exe')) {
+    foreach ($required in @('service/HostDeck.Lifecycle.exe', 'desktop/HostDeck.DesktopWorker.exe', 'tray/HostDeck.Tray.exe',
+            'agent/node.exe', 'agent/dist/hostdeck/main.js', 'agent/ui/newtree/index.html', 'licenses/Node.LICENSE')) {
         if (-not $paths.Contains($required)) { throw 'Incomplete previous release.' }
     }
 }
