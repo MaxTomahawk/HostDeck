@@ -16,6 +16,9 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
   const context={ownerId:'own-fixture',deviceId:'synthetic-device',executorId:'synthetic-executor',sessionIds:[1]};
   const names=['CAFÉ.txt','cafe\u0301.txt','中文.txt','[report]!.txt','report9.txt','plus+file.txt','draft(1).txt','ordinary.txt'];
   const candidates=names.map(name=>path.join(workspace,name));
+  const childRoot=path.join(workspace,'report-sub');
+  await mkdir(childRoot);
+  const child=path.join(childRoot,'irrelevant.txt');candidates.push(child);
   for(const file of candidates)await writeFile(file,'owned');
   const forbidden=path.join(parent,'excluded.txt');await writeFile(forbidden,'private');
   const requests:Array<{root:string;workspace:string;needle:string}>=[];
@@ -30,8 +33,8 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     }};
   const adapter=await FileAdapter.create({workspace,everything:everything as any,reauthorize:async()=>{}});
   const call=(name:string,args:Record<string,unknown>)=>adapter.handle('hostdeck_'+name,{device_id:context.deviceId,...args},context) as Promise<any>;
-  const query=async(pattern:string,literal=true)=>{
-    const start=await call('search_files',{path:'.',pattern,provider:'everything',literal,metadata:true,sort:'path'});
+  const query=async(pattern:string,literal=true,searchPath='.')=>{
+    const start=await call('search_files',{path:searchPath,pattern,provider:'everything',literal,metadata:true,sort:'path'});
     for(let i=0;i<100;i++){
       const page=await call('search_results',{search_id:start.search_id});
       if(page.complete)return page;
@@ -52,6 +55,10 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     assert.deepEqual((await query('[report]!')).items.map((r:any)=>r.path),['[report]!.txt']);
     assert.deepEqual((await query('plus+file')).items.map((r:any)=>r.path),['plus+file.txt']);
     assert.deepEqual((await query('draft(1)')).items.map((r:any)=>r.path),['draft(1).txt']);
+    // Node also matches the workspace-relative subdirectory name, not just
+    // basename; the native scope lookahead must preserve that hit.
+    assert.deepEqual((await query('report-sub',true,'report-sub')).items.map((r:any)=>r.path),
+      [path.join('report-sub','irrelevant.txt')]);
     // The native mandatory "report" fragment can over-include the bracket
     // filename; the existing Node regexp remains the final semantic check.
     assert.deepEqual((await query('^report\\d\\.txt$',false)).items.map((r:any)=>r.path),['report9.txt']);
@@ -61,8 +68,10 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     assert.equal(partial.truncated,true);assert.equal(partial.total_results,0);
 
     assert.deepEqual(requests.map(r=>r.needle),
-      ['café','cafe\u0301','中文','[report]!','plus+file','draft(1)','report','中文','ext:txt','bulk']);
-    assert.ok(requests.every(r=>r.root===workspace&&r.workspace===workspace));
+      ['café','cafe\u0301','中文','[report]!','plus+file','draft(1)','report-sub','report','中文','ext:txt','bulk']);
+    assert.ok(requests.every(r=>r.workspace===workspace));
+    assert.equal(requests.filter(r=>r.root===childRoot).length,1);
+    assert.equal(requests.filter(r=>r.root===workspace).length,requests.length-1);
     assert.equal(JSON.stringify(accent).includes('excluded.txt'),false);
 
     const count=requests.length;
