@@ -43,7 +43,7 @@ type Expected = {
   readonly sessionId: number;
 };
 type NativeAcl = Pick<FullTextNativeBridge, 'probeProtectedObjectAcl'>;
-const denied = (): never => { throw new RuntimeError('READ_ROOT_CONFIG_UNQUALIFIED'); };
+function denied(): never { throw new RuntimeError('READ_ROOT_CONFIG_UNQUALIFIED'); }
 const same = (a: import('node:fs').BigIntStats,
   b: import('node:fs').BigIntStats): boolean =>
   a.dev === b.dev && a.ino !== 0n && a.ino === b.ino &&
