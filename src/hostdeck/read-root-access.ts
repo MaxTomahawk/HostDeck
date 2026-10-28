@@ -14,11 +14,11 @@ import { within } from './fulltext/policy.js';
 import { resolveSelectedReadPath, type ReadRootCandidate,
   type ReadOnlyOperation, type ReadRootOwner } from './read-root-boundary.js';
 import type { ReadRootSelectionStore } from './read-root-selection-store.js';
-import type { FullTextNativeBridge } from './fulltext-native-bridge.js';
+import type { FullTextNativeBridge, FullTextNativeFilePin } from './fulltext-native-bridge.js';
 
 type Stat = import('node:fs').BigIntStats;
 type OpenFile = Awaited<ReturnType<typeof fs.open>>;
-type NativeRead = Pick<FullTextNativeBridge, 'attributes' | 'directoryPage'>;
+type NativeRead = Pick<FullTextNativeBridge, 'attributes' | 'directoryPage' | 'pinFile' | 'verifyFilePin' | 'releaseFilePin'>;
 export interface TrustedReadRootReader {
   selected: ReadRootSelectionStore['selected'];
 }
@@ -26,6 +26,7 @@ export interface ReadRootScope extends ReadRootCandidate {
   readonly revision: string;
   readonly digest: string;
   readonly rootIdentity: { dev: bigint; ino: bigint };
+  readonly fixedVolumeAnchor: boolean;
 }
 function denied(): never { throw new RuntimeError('READ_ROOT_DENIED'); }
 function changed(): never { throw new RuntimeError('READ_ROOT_CHANGED'); }
@@ -62,9 +63,15 @@ export class ReadRootAccess {
     });
     if (!answer.external) return answer;
     if (!selected?.digest || !selected.revision || !this.native) denied();
-    // Existing native bridge is bound to the pinned, non-elevated Windows
-    // executor. Unlike lexical dot-name filtering, this observes actual
-    // Hidden/System/reparse attributes on EVERY ancestor, fail-closed.
+    // The ONLY Hidden/System exception is the exact selected and already
+    // DriveInfo-qualified fixed-volume anchor. All descendants still require
+    // independent native non-volume component evidence.
+    const fixedVolumeAnchor = selected.fixedVolumeRoots?.some(volume =>
+      key(path.resolve(volume)) === key(path.resolve(answer.root)) &&
+      key(path.resolve(volume)) === key(path.parse(volume).root)) === true;
+    // Native attribute checks include every ancestor. The worker reports
+    // flags below the volume anchor separately to avoid treating a hidden
+    // fixed-volume anchor as authorization for any hidden child.
     const allowed = [answer.root, answer.absolute];
     let attributes: Awaited<ReturnType<NativeRead['attributes']>>;
     try {
@@ -73,11 +80,15 @@ export class ReadRootAccess {
     } catch { return denied(); }
     if (attributes.length !== allowed.length || attributes.some(item =>
         item.status !== 'ok' || item.reparse !== false ||
-        item.hidden_component !== false || item.system_component !== false ||
-        item.hidden !== false || item.system !== false)) denied();
+        (fixedVolumeAnchor
+          ? (item.hidden_below_volume !== false ||
+             item.system_below_volume !== false)
+          : (item.hidden_component !== false ||
+             item.system_component !== false)))) denied();
     const rootStat = await identity(answer.root);
     if (!rootStat.isDirectory() || rootStat.ino === 0n) denied();
     return { ...answer, revision: selected.revision, digest: selected.digest,
+      fixedVolumeAnchor,
       rootIdentity: { dev: rootStat.dev, ino: rootStat.ino } };
   }
 
@@ -104,14 +115,27 @@ export class ReadRootAccess {
     operation: ReadOnlyOperation, maxBytes: number,
     use: (file: OpenFile, before: Stat) => Promise<T>): Promise<T> {
     await this.assertScope(scope, owner, operation);
+    const native = this.native;
+    if (!native) denied();
     let handle: OpenFile | undefined;
+    let pin: FullTextNativeFilePin | undefined;
     try {
+      // The existing pinned native worker opens the ACTUAL admitted target
+      // and EACH ancestor without FILE_SHARE_DELETE. The receipt includes
+      // root and file volume/FileID of the opened handles, not path-only stats.
+      // The handles remain alive across Node fs.open, read and reauthorization.
+      pin = await native.pinFile(scope.absolute, scope.root, scope.rootIdentity,
+        scope.fixedVolumeAnchor, async () => {
+          await this.assertScope(scope, owner, operation);
+          return true;
+        });
       handle = await fs.open(scope.absolute, flags.O_RDONLY | (flags.O_NOFOLLOW ?? 0));
       const opened = await handle.stat({ bigint: true });
-      const linked = await identity(scope.absolute);
       if (!opened.isFile() || opened.size < 0n ||
-          opened.size > BigInt(maxBytes) || !same(opened, linked)) changed();
-      // A swap during fs.open is detected before exposing the handle's data.
+          opened.size > BigInt(maxBytes) ||
+          opened.dev !== pin.dev || opened.ino !== pin.ino) changed();
+      const linked = await identity(scope.absolute);
+      if (!same(opened, linked)) changed();
       await this.assertScope(scope, owner, operation);
       const result = await use(handle, opened);
       const after = await handle.stat({ bigint: true });
@@ -119,12 +143,16 @@ export class ReadRootAccess {
       if (!same(opened, after) || !same(opened, current) ||
           opened.size !== after.size || opened.mtimeNs !== after.mtimeNs ||
           opened.ctimeNs !== after.ctimeNs) changed();
+      await native.verifyFilePin(pin);
       await this.assertScope(scope, owner, operation);
       return result;
     } catch (error) {
       if (error instanceof RuntimeError) throw error;
       changed();
-    } finally { await handle?.close(); }
+    } finally {
+      try { await handle?.close(); }
+      finally { if (pin) await native.releaseFilePin(pin); }
+    }
   }
 
   async readBytesVerified(scope: ReadRootScope, owner: ReadRootOwner,
@@ -172,7 +200,8 @@ export class ReadRootAccess {
     // handle. Names returned by this private probe are discarded.
     try {
       await this.native.directoryPage(scope.absolute, before.dev, before.ino, 0, 1,
-        async filename => key(filename) === key(scope.absolute));
+        async filename => key(filename) === key(scope.absolute),
+        scope.fixedVolumeAnchor);
     } catch { changed(); }
     await this.assertScope(scope, owner, operation);
     const after = await identity(scope.absolute);
@@ -206,7 +235,8 @@ export class ReadRootAccess {
         let page: Awaited<ReturnType<NativeRead['directoryPage']>>;
         try {
           page = await native.directoryPage(scope.absolute, before.dev, before.ino,
-            offset, 192, async selected => key(selected) === key(scope.absolute));
+            offset, 192, async selected => key(selected) === key(scope.absolute),
+            scope.fixedVolumeAnchor);
         } catch { return changed(); }
         await access.assertScope(scope, owner, operation);
         const after = await identity(scope.absolute);
