@@ -68,6 +68,13 @@ function Set-ExactAcl([string] $path, [string] $profile, [bool] $recursive = $fa
     }
 }
 
+# Existing state may have separately qualified ACLs for the writable fulltext index.
+# Upgrade never re-profiles its live files or directories.
+function Prepare-StateAcl([string] $path, [bool] $existingInstall) {
+    Assert-NoReparseTree $path
+    if (-not $existingInstall) { Set-ExactAcl $path 'state' $true }
+}
+
 function Verify-Package([string] $source) {
     $manifestPath = Join-Path $source 'manifest.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Missing manifest.json.' }
@@ -287,8 +294,7 @@ $configDirectory = Split-Path -Parent $facadeConfig
 Assert-NoReparseTree $configDirectory
 Set-ExactAcl $configDirectory 'config' $true
 $state = [IO.Path]::GetFullPath([string](Get-Content -LiteralPath $facadeConfig -Raw | ConvertFrom-Json).state_directory)
-Assert-NoReparseTree $state
-Set-ExactAcl $state 'state' $true
+Prepare-StateAcl $state ([bool]$existing)
 if (-not (Test-Path -LiteralPath $enrollmentDirectory)) {
     New-Item -ItemType Directory -Path $enrollmentDirectory | Out-Null
 }
