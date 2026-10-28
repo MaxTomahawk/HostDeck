@@ -21,14 +21,18 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
   const child=path.join(childRoot,'irrelevant.txt');candidates.push(child);
   for(const file of candidates)await writeFile(file,'owned');
   const forbidden=path.join(parent,'excluded.txt');await writeFile(forbidden,'private');
-  const requests:Array<{root:string;workspace:string;needle:string}>=[];
+  const requests:Array<{root:string;workspace:string;needle:string;nameScope:string}>=[];
   // Simulate a >100001-name root where a root-only IPC offset-0 window
   // would miss the needle. No large corpus, actual Everything or drive read.
   const everything={sessionId:1,status:async()=>({reason:'ready'}),
-    query:async(root:string,_timeout:number,_signal:AbortSignal,filter?:{workspace:string;needle:string})=>{
+    query:async(root:string,_timeout:number,_signal:AbortSignal,filter?:{workspace:string;needle:string;nameScope:'workspace_relative'|'absolute'})=>{
       if(!filter)return {paths:[],truncated:true,version:'fixture',instance:'',session_id:1,runtime_id:'fixture'};
-      requests.push({root,workspace:filter.workspace,needle:filter.needle});
-      const paths=candidates.filter(p=>p.toLocaleLowerCase('en').includes(filter.needle.toLocaleLowerCase('en')));
+      requests.push({root,workspace:filter.workspace,needle:filter.needle,nameScope:filter.nameScope});
+      const paths=candidates.filter(p=>{
+        if(p!==root&&!p.startsWith(root+path.sep))return false;
+        const displayed=filter.nameScope==='absolute'?p:path.relative(filter.workspace,p);
+        return displayed.toLocaleLowerCase('en').includes(filter.needle.toLocaleLowerCase('en'));
+      });
       return {paths:[forbidden,...paths],truncated:filter.needle==='bulk',version:'fixture',instance:'',session_id:1,runtime_id:'fixture'};
     }};
   const adapter=await FileAdapter.create({workspace,everything:everything as any,reauthorize:async()=>{}});
@@ -64,12 +68,14 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     assert.deepEqual((await query('^report\\d\\.txt$',false)).items.map((r:any)=>r.path),['report9.txt']);
     assert.deepEqual((await query('^\\u4e2d\\u6587',false)).items.map((r:any)=>r.path),['中文.txt']);
     assert.deepEqual((await query('ext:txt')).items,[]);
+    // A keyword only in the absolute ancestor is NOT a workspace-relative hit.
+    assert.deepEqual((await query(path.basename(parent))).items,[]);
     const partial=await query('bulk');assert.equal(partial.state,'partial');
     assert.equal(partial.truncated,true);assert.equal(partial.total_results,0);
 
     assert.deepEqual(requests.map(r=>r.needle),
-      ['café','cafe\u0301','中文','[report]!','plus+file','draft(1)','report-sub','report','中文','ext:txt','bulk']);
-    assert.ok(requests.every(r=>r.workspace===workspace));
+      ['café','cafe\u0301','中文','[report]!','plus+file','draft(1)','report-sub','report','中文','ext:txt',path.basename(parent),'bulk']);
+    assert.ok(requests.every(r=>r.workspace===workspace&&r.nameScope==='workspace_relative'));
     assert.equal(requests.filter(r=>r.root===childRoot).length,1);
     assert.equal(requests.filter(r=>r.root===workspace).length,requests.length-1);
     assert.equal(JSON.stringify(accent).includes('excluded.txt'),false);
