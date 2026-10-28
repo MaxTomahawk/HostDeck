@@ -136,9 +136,10 @@ try {
     $installed = Get-InstalledPair $p
     Assert ($installed.choice -ceq 'new') 'Known new package+config matched.'
     $passed++
+    $originalNewConfigHash = $p.new.config_sha256
     $p.new.config_sha256 = $p.old.config_sha256
     Assert (Refused { Get-InstalledPair $p } 'CURRENT_PAIR_MISMATCH') 'Mixed release/config pair refused.'
-    $p.new = $newPair
+    $p.new.config_sha256 = $originalNewConfigHash
     $passed++
     $script:serviceFixture = [pscustomobject]@{State='Running';StartName='NT AUTHORITY\LocalService';
         PathName=('"' + $installed.service + '" --service "' + (Join-Path $install 'service-config.json') + '"')}
