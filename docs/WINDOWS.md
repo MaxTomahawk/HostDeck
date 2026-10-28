@@ -256,3 +256,70 @@ The local manifest's per-file SHA-256 values are compared against streamed obser
 **Concrete missing release/signing gate (NOT implemented):** `windows/install/New-HostDeckPackage.ps1` currently writes an unsigned schema-1 `manifest.json` containing file hashes. `Install-HostDeck.ps1` hashes package bytes against **that same unsigned manifest** and stages it; this proves internal file consistency but does not authenticate the package source, version or owner-approved release. Before claiming signed release provenance, an independently approved distribution mechanism must pin the trusted verifier/public key (or independently pinned exact release-manifest digest) **outside the mutable package**, authenticate a detached signature binding that exact manifest digest to the approved build/version and release channel, enforce key rotation/revocation policy, and verify that binding before promotion with a durable receipt. A source-SHA string, same-SID user-accessible key, manifest self-hash or self-issued owner approval is not that gate. No PKI, new key, signature, installer, grant or service change is created in this patch.
 
 **Focused acceptance:** `npm run build:hostdeck` and `node --import tsx --test test/hostdeck-diagnostics-provenance.test.ts` on the approved development host. Fixture tests check actual private temporary file bytes and mutation, not installed binary trust. Independent installed/ChatGPT artifact scope, source-to-runtime binding and real manifest signature must be evaluated separately; these source tests do not confer acceptance. Keep original historical FAILs. No Everything/native/UI/browser code or lifecycle transition is changed.
+
+## W2 bounded one-shot recovery after a signed install request (source only)
+
+The Windows installer and signed SYSTEM broker remain unchanged. The source-only
+helper windows/install/Recover-HostDeckUserOnce.ps1 must be started through
+Explorer in the existing enrolled ordinary-user session, before stopping its
+tray/agent. It is a one-shot process, not a service, autorun entry, supervisor
+or scheduled poller. It cannot submit/retry requests, execute arbitrary plan
+commands, alter the service/config/grants/index, or stop an orphan agent.
+
+1. W5 stages and separately audits the entire protected candidate package while
+   the old tray/agent still runs (all expected files/hashes and preservation
+   pins). The helper never claims that full package qualification.
+2. W5 submits one exact signed install transition through the existing bridge.
+   The signed script must wait on a bounded GO barrier before ANY installer
+   effect. Its submitted request UUID is already known while the old tray runs.
+   A pre-GO expiry can return from the wrapper without installation; only its
+   terminal native-contained receipt and independently verified unchanged old
+   release permit old-tray restoration. Never resubmit or infer a UUID.
+3. Create one private, canonical, UTF-8 JSON plan outside the install root.
+   The plan is passed with -PlanPath and its separately pinned SHA-256 via
+   -PlanSha256. Exact schema-1 properties (no extras) are:
+      schema: 1
+      enrolled_sid: existing enrolled user SID
+      session_id: existing positive Windows session
+      install_root: canonical absolute installation root
+      reader_path, reader_sha256: protected bridge public receipt reader + pin
+      common_path, common_sha256: protected bridge public common helper + pin
+      client_id, request_id, goal_id, script_sha256: exact submitted identity
+      old, new: each has manifest_sha256 and config_sha256 (lowercase SHA-256)
+      deadline_utc: UTC timestamp ending Z, strictly ahead and max 30 minutes
+      ready_path: plan directory + request UUID + .ready.json
+      result_path: plan directory + request UUID + .result.json
+   The ready/result paths are new files and cannot overlap installed paths.
+   Neither plan nor these outputs carry an executable command. The helper
+   reads the plan bytes exactly once, validates hash/schema/session/paths,
+   verifies the installed old manifest+config pair and LocalService, then
+   atomically publishes ready with PID/session/request and deadline.
+4. W5 launches the separately pinned helper through Explorer. It verifies
+   ready, enrolled SID and positive session, process identity and actual
+   independence from the Codex job/process tree before stopping the exact
+   old tray/agent and releasing GO. A ready file alone is NOT independence
+   proof.
+5. The helper calls the existing pinned, protected Read-ClientReceipts.ps1
+   with only the specified ClientId and RequestId. It waits for terminal
+   or until its fixed deadline (never a recurring background task). A
+   pending/not-found/unknown/mismatched receipt, failed reader ACL/hash,
+   absent descendants_contained=true, wrong process identity, reparse,
+   mixed manifest/config or unqualified LocalService denies restart.
+   For the new pair, completed-unverified-effect plus native completed
+   exit 0 is also required. An actual unchanged old pair may be restored
+   after a contained non-success, without calling the upgrade successful.
+6. Verify launch-critical current manifest hashes for tray, Node, main,
+   desktop worker and service, and the protected desktop worker config pin.
+   The complete release manifest hash must be one of the two planned hashes.
+   Existing identical one-tray/three-argument launch is left untouched;
+   other or duplicate tray processes and orphan HTTP agents refuse without
+   any kill or secondary launch. The result file records helper PID/session,
+   exit code, matched old/new release, receipt status, tray action and PID.
+   Missing result/process, a pending deadline or uncertainty is NOT success.
+
+Focused source tests in test/hostdeck-one-shot-user-recovery.test.ps1 use only
+owned temporary Windows fixtures and mocked identity/SCM/process inputs. W5
+still owns independently verified Explorer/job containment, actual protected
+reader ACLs and receipt binding, live GO transition, installed release checks,
+client reconnection and logon/reboot behavior. The cause of a missing tray
+after logon remains UNKNOWN. This procedure does not change HKCU Run.
