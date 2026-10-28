@@ -1,6 +1,6 @@
 import {test,mock} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,rm,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,realpath,readFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import childProcess from 'node:child_process';
@@ -102,4 +102,17 @@ test('Everything client sends filtered query in the existing owned IPC envelope'
     patched.mock.restore();syncBuiltinESMExports();
     child.stdout.destroy();child.stderr.destroy();child.stdin.destroy();
   }
+});
+
+test('pinned native IPC2 source applies escaped predicate ahead of the unchanged cap',async()=>{
+  // Static wire/source assertion only: a real Windows IPC2 engine is not run.
+  const source=await readFile(path.resolve('windows/HostDeck.DesktopWorker/EverythingIpc.cs'),'utf8');
+  assert.match(source,/IpcMatchPath = 0x04, IpcRegex = 0x08/);
+  assert.match(source,/Put\(8, IpcMatchPath \| IpcRegex\); Put\(12, 0\); Put\(16, MaxItems\)/);
+  assert.match(source,/var query = FilteredRootExpression\(root, workspace, needle\);/);
+  assert.match(source,/var workspacePrefix = RootExpression\(workspace\);/);
+  assert.match(source,/var rootPrefix = RootExpression\(root\);/);
+  assert.ok(source.includes(String.raw`@"[\s\S]*"`));
+  assert.match(source,/Regex\.Escape\(needle\)/);
+  assert.match(source,/truncated = total > count/);
 });
