@@ -175,7 +175,7 @@ try {
     $p | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $planPath -Encoding utf8
     $pin = (Get-FileHash -LiteralPath $planPath -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($p.ready_path, 'owned prior attempt')
-    Assert (Refused { Read-Plan $planPath $pin } 'RECOVERY_ALREADY_STARTED') 'A second helper cannot reuse ready/result evidence.'
+    Assert (Refused { Read-Plan $planPath $pin } 'ALREADY_STARTED') 'A second helper cannot reuse ready/result evidence.'
     Remove-Item -LiteralPath $p.ready_path -Force
     $passed++
     Write-Output "W2 one-shot recovery owned-plan/receipt/release/process cases: $passed PASS; actual Explorer/SCM/install NOT_RUN."
