@@ -14,10 +14,13 @@ import {
 async function cleanupFixture(root:string, prefix:string):Promise<void>{
   const parent=await fs.realpath(os.tmpdir());
   const canonical=path.resolve(root);
-  if(!path.isAbsolute(canonical) || path.dirname(canonical)!==parent ||
-      !path.basename(canonical).startsWith(prefix) ||
-      (await fs.lstat(canonical)).isSymbolicLink() ||
-      await fs.realpath(canonical)!==canonical)
+  const actual=await fs.realpath(canonical);
+  const equal=(a:string,b:string)=>process.platform==='win32'?
+    a.toLowerCase()===b.toLowerCase():a===b;
+  if(!path.isAbsolute(canonical) || !equal(path.dirname(actual),parent) ||
+      !equal(actual,canonical) ||
+      !path.basename(actual).startsWith(prefix) ||
+      (await fs.lstat(canonical)).isSymbolicLink())
     throw new Error('FIXTURE_CLEANUP_OUTSIDE_CANONICAL_TMP');
   await fs.rm(canonical,{recursive:true,force:true});
 }
