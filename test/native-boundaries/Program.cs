@@ -57,6 +57,24 @@ try {
     }
 } finally { pinned.Free(); }
 
+// Decode only: no keyboard events. Public function-key names are case-insensitive.
+var inputType=Assembly.Load("WindowsCommander.Windows").GetType("WindowsCommander.Windows.Services.InputService",true)!;
+var keyCode=inputType.GetMethod("ToVirtualKey",flags)!;
+for(var key=1;key<=24;key++) {
+    foreach(var prefix in new[]{"f","F"}) {
+        try {
+            var actual=(byte)keyCode.Invoke(null,new object[]{prefix+key})!;
+            if(actual!=0x6f+key)failures.Add($"function key {prefix}{key} mapped incorrectly");
+        } catch(TargetInvocationException) { failures.Add($"function key {prefix}{key} was refused"); }
+    }
+}
+foreach(var unsupported in new[]{"F0","F25","not-a-key"}) {
+    bool denied=false;
+    try { keyCode.Invoke(null,new object[]{unsupported}); }
+    catch(TargetInvocationException e) when(e.InnerException is ArgumentException) { denied=true; }
+    if(!denied)failures.Add("unsupported key must be refused");
+}
+
 foreach(var failure in failures)Console.Error.WriteLine(failure);
 Console.WriteLine($"Native root/token boundary assertions: {(failures.Count==0?"PASS":"FAIL")}");
 return failures.Count==0?0:1;
