@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
 
@@ -20,6 +22,41 @@ var rejected=false;
 try{validate.Invoke(null,new object[]{token,identity.User.Value,logon=="0000000000000000"?"0000000000000001":"0000000000000000"});}
 catch(TargetInvocationException error) when(error.InnerException?.Message=="EVERYTHING_TARGET_DENIED"){rejected=true;}
 if(!rejected)failures.Add("same-SID target with differing authentication/logon ID must be refused");
+
+// Synthetic native WTSINFOEXW Level 1 buffer: no Windows lock, UI or input action.
+var decodeWts= native.GetMethod("IsUnlockedWtsInfoEx",flags)!;
+var wtsInfo=new byte[232]; // complete WTSINFOEXW, with union data at offset 8
+BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(0,4),1);   // Level 1
+BinaryPrimitives.WriteUInt32LittleEndian(wtsInfo.AsSpan(8,4),7);  // own session
+BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(12,4),0); // WTSActive
+BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(16,4),1); // unlocked
+var pinned=GCHandle.Alloc(wtsInfo,GCHandleType.Pinned);
+try {
+    var pointer=pinned.AddrOfPinnedObject();
+    bool Allows(bool queried=true,uint size=232,uint session=7) =>
+        (bool)decodeWts.Invoke(null,new object[]{queried,pointer,size,session})!;
+    if(!Allows())failures.Add("active, unlocked, same-session WTSInfoEx Level 1 should pass");
+    if(Allows(queried:false))failures.Add("failed WTS query must deny even with unlocked bytes");
+    if(Allows(size:231))failures.Add("truncated WTSInfoEx must deny");
+    if(Allows(size:0))failures.Add("zero-sized WTSInfoEx must deny");
+    if(Allows(session:8)||Allows(session:0))failures.Add("foreign/invalid WTS session must deny");
+    if((bool)decodeWts.Invoke(null,new object[]{true,nint.Zero,232u,7u})!)
+        failures.Add("null WTS buffer must deny");
+
+    BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(0,4),2);
+    if(Allows())failures.Add("unsupported WTSInfoEx level must deny");
+    BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(0,4),1);
+
+    BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(12,4),4);
+    if(Allows())failures.Add("disconnected WTS session must deny");
+    BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(12,4),0);
+
+    foreach(var flag in new[]{0,-1,2}) {
+        BinaryPrimitives.WriteInt32LittleEndian(wtsInfo.AsSpan(16,4),flag);
+        if(Allows())failures.Add($"locked/unknown/invalid WTS SessionFlags ({flag}) must deny");
+    }
+} finally { pinned.Free(); }
+
 foreach(var failure in failures)Console.Error.WriteLine(failure);
 Console.WriteLine($"Native root/token boundary assertions: {(failures.Count==0?"PASS":"FAIL")}");
 return failures.Count==0?0:1;

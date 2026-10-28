@@ -354,6 +354,7 @@ internal sealed class DesktopWorker
 
     private static void GuardDesktop()
     {
+        if (!Native.SessionUnlocked()) throw new WorkerError("SECURE_DESKTOP");
         var station = Native.GetProcessWindowStation();
         var current = Native.GetThreadDesktop(Native.GetCurrentThreadId());
         var active = Native.OpenInputDesktop(0, false, 0x0001);
@@ -382,6 +383,54 @@ internal sealed class DesktopWorker
 
 internal static class Native
 {
+    // WTSINFOEXW (Win10+): DWORD Level, 4 bytes padding, 224-byte
+    // WTSINFOEX_LEVEL1_W union data. SessionId/State/Flags start at 8/12/16.
+    // Only the fixed-size, versioned and same-session Level 1 result is trusted.
+    [StructLayout(LayoutKind.Explicit, Size = 232)]
+    private struct WtsInfoExLevel1W
+    {
+        [FieldOffset(0)] public int Level;
+        [FieldOffset(8)] public uint SessionId;
+        [FieldOffset(12)] public int SessionState;
+        [FieldOffset(16)] public int SessionFlags;
+    }
+
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSQuerySessionInformation(nint server, uint sessionId, int infoClass,
+        out nint buffer, out uint bytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    private static extern void WTSFreeMemory(nint buffer);
+
+    internal static bool SessionUnlocked()
+    {
+        var sessionId = Process.GetCurrentProcess().SessionId;
+        if (sessionId <= 0) return false;
+        nint buffer = nint.Zero;
+        try
+        {
+            // WTS_CURRENT_SERVER_HANDLE = NULL; WTSSessionInfoEx = 25.
+            var queried = WTSQuerySessionInformation(nint.Zero, (uint)sessionId, 25, out buffer, out var bytesReturned);
+            return IsUnlockedWtsInfoEx(queried, buffer, bytesReturned, (uint)sessionId);
+        }
+        finally
+        {
+            if (buffer != nint.Zero) WTSFreeMemory(buffer);
+        }
+    }
+
+    // Pure decision seam for malformed/failed native-buffer regressions.
+    internal static bool IsUnlockedWtsInfoEx(bool queried, nint buffer, uint bytesReturned, uint expectedSession)
+    {
+        if (!queried || expectedSession == 0 || buffer == nint.Zero ||
+            bytesReturned < (uint)Marshal.SizeOf<WtsInfoExLevel1W>()) return false;
+        var info = Marshal.PtrToStructure<WtsInfoExLevel1W>(buffer);
+        // WTSActive = 0; WTS_SESSIONSTATE_UNLOCK = 1. LOCK=0/UNKNOWN=-1 fail closed.
+        return info.Level == 1 && info.SessionId == expectedSession &&
+            info.SessionState == 0 && info.SessionFlags == 1;
+    }
+
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
