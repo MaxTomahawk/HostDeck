@@ -244,7 +244,8 @@ internal sealed class DesktopWorker
         if (kind == "drag") {
             var to = action.GetProperty("to");
             RequireWithin(window, Int(to, "x"), Int(to, "y"));
-            input.MouseAction("move", null, x, y, window);
+            if (!input.MouseAction("move", null, x, y, window).Completed)
+                return new { completed = false };
             return new { completed = input.MouseAction("drag", Optional(action, "button") ?? "left",
                 Int(to, "x"), Int(to, "y"), window).Completed };
         }
