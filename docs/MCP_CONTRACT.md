@@ -12,7 +12,7 @@ Everything queries apply a mandatory escaped literal fragment of the validated N
 
 `set_provider_enabled` requires `files:write` and fresh existing authorization. Only `provider:"everything"` and `enabled:true|false|null` are accepted. The private setting binds owner/device/executor; null removes the override and restores the enabled default. Direct cannot be disabled. Disabled Everything refuses explicit/preferred queries and retained pages with `PROVIDER_DISABLED`; it does not fall back or clear the saved preference. A cancellation that cannot prove client termination retains `EVERYTHING_TERMINATION_UNCERTAIN`. `list_providers` reports `desiredEnabled`, `enabledOverride` and `configured` separately from vendor installation/running/health. No vendor lifecycle or grant mutation is introduced.
 
-Search handles are ephemeral, owner/device/executor-bound and expire after ten idle minutes once complete. Agent restart invalidates them. `search_results` additionally rechecks the current grant for an Everything query's bound Windows session. Results are workspace-relative and checked for canonical/reparse boundaries before exposure. Engine-global counts are never returned. Sorted results are withheld until the retained snapshot is sealed; ordinary unsorted results remain append-only while running. Page offsets index that retained snapshot. A target removed or replaced by a refused path is omitted at readback; its retained offset is still consumed. `total_results` describes the authorized snapshot at collection, not a live global index count. Truncated queries have state `partial`; timeout, loading, unavailable and real zero results remain distinct. Cancellation is complete only after the owned native client exits; unconfirmed termination has state `uncertain` and `EVERYTHING_TERMINATION_UNCERTAIN`.
+Search handles are ephemeral, owner/device/executor-bound and expire after ten idle minutes once complete. Agent restart invalidates them. `search_results` additionally rechecks the current grant for an Everything query's bound Windows session. Workspace results are relative and checked for canonical/reparse boundaries before exposure; explicitly configured external roots use the absolute paths described below. Engine-global counts are never returned. Sorted results are withheld until the retained snapshot is sealed; ordinary unsorted results remain append-only while running. Page offsets index that retained snapshot. For workspace-only searches, a target removed or replaced by a refused path is omitted at readback; its retained offset is still consumed. `total_results` describes the authorized snapshot at collection, not a live global index count. External pages additionally withhold the entire response when any retained target no longer qualifies, as described below. Truncated queries have state `partial`; timeout, loading, unavailable and real zero results remain distinct. Cancellation is complete only after the owned native client exits; unconfirmed termination has state `uncertain` and `EVERYTHING_TERMINATION_UNCERTAIN`.
 
 `search_files.limit` bounds how many matches are retained **before** optional sorting. A truncated query therefore sorts a bounded subset and does not promise the global first K results. `search_results.limit` is a page size within the retained snapshot. To collect a complete sorted set, the search must finish without truncation and all result pages must be read.
 
@@ -125,6 +125,12 @@ identity check. Existing `hostdeck_read_file`, `hostdeck_file_info`, direct
 name/content search and Everything name search can read from the selected
 external roots only; every retained page rechecks scope and individual
 FileID/mtime/size before publishing paths, snippets, metadata or counts.
+If any retained external target disappears, changes identity/content metadata
+or loses authority, the entire page fails with `READ_ROOT_CHANGED`, including
+its counts and next offset. It never compacts the retained set and silently
+skips a still-valid entry on a later page. Start a fresh query after such a
+change. Failure to revalidate the direct traversal's search root also fails
+the search, rather than reporting a successful empty result.
 Missing excluded paths stay protected by canonicalizing the nearest existing
 ancestor. All other external roots remain denied.
 

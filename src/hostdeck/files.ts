@@ -496,7 +496,7 @@ export class FileAdapter {
         const current=queue.shift()!;
         let currentPath:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
         try{currentPath=await this.guardReadPath(current.target,job.owner,operation);}
-        catch{continue;}
+        catch(error){if(current.target===job.root)throw error;continue;}
         if(job.readScope&&(!currentPath.readScope||
             currentPath.readScope.digest!==job.readScope.digest||
             currentPath.readScope.revision!==job.readScope.revision))continue;
@@ -609,7 +609,10 @@ export class FileAdapter {
     } else if(job.readScope) await this.authorize('hostdeck_search_results',args);
     if(job.readScope) await access!.assertScope(job.readScope,context,operation);
     const offset=args.offset as number,limit=args.limit as number;
-    const matches=job.sort&&!job.done?[]:job.matches;
+    // A running search may append or finish while page checks await native I/O.
+    // Bind this response's membership and completion flag to the same instant.
+    const complete=job.done;
+    const matches=job.sort&&!complete?[]:[...job.matches];
     const authorized:SearchMatch[]=[];
     // Every retained result is checked BEFORE computing even total_results,
     // not only the entries inside the requested page. No stale count/metadata.
@@ -643,14 +646,19 @@ export class FileAdapter {
       await access!.assertScope(job.readScope,context,operation);
     }
     if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+    if(job.error==='READ_ROOT_REVOKED')throw new RuntimeError('READ_ROOT_REVOKED');
+    // External pages must neither compact retained offsets nor expose stale
+    // counts. A changed/denied entry invalidates this page; retry a fresh query.
+    if(job.readScope&&authorized.length!==matches.length)
+      throw new RuntimeError('READ_ROOT_CHANGED');
     const total=job.readScope?authorized.length:matches.length;
     const items=job.readScope?authorized.slice(offset,offset+limit):authorized;
     return {search_id:job.id,provider:job.provider,
       ...(job.provenance?{provenance:job.provenance}:{}),
       ...(job.readScope?{root_scope:job.readScope.root}:{}),
-      items,offset,total_results:total,complete:job.done,
+      items,offset,total_results:total,complete,
       truncated:job.truncated,stopped:job.stopped,
-      state:job.done?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
+      state:complete?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
         job.stopped?'stopped':job.error?'failed':job.truncated?'partial':'complete':'running',
       ...(job.error?{error:job.error}:{}),
       next_offset:Math.min(offset+limit,total),

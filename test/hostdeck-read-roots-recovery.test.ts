@@ -256,10 +256,9 @@ test('replaced retained match suppresses both snippet and stale match count',asy
     assert.equal(first.total_results,1);
     await fs.rename(f.source,path.join(f.external,'old.txt'));
     await fs.writeFile(f.source,'REPLACED_BODY');
-    const next=await f.adapter.handle('hostdeck_search_results',{
-      device_id:owner.deviceId,search_id:start.search_id,offset:0,limit:10},owner) as any;
-    assert.deepEqual(next.items,[]);
-    assert.equal(next.total_results,0);
+    await assert.rejects(f.adapter.handle('hostdeck_search_results',{
+      device_id:owner.deviceId,search_id:start.search_id,offset:0,limit:10},owner),
+      /READ_ROOT_CHANGED/);
   }finally{await f.cleanup();}
 });
 
@@ -326,6 +325,93 @@ test('negative: outside junction swapped after native pin cannot pass opened fd 
     if(junction){await fs.unlink(f.external);junction=false;}
     if(renamed){await fs.rename(backup,f.external);renamed=false;}
     await f.cleanup();
+  }
+});
+
+test('changed native root enumeration cannot become a successful empty search',async()=>{
+  const f=await fixture();
+  try{
+    const original=f.native.directoryPage;
+    let calls=0;
+    f.native.directoryPage=async(...input:Parameters<typeof original>)=>{
+      // The initial search-root check succeeds; its traversal check changes.
+      if(++calls===2)throw Error('FULLTEXT_NATIVE_DIRECTORY_CHANGED');
+      return original(...input);
+    };
+    const started=await f.adapter.handle('hostdeck_search_files',{
+      ...args(f.external),pattern:'owned',provider:'direct'},owner) as any;
+    await assert.rejects(finish(f.adapter,started.search_id),/READ_ROOT_REVOKED/);
+    assert.equal(calls,2);
+  }finally{await f.cleanup();}
+});
+
+test('a query finishing during external page checks cannot seal an earlier empty page',async()=>{
+  const f=await fixture();
+  try{
+    let startQuery!:()=>void,releaseQuery!:()=>void,finishQuery!:()=>void;
+    const started=new Promise<void>(resolve=>{startQuery=resolve;});
+    const released=new Promise<void>(resolve=>{releaseQuery=resolve;});
+    const finished=new Promise<void>(resolve=>{finishQuery=resolve;});
+    let resultChecks=0,finalChecks=0,queryReleased=false;
+    const adapter=await FileAdapter.create({workspace:f.workspace,readRoots:f.access,
+      reauthorize:async(name)=>{
+        if(name==='hostdeck_search_files'&&queryReleased&&++finalChecks===2)finishQuery();
+        if(name==='hostdeck_search_results'&&++resultChecks===2){
+          queryReleased=true;releaseQuery();await finished;
+          await new Promise<void>(resolve=>setImmediate(resolve));
+        }
+      },
+      everything:{sessionId:1,
+        status:async()=>({installed:true,enabled:true,running:true,compatible:true,
+          healthy:true,reason:'FIXTURE',version:'fixture',instance:'fixture',
+          session_id:1,qualified:'not_independently_accepted' as const}),
+        query:async()=>{startQuery();await released;return {paths:[f.source],
+          truncated:false,version:'fixture',instance:'fixture',session_id:1,runtime_id:'fixture'};},
+      }});
+    const search=await adapter.handle('hostdeck_search_files',{
+      ...args(f.external),pattern:'owned',provider:'everything'},owner) as any;
+    await started;
+    const page=await adapter.handle('hostdeck_search_results',{
+      device_id:owner.deviceId,search_id:search.search_id,offset:0,limit:10},owner) as any;
+    assert.equal(page.complete,false);
+    assert.equal(page.state,'running');
+    assert.deepEqual(page.items,[]);
+    const sealed=await finish(adapter,search.search_id);
+    assert.equal(sealed.complete,true);
+    assert.deepEqual(sealed.items.map((item:any)=>item.path),[f.source]);
+  }finally{await f.cleanup();}
+});
+
+test('external retained pages never rebase offsets when an earlier match disappears',async()=>{
+  for(const provider of ['direct','everything'] as const){
+    const f=await fixture();
+    try{
+      const files=['page-a.txt','page-b.txt','page-c.txt'].map(name=>path.join(f.external,name));
+      for(const file of files)await fs.writeFile(file,'OWNED_PAGE_FIXTURE');
+      const adapter=provider==='direct'?f.adapter:await FileAdapter.create({
+        workspace:f.workspace,readRoots:f.access,reauthorize:async()=>{},
+        everything:{sessionId:1,
+          status:async()=>({installed:true,enabled:true,running:true,compatible:true,
+            healthy:true,reason:'FIXTURE',version:'fixture',instance:'fixture',
+            session_id:1,qualified:'not_independently_accepted' as const}),
+          query:async()=>({paths:files,truncated:false,version:'fixture',
+            instance:'fixture',session_id:1,runtime_id:'fixture'})},
+      });
+      const start=await adapter.handle('hostdeck_search_files',{
+        ...args(f.external),pattern:'page-',provider,sort:'path'},owner) as any;
+      await finish(adapter,start.search_id);
+      const page=(offset:number)=>adapter.handle('hostdeck_search_results',{
+        device_id:owner.deviceId,search_id:start.search_id,offset,limit:1},owner) as Promise<any>;
+      const first=await page(0);
+      assert.deepEqual(first.items.map((item:any)=>item.path),[files[0]]);
+      assert.equal(first.next_offset,1);
+      await fs.unlink(files[0]);
+      // Returning page-c here would silently skip the still-valid page-b.
+      // A changed external snapshot must withhold items AND counts/cursors.
+      await assert.rejects(page(first.next_offset),/READ_ROOT_CHANGED/,provider);
+      await assert.rejects(page(0),/READ_ROOT_CHANGED/,provider);
+      assert.equal((await f.runtime.invoke('hostdeck_file_info',args(files[1]),owner)).type,'file');
+    }finally{await f.cleanup();}
   }
 });
 
