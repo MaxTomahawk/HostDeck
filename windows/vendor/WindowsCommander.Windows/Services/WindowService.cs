@@ -106,7 +106,6 @@ public sealed class WindowService : IWindowService
             {
                 NativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
             }
-
         }
     }
 
