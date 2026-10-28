@@ -40,8 +40,6 @@ public sealed class WindowService : IWindowService
     {
         const int swRestore = 9;
         const int swShow = 5;
-        const uint spiGetForegroundLockTimeout = 0x2000;
-        const uint spiSetForegroundLockTimeout = 0x2001;
 
         // A minimized window cannot receive focus until it is restored.
         if (NativeMethods.IsIconic(handle))
@@ -59,13 +57,9 @@ public sealed class WindowService : IWindowService
             return true;
         }
 
-        // Windows 11 reverts foreground changes initiated by a background
-        // process. Making the activation stick requires both clearing the
-        // foreground lock timeout and attaching our input queue to the
-        // outgoing foreground thread and the target thread.
-        uint originalLockTimeout = 0;
-        NativeMethods.SystemParametersInfoGet(spiGetForegroundLockTimeout, 0, ref originalLockTimeout, 0);
-        NativeMethods.SystemParametersInfoSet(spiSetForegroundLockTimeout, 0, nint.Zero, 0);
+        // Retry through the existing input-queue attachment fallback if the
+        // first attempt did not activate the window. Do not change Windows'
+        // global foreground-lock timeout.
 
         var currentThread = NativeMethods.GetCurrentThreadId();
         var foreground = NativeMethods.GetForegroundWindow();
@@ -113,7 +107,6 @@ public sealed class WindowService : IWindowService
                 NativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
             }
 
-            NativeMethods.SystemParametersInfoSet(spiSetForegroundLockTimeout, 0, (nint)originalLockTimeout, 0);
         }
     }
 
