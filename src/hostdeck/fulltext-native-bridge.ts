@@ -40,6 +40,9 @@ export interface FullTextNativeAttribute {
   reparse: boolean | null;
   hidden_component: boolean | null;
   system_component: boolean | null;
+  /** Optional on legacy workers; mandatory to exempt an exact fixed-volume anchor. */
+  hidden_below_volume?: boolean | null;
+  system_below_volume?: boolean | null;
   directory: boolean | null;
 }
 
@@ -259,7 +262,10 @@ export class FullTextNativeBridge {
     return result.items.map((item: any, index: number) => {
       if (item?.index !== index || !['ok','unavailable','reparse_component'].includes(item?.status) ||
         !['hidden','system','reparse','hidden_component','system_component','directory']
-          .every(key => item[key] === null || typeof item[key] === 'boolean')) {
+          .every(key => item[key] === null || typeof item[key] === 'boolean') ||
+        !['hidden_below_volume','system_below_volume']
+          .every(key => item[key] === undefined || item[key] === null ||
+            typeof item[key] === 'boolean')) {
         throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
       }
       return item as FullTextNativeAttribute;
@@ -273,7 +279,8 @@ export class FullTextNativeBridge {
    * returning any names. Unsupported or stale workers fail closed.
    */
   async directoryPage(file: string, expectedDev: bigint, expectedIno: bigint, offset: number,
-    limit: number, authorize: (file: string) => Promise<boolean>): Promise<{
+    limit: number, authorize: (file: string) => Promise<boolean>,
+    volumeAnchor = false): Promise<{
       names: string[]; more: boolean; nextOffset: number;
     }> {
     if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
@@ -288,6 +295,7 @@ export class FullTextNativeBridge {
     const result = await this.queued('directory_page', {
       path: file, expected_dev: expectedDev.toString(),
       expected_ino: expectedIno.toString(), offset, limit,
+      volume_anchor: volumeAnchor,
     }) as Record<string, unknown>;
     if (!result || !Array.isArray(result.names) ||
         result.names.length > limit || typeof result.more !== 'boolean' ||
