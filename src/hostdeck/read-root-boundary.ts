@@ -60,7 +60,7 @@ export interface ReadRootResolveRequest {
   readonly operation: ReadOnlyOperation;
 }
 
-const denied = (): never => { throw new RuntimeError('READ_ROOT_DENIED'); };
+function denied(): never { throw new RuntimeError('READ_ROOT_DENIED'); }
 const safeRoot = async (input: string): Promise<string> => {
   if (typeof input !== 'string' || !path.isAbsolute(input) ||
       input.length > 4096 || /[\u0000-\u001f]/.test(input)) denied();
