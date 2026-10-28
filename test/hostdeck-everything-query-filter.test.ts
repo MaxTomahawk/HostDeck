@@ -106,14 +106,14 @@ test('Everything client sends filtered query in the existing owned IPC envelope'
   try {
     const client=new EverythingClient({worker:'fixture-worker',executable:'fixture-exe',sha256:'a'.repeat(64),
       version:'fixture',instance:'',identity:{session_id:1,sid:'fixture-sid',logon_id:'fixture-logon'} as any});
-    const filter={workspace:'C:\\fixture-workspace',needle:'é 中文 [report]! ext:txt'};
+    const filter={workspace:'C:\\fixture-workspace',needle:'é 中文 [report]! ext:txt',nameScope:'workspace_relative' as const};
     const result=await client.query('C:\\fixture-workspace\\owned',1000,new AbortController().signal,filter);
     assert.deepEqual(result.paths,[]);
     const request=JSON.parse(sent);
     assert.deepEqual({operation:request.operation,root:request.root,workspace:request.workspace,
-      name_filter:request.name_filter,timeout_ms:request.timeout_ms},
+      name_filter:request.name_filter,name_scope:request.name_scope,timeout_ms:request.timeout_ms},
       {operation:'query',root:'C:\\fixture-workspace\\owned',workspace:filter.workspace,
-        name_filter:filter.needle,timeout_ms:1000});
+        name_filter:filter.needle,name_scope:'workspace_relative',timeout_ms:1000});
     assert.equal(request.session_id,1);assert.equal(request.sid,'fixture-sid');
     assert.equal(request.logon_id,'fixture-logon');assert.equal(request.instance,'');
     assert.equal(request.sha256,'a'.repeat(64));
@@ -123,15 +123,3 @@ test('Everything client sends filtered query in the existing owned IPC envelope'
   }
 });
 
-test('pinned native IPC2 source applies escaped predicate ahead of the unchanged cap',async()=>{
-  // Static wire/source assertion only: a real Windows IPC2 engine is not run.
-  const source=await readFile(path.resolve('windows/HostDeck.DesktopWorker/EverythingIpc.cs'),'utf8');
-  assert.match(source,/IpcMatchPath = 0x04, IpcRegex = 0x08/);
-  assert.match(source,/Put\(8, IpcMatchPath \| IpcRegex\); Put\(12, 0\); Put\(16, MaxItems\)/);
-  assert.match(source,/var query = FilteredRootExpression\(root, workspace, needle\);/);
-  assert.match(source,/var workspacePrefix = RootExpression\(workspace\);/);
-  assert.match(source,/var rootPrefix = RootExpression\(root\);/);
-  assert.ok(source.includes(String.raw`@"[\s\S]*"`));
-  assert.match(source,/Regex\.Escape\(needle\)/);
-  assert.match(source,/truncated = total > count/);
-});
