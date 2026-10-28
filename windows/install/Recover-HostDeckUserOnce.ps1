@@ -85,7 +85,7 @@ function Read-Plan([string] $path, [string] $expectedSha) {
         Refuse 'PLAN_OUTPUT_SCOPE'
     }
     if ((Test-Path -LiteralPath $p.ready_path) -or (Test-Path -LiteralPath $p.result_path)) {
-        Refuse 'RECOVERY_ALREADY_STARTED'
+        Refuse 'ALREADY_STARTED'
     }
     return $p
 }
@@ -107,9 +107,7 @@ function Assert-ProtectedFile([string] $path, [bool] $allowInherited = $false) {
         $owner -notin @('S-1-5-18','S-1-5-32-544')) {
         Refuse 'READER_ACL'
     }
-    $writeMask = 0x00000002 -bor 0x00000004 -bor 0x00000010 -bor 0x00000040 -bor
-        0x00000100 -bor 0x00010000 -bor 0x00040000 -bor 0x00080000 -bor
-        0x40000000 -bor 0x10000000
+    $writeMask = (0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
     foreach ($ace in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
             (($ace.FileSystemRights -band $writeMask) -ne 0 -and
