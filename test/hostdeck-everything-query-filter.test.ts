@@ -123,3 +123,73 @@ test('Everything client sends filtered query in the existing owned IPC envelope'
   }
 });
 
+
+test('external readScope uses absolute name matching including ancestors and drive, never a widened root',async()=>{
+  const parent=await realpath(await mkdtemp(path.join(os.tmpdir(),'hostdeck-absolute-scope-')));
+  const workspace=path.join(parent,'workspace');await mkdir(workspace);
+  const selected=path.join(parent,'source-ancestor','selected');
+  await mkdir(path.dirname(selected));await mkdir(selected);
+  const child=path.join(selected,'leaf.txt');await writeFile(child,'owned');
+  const excluded=path.join(parent,'unselected.txt');await writeFile(excluded,'no disclosure');
+  const context={ownerId:'fixture-owner',deviceId:'fixture-device',executorId:'fixture-executor',sessionIds:[1]};
+  const scope=(absolute:string)=>({external:true,root:selected,absolute,
+    rootIdentity:{dev:1n,ino:2n},revision:'fixture-revision',digest:'fixture-digest'});
+  let resolved=0,authorized=0;
+  // A synthetic implementation of the existing approved readScope contract.
+  // No protected selection, native attribute read or actual index is changed.
+  const readRoots={
+    resolve:async(raw:string)=>{
+      const absolute=path.resolve(workspace,raw);
+      if(absolute!==selected&&!absolute.startsWith(selected+path.sep))throw Error('READ_ROOT_DENIED');
+      resolved++;return scope(absolute);
+    },
+    metadata:async(s:ReturnType<typeof scope>)=>{
+      const item=await import('node:fs/promises').then(fs=>fs.stat(s.absolute));
+      return {isFile:item.isFile(),isDirectory:item.isDirectory(),
+        size:item.size,modified:item.mtime.toISOString()};
+    },
+    assertScope:async(s:ReturnType<typeof scope>)=>{authorized++;return s;},
+  };
+  const queries:Array<{root:string;workspace:string;needle:string;nameScope:string}>=[];
+  const provider={sessionId:1,status:async()=>({reason:'ready'}),
+    query:async(root:string,_timeout:number,_signal:AbortSignal,
+      filter:{workspace:string;needle:string;nameScope:'workspace_relative'|'absolute'})=>{
+      queries.push({root,...filter});
+      // Pretend the vendor searched only the permitted root and applied the
+      // absolute-path token BEFORE truncation. An out-of-scope row is injected
+      // to verify that HostDeck still excludes it before disclosure.
+      return {paths:[excluded,...[child].filter(file=>
+        file.toLocaleLowerCase('en').includes(filter.needle.toLocaleLowerCase('en')))],
+        truncated:false,version:'fixture',instance:'',session_id:1,runtime_id:'fixture'};
+    }};
+  const adapter=await FileAdapter.create({workspace,readRoots:readRoots as any,
+    everything:provider as any,reauthorize:async()=>{}});
+  const call=(name:string,args:Record<string,unknown>)=>adapter.handle('hostdeck_'+name,
+    {device_id:context.deviceId,...args},context) as Promise<any>;
+  async function find(pattern:string){
+    const started=await call('search_files',{path:selected,pattern,provider:'everything',sort:'path'});
+    for(let n=0;n<100;n++){
+      const page=await call('search_results',{search_id:started.search_id});
+      if(page.complete)return page;
+      await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    throw Error('synthetic scoped search failed to finish');
+  }
+  try{
+    const ancestor=await find(path.basename(parent));
+    assert.equal(ancestor.state,'complete');
+    assert.deepEqual(ancestor.items.map((row:any)=>row.path),[child]);
+    assert.equal(ancestor.total_results,1);
+    assert.equal(ancestor.root_scope,selected);
+    assert.equal(JSON.stringify(ancestor).includes('unselected.txt'),false);
+    const driveOrRoot=path.parse(selected).root;
+    const prefix=process.platform==='win32'?driveOrRoot.slice(0,2):driveOrRoot;
+    const drive=await find(prefix);
+    assert.deepEqual(drive.items.map((row:any)=>row.path),[child]);
+    assert.equal(drive.total_results,1);
+    assert.ok(resolved>0&&authorized>0);
+    assert.deepEqual(queries.map(item=>item.nameScope),['absolute','absolute']);
+    assert.ok(queries.every(item=>item.root===selected&&item.workspace===workspace));
+    assert.deepEqual(queries.map(item=>item.needle),[path.basename(parent),prefix]);
+  }finally{await rm(parent,{recursive:true,force:true});}
+});
