@@ -80,7 +80,7 @@ test('real Everything IPC finds and refreshes an exact authorized Unicode corpus
   await rm(path.join(workspace,'renamed.txt'));await eventually('renamed.txt',[]);
   await call('set_provider_preference',{capability:'files.name',provider:'everything'});
   assert.equal(await registry.select(context,'files.name'),'everything');
-  const abort=new AbortController();abort.abort();await assert.rejects(client.query(workspace,1000,abort.signal,{workspace,needle:'owned'}),/EVERYTHING_CANCELLED/);
+  const abort=new AbortController();abort.abort();await assert.rejects(client.query(workspace,1000,abort.signal,{workspace,needle:'owned',nameScope:'workspace_relative'}),/EVERYTHING_CANCELLED/);
  }finally{
   // Only this uniquely created fixture tree; root is resolved within the supplied fixture location.
   const relative=path.relative(await realpath(fixtureRoot),parent);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative));
