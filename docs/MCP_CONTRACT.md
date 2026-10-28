@@ -140,7 +140,7 @@ original workspace-only path guards. The existing logical provider
 enable/disable/default/preference behavior is preserved, with no new indexer,
 service or tool exposed.
 
-**Status: SOURCE CANDIDATE, NOT INSTALLED OR INDEPENDENTLY ACCEPTED.** Local
+**Status: CODE INSTALLED, EXTERNAL ROOTS UNCONFIGURED, INDEPENDENT ACCEPTANCE OPEN.** Local
 Windows cases qualify actual native HANDLE/FileID and Node descriptor binding,
 Unicode reads, Hidden/System/junction refusal, and directory swap-and-restore
 rejection. The worker checks the opened directory's actual final path before
@@ -151,6 +151,9 @@ fixture qualifies selective vendor responses, external ancestor/drive-prefix
 matches and workspace-relative ancestor exclusion. Synthetic owner/root
 selection in these fixtures is not protected production configuration or a
 grant. True fixed-volume selection, protected ACL behavior, session renewal,
-installed native packaging and independent remote pages remain separate gates.
-No personal corpus, configuration, grants, identity or installed binaries are
-changed by this source qualification. Historical failures remain retained.
+independent remote external pages remain separate gates. The existing
+self-contained package and a bounded native/agent update have actual local
+execution and integrity evidence; the installed `read_roots` field remains
+absent. No personal roots, grants or index are activated. This does not accept
+production external-root behavior or full Windows lifecycle. Historical
+failures remain retained.
