@@ -91,38 +91,51 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
   } finally {await rm(parent,{recursive:true,force:true});}
 });
 
-test('Everything client sends filtered query in the existing owned IPC envelope',async()=>{
-  const child=new EventEmitter() as any;
-  child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.kill=()=>true;
-  let sent='';
-  child.stdin.on('data',(chunk:Buffer)=>{sent+=chunk.toString('utf8');});
-  child.stdin.on('finish',()=>{
-    child.stdout.write(JSON.stringify({result:{
-      paths:[],truncated:false,version:'fixture',instance:'',session_id:1,runtime_id:'fixture'
-    }}));
-    child.emit('close',0);
-  });
-  const patched=mock.method(childProcess,'spawn',()=>child);syncBuiltinESMExports();
-  try {
+test('Everything client preserves the same private IPC envelope for both name scopes',async()=>{
+  const frames:string[]=[];
+  const spawnFake=()=>{
+    const child=new EventEmitter() as any;
+    child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();
+    child.kill=()=>true;
+    let sent='';
+    child.stdin.on('data',(chunk:Buffer)=>{sent+=chunk.toString('utf8');});
+    child.stdin.on('finish',()=>{
+      frames.push(sent);
+      child.stdout.write(JSON.stringify({result:{
+        paths:[],truncated:false,version:'fixture',instance:'',session_id:1,runtime_id:'fixture'
+      }}));
+      child.emit('close',0);
+    });
+    return child;
+  };
+  const patched=mock.method(childProcess,'spawn',()=>spawnFake());syncBuiltinESMExports();
+  try{
     const client=new EverythingClient({worker:'fixture-worker',executable:'fixture-exe',sha256:'a'.repeat(64),
       version:'fixture',instance:'',identity:{session_id:1,sid:'fixture-sid',logon_id:'fixture-logon'} as any});
-    const filter={workspace:'C:\\fixture-workspace',needle:'é 中文 [report]! ext:txt',nameScope:'workspace_relative' as const};
-    const result=await client.query('C:\\fixture-workspace\\owned',1000,new AbortController().signal,filter);
-    assert.deepEqual(result.paths,[]);
-    const request=JSON.parse(sent);
-    assert.deepEqual({operation:request.operation,root:request.root,workspace:request.workspace,
-      name_filter:request.name_filter,name_scope:request.name_scope,timeout_ms:request.timeout_ms},
-      {operation:'query',root:'C:\\fixture-workspace\\owned',workspace:filter.workspace,
-        name_filter:filter.needle,name_scope:'workspace_relative',timeout_ms:1000});
-    assert.equal(request.session_id,1);assert.equal(request.sid,'fixture-sid');
-    assert.equal(request.logon_id,'fixture-logon');assert.equal(request.instance,'');
-    assert.equal(request.sha256,'a'.repeat(64));
-  }finally{
-    patched.mock.restore();syncBuiltinESMExports();
-    child.stdout.destroy();child.stderr.destroy();child.stdin.destroy();
-  }
+    const workspace='C:\\fixture-workspace';
+    const selected='D:\\synthetic\\owned';
+    const filter={workspace,needle:'é 中文 [report]! ext:txt'};
+    assert.deepEqual((await client.query(workspace,1000,new AbortController().signal,
+      {...filter,nameScope:'workspace_relative'})).paths,[]);
+    assert.deepEqual((await client.query(selected,1000,new AbortController().signal,
+      {...filter,nameScope:'absolute'})).paths,[]);
+    assert.equal(frames.length,2);
+    const [internal,external]=frames.map(frame=>JSON.parse(frame));
+    assert.deepEqual([internal.name_scope,external.name_scope],['workspace_relative','absolute']);
+    assert.deepEqual([internal.root,external.root],[workspace,selected]);
+    for(const request of [internal,external]){
+      assert.equal(request.workspace,workspace);
+      assert.equal(request.name_filter,filter.needle);
+      assert.equal(request.operation,'query');
+      assert.equal(request.timeout_ms,1000);
+      assert.equal(request.session_id,1);
+      assert.equal(request.sid,'fixture-sid');
+      assert.equal(request.logon_id,'fixture-logon');
+      assert.equal(request.sha256,'a'.repeat(64));
+      assert.equal(request.instance,'');
+    }
+  }finally{patched.mock.restore();syncBuiltinESMExports();}
 });
-
 
 test('external readScope uses absolute name matching including ancestors and drive, never a widened root',async()=>{
   const parent=await realpath(await mkdtemp(path.join(os.tmpdir(),'hostdeck-absolute-scope-')));
