@@ -169,6 +169,15 @@ try {
     $tray.command = 'unrelated arguments'
     Assert (Refused { Get-TrayDecision $p $installed @($tray) } 'OTHER_TRAY_PROCESS') 'Changed tray arguments refused.'
     $passed++
+    Assert (Refused { Get-TrayDecision $p $installed @($node,$node) } 'DUPLICATE_USER_PROCESS') 'Duplicate agent processes refused.'
+    $passed++
+    $p.deadline_utc = Deadline 20
+    $p | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $planPath -Encoding utf8
+    $pin = (Get-FileHash -LiteralPath $planPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($p.ready_path, 'owned prior attempt')
+    Assert (Refused { Read-Plan $planPath $pin } 'RECOVERY_ALREADY_STARTED') 'A second helper cannot reuse ready/result evidence.'
+    Remove-Item -LiteralPath $p.ready_path -Force
+    $passed++
     Write-Output "W2 one-shot recovery owned-plan/receipt/release/process cases: $passed PASS; actual Explorer/SCM/install NOT_RUN."
 } finally {
     $resolved = [IO.Path]::GetFullPath($owned)
