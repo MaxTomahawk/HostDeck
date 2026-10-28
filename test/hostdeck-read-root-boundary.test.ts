@@ -9,6 +9,19 @@ import {
   resolveSelectedReadPath, type ProtectedReadRootSelection,
 } from '../src/hostdeck/read-root-boundary.js';
 
+
+/** Remove only the exact canonical, locally-created tmp child; never follow a junction. */
+async function cleanupFixture(root:string, prefix:string):Promise<void>{
+  const parent=await fs.realpath(os.tmpdir());
+  const canonical=path.resolve(root);
+  if(!path.isAbsolute(canonical) || path.dirname(canonical)!==parent ||
+      !path.basename(canonical).startsWith(prefix) ||
+      (await fs.lstat(canonical)).isSymbolicLink() ||
+      await fs.realpath(canonical)!==canonical)
+    throw new Error('FIXTURE_CLEANUP_OUTSIDE_CANONICAL_TMP');
+  await fs.rm(canonical,{recursive:true,force:true});
+}
+
 const owner = { ownerId: 'owner_fixture', deviceId: 'device_fixture', executorId: 'executor_fixture' };
 
 async function fixture() {
@@ -25,7 +38,7 @@ async function fixture() {
     owner, revision: 'approved-revision-fixture', roots: [readable], excludedRoots: [excluded],
   };
   return { root, workspace, readable, outside, excluded, protectedFile, selection,
-    cleanup: () => fs.rm(root, { recursive: true, force: true }) };
+    cleanup: () => cleanupFixture(root,'hostdeck-broad-read-source-') };
 }
 
 test('original FileAdapter and UserRuntime still deny external paths even with a permissive read authorizer', async () => {
