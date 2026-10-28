@@ -290,6 +290,7 @@ internal static class FullTextNative
         var parent = Path.GetPathRoot(absolute)!;
         uint latest = InvalidAttributes;
         bool anyHidden = false, anySystem = false;
+        bool nonVolumeHidden = false, nonVolumeSystem = false;
         var components = absolute.Substring(parent.Length)
             .Split('\\', StringSplitOptions.RemoveEmptyEntries);
         var sequence = new List<string> { parent };
@@ -298,13 +299,15 @@ internal static class FullTextNative
             parent = Path.Combine(parent, component);
             sequence.Add(parent);
         }
-        foreach (var component in sequence)
+        for (var componentIndex = 0; componentIndex < sequence.Count; componentIndex++)
         {
+            var component = sequence[componentIndex];
             var attributes = GetFileAttributesW(component);
             if (attributes == InvalidAttributes)
                 return new { index, status = "unavailable", hidden = (bool?)null,
                     system = (bool?)null, reparse = (bool?)null,
                     hidden_component = (bool?)null, system_component = (bool?)null,
+                    hidden_below_volume = (bool?)null, system_below_volume = (bool?)null,
                     directory = (bool?)null };
             if ((attributes & Reparse) != 0)
                 return new { index, status = "reparse_component", hidden = (bool?)null,
@@ -313,11 +316,17 @@ internal static class FullTextNative
                     directory = (bool?)null };
             anyHidden |= (attributes & Hidden) != 0;
             anySystem |= (attributes & SystemAttribute) != 0;
+            if (componentIndex > 0) {
+                nonVolumeHidden |= (attributes & Hidden) != 0;
+                nonVolumeSystem |= (attributes & SystemAttribute) != 0;
+            }
             latest = attributes;
         }
         return new { index, status = "ok", hidden = (bool?)((latest & Hidden) != 0),
             system = (bool?)((latest & SystemAttribute) != 0), reparse = (bool?)false,
             hidden_component = (bool?)anyHidden, system_component = (bool?)anySystem,
+            hidden_below_volume = (bool?)nonVolumeHidden,
+            system_below_volume = (bool?)nonVolumeSystem,
             directory = (bool?)((latest & Directory) != 0) };
     }
 }
