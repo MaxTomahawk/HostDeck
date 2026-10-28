@@ -8,9 +8,13 @@ import {EverythingClient} from '../src/hostdeck/everything.js';
 import {inspectDesktopIdentity} from '../src/hostdeck/desktop.js';
 import {FileAdapter} from '../src/hostdeck/files.js';
 import {ProviderRegistry} from '../src/hostdeck/providers.js';
+import {FullTextNativeBridge} from '../src/hostdeck/fulltext-native-bridge.js';
+import {ReadRootAccess} from '../src/hostdeck/read-root-access.js';
+
+const worker=process.env.HOSTDECK_TEST_EVERYTHING_WORKER??
+ path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
 
 test('native Everything discovery distinguishes no query app and rejects a wrong Windows session',async t=>{
- const worker=path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
  if(process.platform!=='win32'||!existsSync(worker)){t.skip('Windows native worker required');return}
  const identity=await inspectDesktopIdentity(worker);
  const executable=process.env.HOSTDECK_TEST_EVERYTHING_EXECUTABLE;
@@ -31,7 +35,6 @@ test('native Everything discovery distinguishes no query app and rejects a wrong
 test('real Everything IPC finds and refreshes an exact authorized Unicode corpus through HostDeck',async t=>{
  const executable=process.env.HOSTDECK_TEST_EVERYTHING_EXECUTABLE,fixtureRoot=process.env.HOSTDECK_TEST_SEARCH_ROOT;
  if(!executable||!fixtureRoot){t.skip('explicit existing installation and authorized indexed fixture root required');return}
- const worker=path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
  const identity=await inspectDesktopIdentity(worker);
  const sha256=createHash('sha256').update(await readFile(executable)).digest('hex');
  const client=new EverythingClient({worker,executable,sha256,version:'1.5.0.1423b',instance:'',identity});
@@ -43,17 +46,36 @@ test('real Everything IPC finds and refreshes an exact authorized Unicode corpus
  await mkdir(path.join(workspace,'nested'));await writeFile(path.join(workspace,'nested',names[0]),'collision');
  await mkdir(path.join(workspace,'folder'));await writeFile(path.join(parent,'excluded.txt'),'excluded');
  const registry=await ProviderRegistry.open(path.join(parent,'preferences.sqlite'));
- const adapter=await FileAdapter.create({workspace,providers:registry,everything:client,reauthorize:async()=>{}});
  const context={ownerId:'own-everything-test',deviceId:'test-device',executorId:'test-executor',sessionIds:[identity.session_id]};
+ const external=path.join(parent,'selected-external');await mkdir(external);
+ const externalFiles=['first.txt','second.txt'].map(name=>path.join(external,name));
+ for(const file of externalFiles)await writeFile(file,'OWN EXTERNAL BYTES');
+ const native=new FullTextNativeBridge({workerExecutable:worker,
+  workerSha256:createHash('sha256').update(await readFile(worker)).digest('hex'),
+  expectedExecutor:{sid:identity.sid!,logonId:identity.logon_id,sessionId:identity.session_id}});
+ // Exact owner/root selection only is synthetic; both native worker routes,
+ // real file identities and the existing Everything instance are used.
+ const readRoots=new ReadRootAccess(workspace,[path.join(parent,'protected')],{
+  selected:async()=>({owner:context,revision:'own-selection',digest:'own-digest',
+   roots:[external],excludedRoots:[],fixedVolumeRoots:[]})},native);
+ const nativeResponses:Array<{filter:unknown;paths:string[]}>=[];
+ const observedClient={sessionId:client.sessionId,status:()=>client.status(),
+  query:async(...args:Parameters<EverythingClient['query']>)=>{
+   const result=await client.query(...args);nativeResponses.push({filter:args[3],paths:result.paths});return result;
+  }};
+ const adapter=await FileAdapter.create({workspace,providers:registry,everything:observedClient,readRoots,reauthorize:async()=>{}});
  const call=(suffix:string,args:Record<string,unknown>={})=>adapter.handle('hostdeck_'+suffix,{device_id:context.deviceId,...args},context) as Promise<any>;
  const query=async(pattern:string,extra:Record<string,unknown>={})=>{
   const start=await call('search_files',{path:'.',pattern,provider:'everything',sort:'path',metadata:true,...extra});
+  let last:any;
   for(let n=0;n<200;n++){
    const result=await call('search_results',{search_id:start.search_id});
+   last=result;
    if(result.complete){assert.equal(result.state,'complete',JSON.stringify(result));return result;}
    await new Promise(r=>setTimeout(r,10));
   }
-  throw Error('bounded fixture query did not finish');
+  throw Error('bounded fixture query did not finish '+JSON.stringify({state:last?.state,
+   error:last?.error,queryResponses:nativeResponses.length}));
  };
  const eventually=async(pattern:string,expected:string[])=>{
   const deadline=Date.now()+8000;let result:any;
@@ -80,8 +102,28 @@ test('real Everything IPC finds and refreshes an exact authorized Unicode corpus
   await rm(path.join(workspace,'renamed.txt'));await eventually('renamed.txt',[]);
   await call('set_provider_preference',{capability:'files.name',provider:'everything'});
   assert.equal(await registry.select(context,'files.name'),'everything');
-  const abort=new AbortController();abort.abort();await assert.rejects(client.query(workspace,1000,abort.signal),/EVERYTHING_CANCELLED/);
+  const selective=await query('apostrophe');
+  assert.deepEqual(selective.items.map((item:any)=>item.path),["apostrophe's.txt"]);
+  const nativeSelective=nativeResponses.at(-1)!;
+  assert.deepEqual(nativeSelective.paths,[path.join(workspace,"apostrophe's.txt")],
+   'The actual vendor response must be filtered before Node checks the results');
+  const externalDeadline=Date.now()+8000;
+  let externalPage:any;
+  do{
+   externalPage=await query(path.basename(parent),{path:external});
+   if(externalPage.total_results===externalFiles.length)break;
+   await new Promise(resolve=>setTimeout(resolve,100));
+  }while(Date.now()<externalDeadline);
+  assert.deepEqual(externalPage.items.map((item:any)=>item.path).sort(),externalFiles.slice().sort());
+  assert.equal(externalPage.root_scope,external);
+  const absolutePrefix=await query(path.parse(external).root,{path:external});
+  assert.deepEqual(absolutePrefix.items.map((item:any)=>item.path).sort(),externalFiles.slice().sort());
+  assert.deepEqual((await query(path.basename(parent))).items,[],
+   'Workspace ancestor names must not satisfy the workspace-relative name matcher');
+  const abort=new AbortController();abort.abort();await assert.rejects(client.query(workspace,1000,abort.signal,
+   {workspace,needle:'owned',nameScope:'workspace_relative'}),/EVERYTHING_CANCELLED/);
  }finally{
+  await native.close();
   // Only this uniquely created fixture tree; root is resolved within the supplied fixture location.
   const relative=path.relative(await realpath(fixtureRoot),parent);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative));
   await rm(parent,{recursive:true,force:false});assert.equal(existsSync(parent),false);

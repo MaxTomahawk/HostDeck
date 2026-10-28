@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseToolArguments } from './contracts.js';
 import {RuntimeError} from './runtime-error.js';
 import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
-import type {EverythingClient} from './everything.js';
+import {everythingNameNeedle, type EverythingClient} from './everything.js';
 import type {ReadRootAccess,ReadRootScope} from './read-root-access.js';
 import type {ReadOnlyOperation} from './read-root-boundary.js';
 
@@ -30,7 +30,7 @@ interface SearchJob {
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
   provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
   provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
-  coverageTruncated:boolean;rootIsFile:boolean;readScope?:ReadRootScope;
+  coverageTruncated:boolean;rootIsFile:boolean;readScope?:ReadRootScope;everythingNeedle?:string;
 }
 interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;readRoots?:ReadRootAccess;}
 
@@ -396,15 +396,18 @@ export class FileAdapter {
     if(provider==='everything'&&capability!=='files.name')throw new RuntimeError('PROVIDER_CAPABILITY_UNSUPPORTED');
     if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
     if(provider==='everything')this.authorizeEverythingSession(context);
+    const regex=safePattern(pattern,literal);
+    // The native IPC2 window is filtered before MaxItems, then Node rechecks.
+    const everythingNeedle=provider==='everything'?everythingNameNeedle(regex):undefined;
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
-      regex: safePattern(pattern, literal), includeHidden: args.include_hidden as boolean,
+      regex, includeHidden: args.include_hidden as boolean,
       deadline: Date.now() + (args.timeout_ms as number), resultLimit: Math.min(args.limit as number, MAX_SEARCH_MATCHES),
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
       provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
       coverageTruncated:false,rootIsFile:root.stat.isFile()===true,
-      ...(root.readScope?{readScope:root.readScope}:{}),
+      ...(root.readScope?{readScope:root.readScope}:{}),everythingNeedle,
     };
     this.searches.set(job.id, job);
     void (provider==='everything'?this.runEverything(job):this.runSearch(job));
@@ -414,7 +417,11 @@ export class FileAdapter {
   private async runEverything(job:SearchJob):Promise<void> {
     try {
       await this.authorizeEverythingSearch(job);
-      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal);
+      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal,{
+        workspace:this.workspace,needle:job.everythingNeedle!,
+        // Only the trusted resolved readScope determines absolute-path semantics.
+        nameScope:job.readScope?.external===true?'absolute':'workspace_relative'
+      });
       await this.authorizeEverythingSearch(job);
       job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
       const seen=new Set<string>();

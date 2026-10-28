@@ -8,6 +8,8 @@ Status: implemented contract registry; backend, transport, authorization and end
 
 `list_providers` requires `files:read`; it observes configured providers on request and does not start/install/reconfigure them. Presence, integration enablement, runtime, compatibility, health and independent qualification are separate fields. Not configured means installation status is unknown. `set_provider_preference` requires `files:write`, reauthorization and a HostDeck-owned private preference store. Preference keys bind owner/device/executor/function; explicit query overrides do not rewrite them. Null clears a preference to the stable direct default. A saved unavailable provider returns its own failure and remains saved; no general fallback policy is selected.
 
+Everything queries apply a mandatory escaped literal fragment of the validated Node name matcher before the vendor's bounded candidate window. Node still performs the original final name match after authorization. The private native request distinguishes workspace-relative names from absolute names for an already-authorized external read scope; no new MCP scope argument exists. The native expression checks the same root fence before the name lookahead, including in absolute mode. A valid restricted regexp without a safe mandatory literal fragment is refused with `EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED`; invalid and prohibited regexp features retain `SEARCH_PATTERN_INVALID` and `SEARCH_REGEX_FEATURE_DENIED`. Direct search keeps its existing regexp support. Filtering does not promise global top-K or complete coverage when the resulting candidate window is still truncated.
+
 `set_provider_enabled` requires `files:write` and fresh existing authorization. Only `provider:"everything"` and `enabled:true|false|null` are accepted. The private setting binds owner/device/executor; null removes the override and restores the enabled default. Direct cannot be disabled. Disabled Everything refuses explicit/preferred queries and retained pages with `PROVIDER_DISABLED`; it does not fall back or clear the saved preference. A cancellation that cannot prove client termination retains `EVERYTHING_TERMINATION_UNCERTAIN`. `list_providers` reports `desiredEnabled`, `enabledOverride` and `configured` separately from vendor installation/running/health. No vendor lifecycle or grant mutation is introduced.
 
 Search handles are ephemeral, owner/device/executor-bound and expire after ten idle minutes once complete. Agent restart invalidates them. `search_results` additionally rechecks the current grant for an Everything query's bound Windows session. Results are workspace-relative and checked for canonical/reparse boundaries before exposure. Engine-global counts are never returned. Sorted results are withheld until the retained snapshot is sealed; ordinary unsorted results remain append-only while running. Page offsets index that retained snapshot. A target removed or replaced by a refused path is omitted at readback; its retained offset is still consumed. `total_results` describes the authorized snapshot at collection, not a live global index count. Truncated queries have state `partial`; timeout, loading, unavailable and real zero results remain distinct. Cancellation is complete only after the owned native client exits; unconfirmed termination has state `uncertain` and `EVERYTHING_TERMINATION_UNCERTAIN`.
@@ -132,11 +134,17 @@ original workspace-only path guards. The existing logical provider
 enable/disable/default/preference behavior is preserved, with no new indexer,
 service or tool exposed.
 
-**Status: SOURCE CANDIDATE, NOT INSTALLED OR WINDOWS-ACCEPTED.** The directory
-HANDLE/FileID ABI, native Hidden/System/reparse attributes (including
-swap-and-restore adversaries), true fixed-volume roots, protected ACL behavior,
-session renewals, native worker binary packaging, and real Everything pages
-remain open Windows qualification gates. Focused source fixtures use a fake
-native helper; these are not evidence of an actual Windows HANDLE. No personal
-corpus, configuration, grant, identity, installed binary or NEXT_RUN changes
-were made. Historical failures and separate independent acceptance remain open.
+**Status: SOURCE CANDIDATE, NOT INSTALLED OR INDEPENDENTLY ACCEPTED.** Local
+Windows cases qualify actual native HANDLE/FileID and Node descriptor binding,
+Unicode reads, Hidden/System/junction refusal, and directory swap-and-restore
+rejection. The worker checks the opened directory's actual final path before
+enumeration and before return. Only physical fixed-volume anchor flags are
+excluded from the Hidden/System check; no selected root is widened, and all
+components below that anchor remain checked. A separate real Everything
+fixture qualifies selective vendor responses, external ancestor/drive-prefix
+matches and workspace-relative ancestor exclusion. Synthetic owner/root
+selection in these fixtures is not protected production configuration or a
+grant. True fixed-volume selection, protected ACL behavior, session renewal,
+installed native packaging and independent remote pages remain separate gates.
+No personal corpus, configuration, grants, identity or installed binaries are
+changed by this source qualification. Historical failures remain retained.

@@ -14,7 +14,7 @@ test('actual client cancellation waits for close and reports unconfirmed termina
   try{
    const client=new EverythingClient({worker:'fixture',executable:'fixture',sha256:'0'.repeat(64),version:'fixture',instance:'',identity:{session_id:1} as any});
    const abort=new AbortController();let settled=false;
-   const result=client.query('fixture',1000,abort.signal);result.finally(()=>{settled=true;}).catch(()=>{});
+   const result=client.query('fixture',1000,abort.signal,{workspace:'fixture',needle:'owned',nameScope:'workspace_relative'});result.finally(()=>{settled=true;}).catch(()=>{});
    abort.abort();await new Promise(r=>setImmediate(r));assert.equal(killed,true);assert.equal(settled,false,'kill signal alone is not exit confirmation');
    if(closeConfirmed){child.emit('close',1);await assert.rejects(result,/EVERYTHING_CANCELLED/);}
    else await assert.rejects(result,/EVERYTHING_TERMINATION_UNCERTAIN/);
