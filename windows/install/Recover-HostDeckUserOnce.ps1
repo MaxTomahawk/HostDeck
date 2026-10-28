@@ -99,17 +99,18 @@ function Assert-OrdinaryUser($p) {
         Refuse 'WRONG_USER_SESSION'
     }
 }
-function Assert-ProtectedFile([string] $path) {
+function Assert-ProtectedFile([string] $path, [bool] $allowInherited = $false) {
     Assert-NoReparse $path
     $acl = Get-Acl -LiteralPath $path
     $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-    if (-not $acl.AreAccessRulesProtected -or $owner -notin @('S-1-5-18','S-1-5-32-544')) {
+    if ((-not $allowInherited -and -not $acl.AreAccessRulesProtected) -or
+        $owner -notin @('S-1-5-18','S-1-5-32-544')) {
         Refuse 'READER_ACL'
     }
     $writeMask = 0x00000002 -bor 0x00000004 -bor 0x00000010 -bor 0x00000040 -bor
         0x00000100 -bor 0x00010000 -bor 0x00040000 -bor 0x00080000 -bor
         0x40000000 -bor 0x10000000
-    foreach ($ace in $acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
+    foreach ($ace in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
             (($ace.FileSystemRights -band $writeMask) -ne 0 -and
              $ace.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544'))) {
@@ -129,7 +130,8 @@ function Assert-ReceiptReader($p) {
         Assert-ProtectedFile $path
     }
     $receiptPath = Join-Path $base ('outbox\' + $p.client_id + '\' + $p.request_id + '.result.json')
-    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Assert-ProtectedFile $receiptPath }
+    # Broker-created receipt files inherit their protected outbox DACL.
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Assert-ProtectedFile $receiptPath $true }
     if ((Sha $p.reader_path) -cne $p.reader_sha256 -or
         (Sha $p.common_path) -cne $p.common_sha256) { Refuse 'READER_HASH' }
 }
