@@ -17,6 +17,8 @@ internal static class EverythingIpc
 {
     private const string WindowClass = "EVERYTHING_TASKBAR_NOTIFICATION";
     private const int MaxItems = 100_001, MaxReplyBytes = 16 * 1024 * 1024;
+    // voidtools/ES src/everything_ipc.h: MATCHPATH=0x04, REGEX=0x08.
+    private const uint IpcMatchPath = 0x04, IpcRegex = 0x08;
     private static string Text(JsonElement r, string key) => r.GetProperty(key).GetString() ?? throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
     internal static object Execute(JsonElement r)
     {
@@ -66,16 +68,26 @@ internal static class EverythingIpc
         if (!ready) throw new WorkerError("EVERYTHING_LOADING");
         var timeout = Math.Clamp(r.GetProperty("timeout_ms").GetInt32(), 1, 300_000);
         var root = Text(r, "root");
-        if (!Path.IsPathFullyQualified(root) || root.Length > 4096) throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
-        // Only a trusted, escaped root enters the engine. HostDeck applies the
-        // caller's original literal/restricted-regex semantics after path checks.
-        var query = RootExpression(root);
+        var workspace = Text(r, "workspace");
+        var needle = Text(r, "name_filter");
+        if (!Path.IsPathFullyQualified(root) || root.Length > 4096 ||
+            !Path.IsPathFullyQualified(workspace) || workspace.Length > 4096 ||
+            needle.Length is < 1 or > 256 || needle.Any(char.IsControl))
+            throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
+        var relative = Path.GetRelativePath(workspace, root);
+        if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || Path.IsPathRooted(relative)) throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
+        // The Node adapter supplies only a mandatory literal fragment of its
+        // validated name matcher, never Everything query syntax. Intersect it
+        // with the existing root before the vendor applies MaxItems/offset 0.
+        // Node still verifies basename OR workspace-relative name after ACL checks.
+        var query = FilteredRootExpression(root, workspace, needle);
         using var reply = new ReplyWindow(target);
         var search = Encoding.Unicode.GetBytes(query + '\0');
         var bytes = new byte[28 + search.Length];
         void Put(int at, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(at), value);
         Put(0, unchecked((uint)reply.Handle.ToInt64())); Put(4, reply.ReplyId);
-        Put(8, 4 | 8); Put(12, 0); Put(16, MaxItems); Put(20, 4); Put(24, 3);
+        Put(8, IpcMatchPath | IpcRegex); Put(12, 0); Put(16, MaxItems); Put(20, 4); Put(24, 3);
         search.CopyTo(bytes, 28);
         var memory = Marshal.AllocHGlobal(bytes.Length);
         try {
@@ -99,6 +111,17 @@ internal static class EverythingIpc
     {
         var normalized=Path.TrimEndingDirectorySeparator(root);
         return "^"+Regex.Escape(normalized)+(Path.EndsInDirectorySeparator(normalized)?"":@"(?:\\|$)");
+    }
+    private static string FilteredRootExpression(string root, string workspace, string needle)
+    {
+        // Both terms are escaped as PCRE literals. The workspace lookahead
+        // starts AFTER its separator so an ancestor name cannot satisfy the
+        // filter; a search-root subfolder name can (Node matches relative paths).
+        // [\\s\\S]* also spans any filename character without changing the
+        // existing MATCHPATH|REGEX wire flags, result cap or vendor state.
+        var workspacePrefix = RootExpression(workspace);
+        var rootPrefix = RootExpression(root);
+        return @"(?i)^(?=" + workspacePrefix[1..] + @"[\\s\\S]*" + Regex.Escape(needle) + ")" + rootPrefix[1..];
     }
     private static void ValidateTargetToken(nint token,string sid,string logon)
     {
