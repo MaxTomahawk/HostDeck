@@ -125,7 +125,7 @@ function Set-WorkerConfigHash([string] $configPath, [hashtable] $original, [stri
     $temporary = $configPath + '.stage-' + [guid]::NewGuid().ToString('N')
     $backup = $configPath + '.worker-pin-backup-' + [guid]::NewGuid().ToString('N')
     try {
-        if (-not [Linq.Enumerable]::SequenceEqual([byte[]]([IO.File]::ReadAllBytes($configPath)), [byte[]]$original.Bytes)) {
+        if (-not [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -eq [Convert]::ToBase64String($original.Bytes)) {
             throw 'Protected facade config changed during release transaction.'
         }
         [IO.File]::WriteAllBytes($temporary, [Text.Encoding]::UTF8.GetBytes($replacement))
@@ -142,7 +142,7 @@ function Restore-WorkerConfig([string] $configPath, [string] $backup, [hashtable
         [IO.File]::Replace($backup, $configPath, $discard)
         Remove-Item -LiteralPath $discard -Force
     }
-    if (-not [Linq.Enumerable]::SequenceEqual([byte[]]([IO.File]::ReadAllBytes($configPath)), [byte[]]$original.Bytes)) {
+    if (-not [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -eq [Convert]::ToBase64String($original.Bytes)) {
         throw 'Original protected facade bytes not restored; refusing service restart.'
     }
 }
@@ -360,7 +360,6 @@ try {
     Start-Service -Name HostDeck -ErrorAction Stop
     (Get-Service -Name HostDeck).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
     if (Test-Path -LiteralPath $recoveryMarker) { Remove-Item -LiteralPath $recoveryMarker -Force }
-    if ($workerConfigBackup) { Remove-Item -LiteralPath $workerConfigBackup -Force }
 } catch {
     $installError = $_
     if (-not $existing -and (Get-Service -Name HostDeck -ErrorAction SilentlyContinue)) {
@@ -382,3 +381,5 @@ try {
     throw $installError
 }
 Write-Output 'HostDeck service installed. Enroll the user tray separately with Register-HostDeckUser.ps1.'
+
+if ($workerConfigBackup) { Remove-Item -LiteralPath $workerConfigBackup -Force }
