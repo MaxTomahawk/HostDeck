@@ -23,6 +23,15 @@ export interface FullTextNativeOptions {
   timeoutMs?: number;
 }
 
+/** Short-lived private native handle receipt; not an authority/grant. */
+export interface FullTextNativeFilePin {
+  readonly id: string;
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly rootDev: bigint;
+  readonly rootIno: bigint;
+}
+
 export interface FullTextNativeAttribute {
   index: number;
   status: 'ok' | 'unavailable' | 'reparse_component';
@@ -291,6 +300,63 @@ export class FullTextNativeBridge {
       throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
     return { names: result.names as string[], more: result.more,
       nextOffset: result.next_offset as number };
+  }
+
+  /**
+   * Existing executor-pinned worker holds the REAL selected directory chain
+   * and target file open without FILE_SHARE_DELETE across Node's fs.open/read.
+   * No file bytes or arbitrary final paths leave this native bridge.
+   */
+  async pinFile(file: string, root: string,
+    expectedRoot: { dev: bigint; ino: bigint },
+    volumeAnchor: boolean, authorize: () => Promise<boolean>
+  ): Promise<FullTextNativeFilePin> {
+    if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
+        typeof root !== 'string' || !/^[A-Za-z]:\\/.test(root) ||
+        expectedRoot.dev <= 0n || expectedRoot.ino <= 0n ||
+        typeof volumeAnchor !== 'boolean') throw error('FULLTEXT_NATIVE_READ_PIN_DENIED');
+    let permitted = false;
+    try { permitted = await authorize() === true; } catch { /* deny */ }
+    if (!permitted) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
+    const reply = await this.queued('pin_read_file', {
+      path: file, root, root_dev: expectedRoot.dev.toString(),
+      root_ino: expectedRoot.ino.toString(), volume_anchor: volumeAnchor,
+    }) as Record<string, unknown>;
+    const numeric = (value: unknown): bigint => {
+      if (typeof value !== 'string' || !/^[1-9][0-9]{0,19}$/.test(value))
+        throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+      const number = BigInt(value);
+      if (number > 18446744073709551615n)
+        throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+      return number;
+    };
+    if (!reply || typeof reply.pin_id !== 'string' ||
+        !/^[a-f0-9]{32}$/.test(reply.pin_id) ||
+        reply.final_path_verified !== true)
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    const pin: FullTextNativeFilePin = {
+      id:reply.pin_id,dev:numeric(reply.dev),ino:numeric(reply.ino),
+      rootDev:numeric(reply.root_dev),rootIno:numeric(reply.root_ino),
+    };
+    if (pin.rootDev !== expectedRoot.dev || pin.rootIno !== expectedRoot.ino)
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
+    return pin;
+  }
+
+  async verifyFilePin(pin: FullTextNativeFilePin): Promise<void> {
+    const result = await this.queued('verify_read_pin', {pin_id:pin.id})
+      as Record<string, unknown>;
+    if (!result || result.verified !== true ||
+        result.dev !== pin.dev.toString() ||
+        result.ino !== pin.ino.toString())
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
+  }
+
+  async releaseFilePin(pin: FullTextNativeFilePin): Promise<void> {
+    const result = await this.queued('release_read_pin', {pin_id:pin.id})
+      as Record<string, unknown>;
+    if (!result || result.released !== true)
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
   }
 
   /**
