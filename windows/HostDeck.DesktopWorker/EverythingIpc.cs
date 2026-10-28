@@ -117,11 +117,11 @@ internal static class EverythingIpc
         // Both terms are escaped as PCRE literals. The workspace lookahead
         // starts AFTER its separator so an ancestor name cannot satisfy the
         // filter; a search-root subfolder name can (Node matches relative paths).
-        // [\\s\\S]* also spans any filename character without changing the
+        // [\s\S]* also spans any filename character without changing the
         // existing MATCHPATH|REGEX wire flags, result cap or vendor state.
         var workspacePrefix = RootExpression(workspace);
         var rootPrefix = RootExpression(root);
-        return @"(?i)^(?=" + workspacePrefix[1..] + @"[\\s\\S]*" + Regex.Escape(needle) + ")" + rootPrefix[1..];
+        return @"(?i)^(?=" + workspacePrefix[1..] + @"[\s\S]*" + Regex.Escape(needle) + ")" + rootPrefix[1..];
     }
     private static void ValidateTargetToken(nint token,string sid,string logon)
     {
