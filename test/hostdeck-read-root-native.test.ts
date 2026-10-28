@@ -97,6 +97,63 @@ test('real Windows subroot reads bind native FileID and block ancestor replaceme
   }
 });
 
+test('real Windows directory paging fails explicitly after a rename between native batches',{
+  skip:process.platform!=='win32'||!parent||!existsSync(worker)
+    ? 'Explicit owned fixture parent and current Windows worker required' : false,
+  timeout:30_000,
+},async()=>{
+  const canonicalParent=await fs.realpath(parent!);
+  const base=await fs.realpath(await fs.mkdtemp(path.join(canonicalParent,'hostdeck-read-pages-')));
+  const local=path.join(base,'workspace'),external=path.join(base,'external'),
+    protectedRoot=path.join(base,'protected');
+  const names=Array.from({length:240},(_,i)=>`owned-${String(i).padStart(3,'0')}.txt`);
+  let bridge:FullTextNativeBridge|undefined;
+  try{
+    for(const dir of [local,external,protectedRoot])await fs.mkdir(dir);
+    for(const name of names)await fs.writeFile(path.join(external,name),'OWNED_PAGE_FIXTURE');
+    const identity=await inspectDesktopIdentity(worker);
+    assert.equal(identity.eligible,true);assert.equal(identity.elevated,false);assert.ok(identity.sid);
+    bridge=new FullTextNativeBridge({workerExecutable:worker,
+      workerSha256:createHash('sha256').update(await fs.readFile(worker)).digest('hex'),
+      expectedExecutor:{sid:identity.sid,logonId:identity.logon_id,sessionId:identity.session_id}});
+    const owner={ownerId:'native-page-owner',deviceId:'native-page-device',executorId:'native-page-executor'};
+    // Selection is synthetic; all 240 files, directory batches and timestamps are real.
+    const selected:ProtectedReadRootSelection={owner,revision:'fixture',digest:'fixture',
+      roots:[external],excludedRoots:[],fixedVolumeRoots:[]};
+    const access=new ReadRootAccess(local,[protectedRoot],{selected:async()=>selected},bridge);
+    const scope=await access.resolve(external,owner,'name_search') as ReadRootScope;
+    const stable=await access.withDirectory(scope,owner,'name_search',async entries=>{
+      const seen:string[]=[];for await(const entry of entries)seen.push(entry.name);return seen;
+    });
+    assert.deepEqual(stable.sort(),names);
+    assert.equal(new Set(stable).size,240);
+    let seen=0,mutated=false;
+    await assert.rejects(access.withDirectory(scope,owner,'name_search',async entries=>{
+      for await(const _entry of entries){
+        if(++seen===192){
+          await fs.rename(path.join(external,names[239]),path.join(external,'renamed-owned-239.txt'));
+          mutated=true;
+        }
+      }
+    }),/READ_ROOT_CHANGED/);
+    assert.equal(mutated,true);assert.equal(seen,192);
+  }finally{
+    await bridge?.close();
+    assert.equal(await fs.realpath(base),base);assert.equal(path.dirname(base),canonicalParent);
+    assert.ok(path.basename(base).startsWith('hostdeck-read-pages-'));
+    for(const dir of [local,external,protectedRoot]){
+      for(const entry of await fs.readdir(dir,{withFileTypes:true})){
+        assert.equal(entry.isFile(),true);
+        assert.ok(names.includes(entry.name)||entry.name==='renamed-owned-239.txt');
+        await fs.unlink(path.join(dir,entry.name));
+      }
+      await fs.rmdir(dir);
+    }
+    await fs.rmdir(base);
+    assert.equal(await fs.stat(base).then(()=>true,()=>false),false);
+  }
+});
+
 test('actual directory metadata refuses an ancestor junction restored around path checks',{
   skip:process.platform!=='win32'||!parent||!existsSync(worker)
     ? 'Explicit owned fixture parent and current Windows worker required' : false,

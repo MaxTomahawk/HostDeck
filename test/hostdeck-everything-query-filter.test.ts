@@ -83,6 +83,11 @@ test('Everything sends a necessary name predicate before the provider cap; Node 
     const count=requests.length;
     await assert.rejects(query('(report)+',false),/SEARCH_REGEX_FEATURE_DENIED/);
     await assert.rejects(query('report|other',false),/SEARCH_REGEX_FEATURE_DENIED/);
+    for(const pattern of ['foo|bar','fo*']){
+      await assert.rejects(query(pattern,false),/SEARCH_REGEX_FEATURE_DENIED/);
+      await assert.rejects(call('search_files',{
+        path:'.',pattern,literal:false,provider:'direct'}),/SEARCH_REGEX_FEATURE_DENIED/);
+    }
     await assert.rejects(query('^\\d$',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
     await assert.rejects(query('[0-9]',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
     await assert.rejects(query('\\s',false),/EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED/);
