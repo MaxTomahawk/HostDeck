@@ -153,7 +153,66 @@ try {
         Assert $refused ('Rollback must reject missing essential release entry: ' + $missing)
         $passed++
     }
+    # Real NTFS DACL oracle for the actual installer Prepare-StateAcl helper.
+    # The production installer entrypoint, SYSTEM/Admin owner and SCM are NOT run.
+    $installerTokens = $null; $installerErrors = $null
+    $installerAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $source 'windows/install/Install-HostDeck.ps1'),
+        [ref]$installerTokens, [ref]$installerErrors)
+    Assert ($installerErrors.Count -eq 0) 'Install script must parse.'
+    foreach ($name in @('Assert-NoReparsePath','Assert-NoReparseTree','Prepare-StateAcl')) {
+        $definition = @($installerAst.FindAll({
+            param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]
+        }, $false) | Where-Object Name -eq $name)
+        Assert ($definition.Count -eq 1) 'Expected exactly one production state ACL helper.'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+    }
+    $stateFixture = Join-Path $ownedRoot 'upgrade-state-acl'
+    $indexFixture = Join-Path $stateFixture 'fulltext-index'
+    New-Item -ItemType Directory -Path $indexFixture -Force | Out-Null
+    $indexFile = Join-Path $indexFixture 'owned.writerlock.sqlite'
+    [IO.File]::WriteAllText($indexFile, 'disposable-index-content')
+    $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $indexAcl = Get-Acl -LiteralPath $indexFixture
+    $indexAcl.SetAccessRuleProtection($true, $false)
+    $indexRights = [Security.AccessControl.FileSystemRights](
+        [int][Security.AccessControl.FileSystemRights]::Modify -bor
+        [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles)
+    $indexAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $userSid, $indexRights, [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $indexFixture -AclObject $indexAcl
+    $snapshot = @{}
+    foreach ($entry in @($stateFixture, $indexFixture, $indexFile)) {
+        $snapshot[$entry] = (Get-Acl -LiteralPath $entry).Sddl
+    }
+    $contentBefore = Bytes $indexFile
+    $script:stateAclCalls = 0
+    function Set-ExactAcl {
+        param($path, $profile, $recursive)
+        $script:stateAclCalls++
+        Assert ($path -eq $stateFixture -and $profile -eq 'state' -and $recursive) 'Fresh state ACL setup must remain scoped and recursive.'
+    }
+    Prepare-StateAcl $stateFixture $true
+    Assert ($script:stateAclCalls -eq 0) 'Upgrade must not normalize existing state ACLs.'
+    foreach ($entry in @($stateFixture, $indexFixture, $indexFile)) {
+        Assert ((Get-Acl -LiteralPath $entry).Sddl -ceq $snapshot[$entry]) 'Upgrade must preserve every existing ACL byte-for-byte at SDDL level.'
+    }
+    Assert ((Bytes $indexFile) -eq $contentBefore) 'Upgrade must preserve existing index bytes.'
+    $actualIndexAcl = Get-Acl -LiteralPath $indexFixture
+    $allowed = 0
+    foreach ($ace in $actualIndexAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
+        if ($ace.IdentityReference.Value -eq $userSid.Value -and
+            $ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
+            $allowed = $allowed -bor [int]$ace.FileSystemRights
+        }
+    }
+    Assert (($allowed -band 0x46) -eq 0x46) 'Existing index ACL must retain add-file, add-subdirectory and delete-child.'
+    Prepare-StateAcl $stateFixture $false
+    Assert ($script:stateAclCalls -eq 1) 'Fresh install must still request protected recursive state ACL setup.'
     Write-Output "Windows installer worker-pin, release-integrity and mocked-SCM cases: $passed PASS. Installed lifecycle NOT_RUN."
+    Write-Output 'Real owned NTFS state/index ACL preservation and fresh-install dispatch: 2 PASS. Installed upgrade NOT_RUN.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($ownedRoot)
     if ($resolved -ne $ownedRoot -or (Split-Path -Parent $resolved).TrimEnd('\') -ne $temporaryParent.TrimEnd('\') -or
