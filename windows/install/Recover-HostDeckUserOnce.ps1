@@ -60,7 +60,8 @@ function Read-Plan([string] $path, [string] $expectedSha) {
         }
     }
     if ($p.schema -ne 1 -or [string]$p.enrolled_sid -notmatch '^S-1-5-(?:\d+-)+\d+$' -or
-        $p.session_id -isnot [int] -or $p.session_id -le 0 -or
+        ($p.session_id -isnot [int] -and $p.session_id -isnot [long]) -or
+        $p.session_id -le 0 -or $p.session_id -gt [int]::MaxValue -or
         [string]$p.client_id -cnotmatch '^[a-z][a-z0-9-]{2,39}$' -or
         [string]$p.request_id -cnotmatch '^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$' -or
         [string]$p.goal_id -cnotmatch '^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$' -or
@@ -127,6 +128,8 @@ function Assert-ReceiptReader($p) {
             (Join-Path $base 'outbox'), (Join-Path $base ('outbox\' + $p.client_id)))) {
         Assert-ProtectedFile $path
     }
+    $receiptPath = Join-Path $base ('outbox\' + $p.client_id + '\' + $p.request_id + '.result.json')
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { Assert-ProtectedFile $receiptPath }
     if ((Sha $p.reader_path) -cne $p.reader_sha256 -or
         (Sha $p.common_path) -cne $p.common_sha256) { Refuse 'READER_HASH' }
 }
