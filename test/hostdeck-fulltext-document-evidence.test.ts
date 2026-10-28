@@ -26,6 +26,14 @@ async function ownFixture(formats:FullTextConfig['formats']):Promise<{base:strin
   return {base,root,config:{indexFile:path.join(state,'index.sqlite'),roots:[root],formats,
     budgets:{maxOperationsPerStep:12,maxStepMilliseconds:9_000}}};
 }
+async function cleanupOwnFixture(base:string):Promise<void>{
+  const temporaryRoot=await realpath(os.tmpdir());
+  const canonical=await realpath(base);
+  assert.equal(canonical,base,'fixture root must not be redirected');
+  assert.equal(path.dirname(canonical),temporaryRoot,'fixture must remain directly below temp');
+  assert.ok(path.basename(canonical).startsWith('hd-fulltext-evidence-'),'unexpected fixture name');
+  await rm(canonical,{recursive:true,force:true});
+}
 async function finish(engine:FullTextEngine):Promise<void>{
   const run=(await engine.start(principal)).runId;
   for(let i=0;i<30;i++){
@@ -104,7 +112,7 @@ test('indexed Office limitations survive SQLite/search/status/reopen; ACL denies
     const restricted=await engine.status(principal);
     assert.ok(!restricted.visibleDocumentCoverage.some(row=>row.path===docx));
     assert.equal(restricted.coverage,'partial_or_unverified');
-  }finally{revoked.clear();engine?.close();await rm(base,{recursive:true,force:true});}
+  }finally{revoked.clear();engine?.close();await cleanupOwnFixture(base);}
 });
 
 test('legacy indexed Office rows remain unverified until a source-backed rescan',async()=>{
@@ -145,5 +153,5 @@ test('legacy indexed Office rows remain unverified until a source-backed rescan'
     assert.equal(updated.documentCoverage,'partial');
     assert.ok(updated.limitations.includes('structured_text_layer_only'));
     assert.equal((await engine.status(principal)).coverage,'partial_or_unverified');
-  }finally{engine?.close();await rm(base,{recursive:true,force:true});}
+  }finally{engine?.close();await cleanupOwnFixture(base);}
 });

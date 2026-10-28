@@ -80,3 +80,63 @@ The existing \`hostdeck_edit_document\` API retains its established \`text_repla
 - `hostdeck_read_document` removes the two exact upstream `edit_block`/`read_file offset=1` tooltips only from the generated DOCX outline header, and the legacy Python suggestion only from the generated suffix. These are not generic substitutions in document body/header/footer content.
 - Own Office XML root/namespace/structure, unsupported formula, range and count exceptions now have bounded explicit `RuntimeError` codes. For replacement-count conflict, public MCP returns `DOCUMENT_REPLACEMENT_COUNT`, while the internal direct adapter error retains the numbers `Expected N occurrence(s) but found M`; no private text or path is included. The existing `publicError` masks unrelated arbitrary `Error.message` text as `IO_ERROR` and no global whitelist is added.
 - The local Windows build and real python-docx/openpyxl/ExcelJS cross-library tests are separate gates; the ordinary ChatGPT implementer does not independently certify its own patch. F002 remains OPEN. No Word/Excel installation, Actions, source merge or deployment is authorized.
+
+## B007 explicitly configured owner read/search roots — source candidate
+
+The existing installer-controlled HostDeck configuration may optionally include a
+**protected** `read_roots` object:
+
+```json
+{
+  "owner_id": "authorized_owner_identifier",
+  "revision": "read_scope_rev1",
+  "roots": ["X:\\ExampleData"],
+  "excluded_roots": ["X:\\ExampleData\\Private"],
+  "fixed_volume_roots": []
+}
+```
+
+This object is a field **inside the existing main config**, not a new
+selection/approval file. It has no MCP setter. When absent, all read, list,
+search, write, document and process paths keep their pre-existing workspace-only
+boundaries. Grant scopes or `broadUserAuthority`, search hits, tool arguments and
+provider preference do not create roots.
+
+The existing PolicyGate controls scope, owner, device, executor, grant revision
+and eligible session. Each external read refreshes the original, physically
+protected config file by verified native effective-ACL check and actual open
+file identity, binds the configured owner and config bytes/revision, and
+requires the existing pinned, non-elevated FullTextNativeBridge. Its original
+`attributes_batch` checks Windows Hidden/System/reparse on every ancestor;
+the existing `qualifyFixedVolumes` performs Windows DriveInfo.Fixed checks for
+any explicitly listed complete drive root. An unqualified native worker,
+config ACL, directory handle, root or attribute state denies the external read.
+
+`hostdeck_list_directory` and direct directory search reuse FileAdapter's
+bounds while enumerating names through the **already-existing native worker**,
+extended only with a bounded `directory_page` operation. The worker compares
+the actual opened directory HANDLE's FileID against the independently observed
+target before emitting names; rechecked root/config/owner/grant and directory
+identity are mandatory before disclosure. Node `opendir` is retained for
+workspace-only paths, because its handle is not available to that native
+identity check. Existing `hostdeck_read_file`, `hostdeck_file_info`, direct
+name/content search and Everything name search can read from the selected
+external roots only; every retained page rechecks scope and individual
+FileID/mtime/size before publishing paths, snippets, metadata or counts.
+Missing excluded paths stay protected by canonicalizing the nearest existing
+ancestor. All other external roots remain denied.
+
+**Unchanged write boundary:** write/edit/create/move/delete, SafeCommitter,
+document handling, process working directory and artifact writes all keep the
+original workspace-only path guards. The existing logical provider
+enable/disable/default/preference behavior is preserved, with no new indexer,
+service or tool exposed.
+
+**Status: SOURCE CANDIDATE, NOT INSTALLED OR WINDOWS-ACCEPTED.** The directory
+HANDLE/FileID ABI, native Hidden/System/reparse attributes (including
+swap-and-restore adversaries), true fixed-volume roots, protected ACL behavior,
+session renewals, native worker binary packaging, and real Everything pages
+remain open Windows qualification gates. Focused source fixtures use a fake
+native helper; these are not evidence of an actual Windows HANDLE. No personal
+corpus, configuration, grant, identity, installed binary or NEXT_RUN changes
+were made. Historical failures and separate independent acceptance remain open.

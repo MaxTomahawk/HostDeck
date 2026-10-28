@@ -23,6 +23,15 @@ export interface FullTextNativeOptions {
   timeoutMs?: number;
 }
 
+/** Short-lived private native handle receipt; not an authority/grant. */
+export interface FullTextNativeFilePin {
+  readonly id: string;
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly rootDev: bigint;
+  readonly rootIno: bigint;
+}
+
 export interface FullTextNativeAttribute {
   index: number;
   status: 'ok' | 'unavailable' | 'reparse_component';
@@ -31,6 +40,9 @@ export interface FullTextNativeAttribute {
   reparse: boolean | null;
   hidden_component: boolean | null;
   system_component: boolean | null;
+  /** Optional on legacy workers; mandatory to exempt an exact fixed-volume anchor. */
+  hidden_below_volume?: boolean | null;
+  system_below_volume?: boolean | null;
   directory: boolean | null;
 }
 
@@ -250,11 +262,107 @@ export class FullTextNativeBridge {
     return result.items.map((item: any, index: number) => {
       if (item?.index !== index || !['ok','unavailable','reparse_component'].includes(item?.status) ||
         !['hidden','system','reparse','hidden_component','system_component','directory']
-          .every(key => item[key] === null || typeof item[key] === 'boolean')) {
+          .every(key => item[key] === null || typeof item[key] === 'boolean') ||
+        !['hidden_below_volume','system_below_volume']
+          .every(key => item[key] === undefined || item[key] === null ||
+            typeof item[key] === 'boolean')) {
         throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
       }
       return item as FullTextNativeAttribute;
     });
+  }
+
+  /**
+   * Enumerate ONLY against the directory handle opened by the pinned worker.
+   * The expected inode is taken from a fresh trusted fs.stat, never an MCP
+   * argument. The worker compares it with GetFileInformationByHandle before
+   * returning any names. Unsupported or stale workers fail closed.
+   */
+  async directoryPage(file: string, expectedDev: bigint, expectedIno: bigint, offset: number,
+    limit: number, authorize: (file: string) => Promise<boolean>,
+    volumeAnchor = false): Promise<{
+      names: string[]; more: boolean; nextOffset: number;
+    }> {
+    if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
+        expectedDev <= 0n || expectedDev > 18446744073709551615n ||
+        expectedIno <= 0n || expectedIno > 18446744073709551615n ||
+        !Number.isSafeInteger(offset) || offset < 0 || offset > 100000 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 192)
+      throw error('FULLTEXT_NATIVE_INVALID_ARGUMENTS');
+    let allowed = false;
+    try { allowed = await authorize(file) === true; } catch { /* deny */ }
+    if (!allowed) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
+    const result = await this.queued('directory_page', {
+      path: file, expected_dev: expectedDev.toString(),
+      expected_ino: expectedIno.toString(), offset, limit,
+      volume_anchor: volumeAnchor,
+    }) as Record<string, unknown>;
+    if (!result || !Array.isArray(result.names) ||
+        result.names.length > limit || typeof result.more !== 'boolean' ||
+        result.next_offset !== offset + result.names.length ||
+        result.names.some(name => typeof name !== 'string' ||
+          name.length < 1 || name.length > 255 ||
+          name === '.' || name === '..' || name.includes('\\') ||
+          name.includes('/') || name.includes(':') || name.includes('\0')) ||
+        (result.more && result.names.length === 0))
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    return { names: result.names as string[], more: result.more,
+      nextOffset: result.next_offset as number };
+  }
+
+  /**
+   * Existing executor-pinned worker holds the REAL selected directory chain
+   * and target file open without FILE_SHARE_DELETE across Node's fs.open/read.
+   * No file bytes or arbitrary final paths leave this native bridge.
+   */
+  async pinFile(file: string, root: string,
+    expectedRoot: { dev: bigint; ino: bigint },
+    volumeAnchor: boolean, authorize: () => Promise<boolean>
+  ): Promise<FullTextNativeFilePin> {
+    if (typeof file !== 'string' || !/^[A-Za-z]:\\/.test(file) ||
+        typeof root !== 'string' || !/^[A-Za-z]:\\/.test(root) ||
+        expectedRoot.dev <= 0n || expectedRoot.ino <= 0n ||
+        typeof volumeAnchor !== 'boolean') throw error('FULLTEXT_NATIVE_READ_PIN_DENIED');
+    let permitted = false;
+    try { permitted = await authorize() === true; } catch { /* deny */ }
+    if (!permitted) throw error('FULLTEXT_NATIVE_AUTHORIZATION_REQUIRED');
+    const reply = await this.queued('pin_read_file', {
+      path: file, root, root_dev: expectedRoot.dev.toString(),
+      root_ino: expectedRoot.ino.toString(), volume_anchor: volumeAnchor,
+    }) as Record<string, unknown>;
+    const numeric = (value: unknown): bigint => {
+      if (typeof value !== 'string' || !/^[1-9][0-9]{0,19}$/.test(value))
+        throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+      const number = BigInt(value);
+      if (number > 18446744073709551615n)
+        throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+      return number;
+    };
+    if (!reply || typeof reply.pin_id !== 'string' ||
+        !/^[a-f0-9]{32}$/.test(reply.pin_id) ||
+        reply.final_path_verified !== true)
+      throw error('FULLTEXT_NATIVE_PROTOCOL_INVALID');
+    const pin: FullTextNativeFilePin = {
+      id:reply.pin_id,dev:numeric(reply.dev),ino:numeric(reply.ino),
+      rootDev:numeric(reply.root_dev),rootIno:numeric(reply.root_ino),
+    };
+    if (pin.rootDev !== expectedRoot.dev || pin.rootIno !== expectedRoot.ino)
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
+    return pin;
+  }
+
+  async verifyFilePin(pin: FullTextNativeFilePin): Promise<void> {
+    const result = await this.queued('verify_read_pin', {pin_id:pin.id}) as Record<string, unknown>;
+    if (!result || result.verified !== true ||
+        result.dev !== pin.dev.toString() ||
+        result.ino !== pin.ino.toString())
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
+  }
+
+  async releaseFilePin(pin: FullTextNativeFilePin): Promise<void> {
+    const result = await this.queued('release_read_pin', {pin_id:pin.id}) as Record<string, unknown>;
+    if (!result || result.released !== true)
+      throw error('FULLTEXT_NATIVE_READ_PIN_CHANGED');
   }
 
   /**

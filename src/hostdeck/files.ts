@@ -7,6 +7,8 @@ import { parseToolArguments } from './contracts.js';
 import {RuntimeError} from './runtime-error.js';
 import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
 import {everythingNameNeedle, type EverythingClient} from './everything.js';
+import type {ReadRootAccess,ReadRootScope} from './read-root-access.js';
+import type {ReadOnlyOperation} from './read-root-boundary.js';
 
 const execFile = promisify(execFileCallback);
 const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference','hostdeck_set_provider_enabled'] as const;
@@ -16,18 +18,21 @@ const MAX_SEARCH_RESULT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_FILE_BYTES = 1024 * 1024;
 const SEARCH_RETENTION_MS = 10 * 60_000;
 
-export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; sessionId?:number;sessionIds?:readonly number[]; }
+export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; revision?:string;sessionId?:number;sessionIds?:readonly number[]; }
 export type Reauthorize = (name: string, args: Record<string, unknown>) => Promise<void>;
-interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback'; }
+interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback';
+  /** Internal only; never serialize this with public result-page items. */
+  privateIdentity?:{dev:string;ino:string;mtimeNs:string;size:string};
+}
 interface SearchJob {
   id: string; owner: FileOwnerContext; root: string; pattern: string; mode: 'files' | 'content'; regex?: RegExp;
   includeHidden: boolean; deadline: number; resultLimit: number; matches: SearchMatch[]; bytes: number;
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
   provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
   provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
-  coverageTruncated:boolean;rootIsFile:boolean;everythingNeedle?:string;
+  coverageTruncated:boolean;rootIsFile:boolean;readScope?:ReadRootScope;everythingNeedle?:string;
 }
-interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;}
+interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;readRoots?:ReadRootAccess;}
 
 function inside(root: string, value: string): boolean {
   const relative = path.relative(root, value);
@@ -47,7 +52,6 @@ function safePattern(pattern: string, literal: boolean): RegExp {
   if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new RuntimeError('SEARCH_REGEX_FEATURE_DENIED');
   try { return new RegExp(pattern, 'i'); } catch { throw new RuntimeError('SEARCH_PATTERN_INVALID'); }
 }
-
 
 function visibleName(name: string, includeHidden: boolean): boolean { return includeHidden || !name.startsWith('.'); }
 function psQuote(value: string): string { return `'${value.replace(/'/g, "''")}'`; }
@@ -90,6 +94,34 @@ export class FileAdapter {
     return { absolute: canonical, stat: lastStat };
   }
 
+  /** Read authority is additive and external-only; all write guards stay unmodified. */
+  private async guardReadPath(input: unknown, context: FileOwnerContext,
+    operation: ReadOnlyOperation): Promise<{absolute:string;stat:import('node:fs').Stats;
+      readScope?:ReadRootScope}> {
+    if(typeof input!=='string'||!input.trim())throw new RuntimeError('FILES_PATH_INVALID');
+    const target=path.resolve(this.workspace,input);
+    if(inside(this.workspace,target)){
+      const baseline=await this.guardPath(input);
+      if(!baseline.stat)throw new RuntimeError('FILES_PATH_INVALID');
+      return {absolute:baseline.absolute,stat:baseline.stat};
+    }
+    const access=this.options?.readRoots;
+    if(!access)throw new RuntimeError('FILES_PATH_OUTSIDE_WORKSPACE');
+    const candidate=await access.resolve(input,context,operation);
+    if(!candidate.external||!candidate.rootIdentity||!candidate.revision||!candidate.digest)
+      throw new RuntimeError('READ_ROOT_DENIED');
+    const scope=candidate as ReadRootScope;
+    const observed=await access.metadata(scope,context,operation);
+    const stat=await fs.lstat(scope.absolute);
+    if((observed.isFile!==stat.isFile())||(observed.isDirectory!==stat.isDirectory()))
+      throw new RuntimeError('READ_ROOT_CHANGED');
+    return {absolute:scope.absolute,stat,readScope:scope};
+  }
+
+  private displayRead(value:string,scope?:ReadRootScope):string{
+    return scope?.external?value:this.relative(value);
+  }
+
   private relative(value: string): string {
     const rel = path.relative(this.workspace, value);
     return rel || '.';
@@ -103,7 +135,7 @@ export class FileAdapter {
     const args = parseToolArguments(name, rawArgs);
     if (args.device_id !== context.deviceId) throw new Error('FILES_DEVICE_CONTEXT_MISMATCH');
     switch (name) {
-      case 'hostdeck_list_directory': return this.listDirectory(args);
+      case 'hostdeck_list_directory': return this.listDirectory(args,context);
       case 'hostdeck_create_directory': return this.createDirectory(name, args);
       case 'hostdeck_move_file': return this.moveFile(name, args);
       case 'hostdeck_delete_path': return this.deletePath(name, args);
@@ -136,35 +168,78 @@ export class FileAdapter {
     }
   }
 
-  private async listDirectory(args: Record<string, unknown>): Promise<unknown> {
-    const base = await this.guardPath(args.path);
-    if (!base.stat?.isDirectory()) throw new Error('FILES_NOT_A_DIRECTORY');
-    const depth = args.depth as number;
-    const limit = args.limit as number;
-    const deadline = Date.now() + 3000;
-    const results: Array<Record<string, unknown>> = [];
-    const queue: Array<{ dir: string; level: number }> = [{ dir: base.absolute, level: 0 }];
-    let visited = 0; let skippedLinks = 0; let outputBytes = 0; let truncated = false;
-    while (queue.length) {
-      if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-      const current = queue.shift()!;
-      const directory = await fs.opendir(current.dir);
-      for await (const entry of directory) {
-        if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-        if (!visibleName(entry.name, false)) continue;
-        visited++;
-        const full = path.join(current.dir, entry.name);
-        const stat = await fs.lstat(full);
-        if (isReparseOrLink(stat)) { skippedLinks++; continue; }
-        const isDirectory = stat.isDirectory();
-        const result = { path: this.relative(full), name: entry.name, type: isDirectory ? 'directory' : stat.isFile() ? 'file' : 'other', size: stat.isFile() ? stat.size : undefined, modified: stat.mtime.toISOString(), depth: current.level + 1 };
-        const bytes = Buffer.byteLength(JSON.stringify(result));
-        if (outputBytes + bytes > MAX_SEARCH_RESULT_BYTES) { truncated = true; break; }
-        results.push(result); outputBytes += bytes;
-        if (isDirectory && current.level + 1 < depth) queue.push({ dir: full, level: current.level + 1 });
+  private async listDirectory(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_list_directory',args);
+    const base=await this.guardReadPath(args.path,context,'list_directory');
+    if(!base.stat.isDirectory())throw new RuntimeError('FILES_NOT_A_DIRECTORY');
+    const depth=args.depth as number,limit=args.limit as number;
+    const deadline=Date.now()+3000;
+    const results:Array<Record<string,unknown>>=[];
+    const queue:Array<{dir:string;level:number}>=[{dir:base.absolute,level:0}];
+    let visited=0,skippedLinks=0,outputBytes=0,truncated=false;
+    while(queue.length){
+      if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+        truncated=true;break;
+      }
+      const current=queue.shift()!;
+      const guarded=await this.guardReadPath(current.dir,context,'list_directory');
+      if(!guarded.stat.isDirectory())continue;
+      if(base.readScope&&(!guarded.readScope||
+          guarded.readScope.digest!==base.readScope.digest||
+          guarded.readScope.revision!==base.readScope.revision))
+        throw new RuntimeError('READ_ROOT_REVOKED');
+      const scan=async(directory:AsyncIterable<{name:string}>):Promise<void>=>{
+        for await(const entry of directory){
+          if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+            truncated=true;break;
+          }
+          if(!visibleName(entry.name,false))continue;
+          const full=path.join(current.dir,entry.name);
+          let item:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+          try{item=await this.guardReadPath(full,context,'list_directory');}
+          catch{
+            // Rejected external entries must not leak their existence even via
+            // skipped/visited counters. Retain old workspace counter semantics.
+            if(!base.readScope)skippedLinks++;
+            continue;
+          }
+          if(isReparseOrLink(item.stat)){skippedLinks++;continue;}
+          if(base.readScope&&(!item.readScope||
+              item.readScope.digest!==base.readScope.digest||
+              item.readScope.revision!==base.readScope.revision))continue;
+          visited++;
+          const isDirectory=item.stat.isDirectory();
+          const result={path:this.displayRead(item.absolute,item.readScope),
+            name:entry.name,type:isDirectory?'directory':item.stat.isFile()?'file':'other',
+            size:item.stat.isFile()?item.stat.size:undefined,
+            modified:item.stat.mtime.toISOString(),depth:current.level+1,
+            ...(item.readScope?{root_scope:item.readScope.root}: {})};
+          const bytes=Buffer.byteLength(JSON.stringify(result));
+          if(outputBytes+bytes>MAX_SEARCH_RESULT_BYTES){truncated=true;break;}
+          results.push(result);outputBytes+=bytes;
+          if(isDirectory&&current.level+1<depth)
+            queue.push({dir:item.absolute,level:current.level+1});
+        }
+      };
+      if(guarded.readScope){
+        await this.options!.readRoots!.withDirectory(guarded.readScope,context,
+          'list_directory',scan);
+      }else{
+        const directory=await fs.opendir(guarded.absolute);
+        try{await scan(directory);}finally{await directory.close().catch(()=>{});}
       }
     }
-    return { directory: this.relative(base.absolute), entries: results, truncated, visited, skipped_reparse_points: skippedLinks };
+    // A selection revoked during enumeration must withhold EVERY result.
+    if(base.readScope){
+      await this.authorize('hostdeck_list_directory',args);
+      await this.options!.readRoots!.assertScope(base.readScope,context,'list_directory');
+    }
+    return {directory:this.displayRead(base.absolute,base.readScope),
+      entries:results,truncated,visited,skipped_reparse_points:skippedLinks,
+      ...(base.readScope?{root_scope:base.readScope.root}: {})};
   }
 
   private async createDirectory(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -303,7 +378,13 @@ export class FileAdapter {
   private async startSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     this.pruneSearches();
     if (this.searches.size >= 100) throw new Error('SEARCH_CAPACITY_REACHED');
-    const root = await this.guardPath(args.path);
+    const mode=args.mode==='content'?'content_search':'name_search';
+    // Current PolicyGate/grant revision must be checked before any external
+    // root metadata or search handle can be disclosed.
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_search_files',args);
+    const root=await this.guardReadPath(args.path,context,mode);
     const pattern = args.pattern as string;
     const literal = args.literal as boolean;
     const capability=args.mode==='content'?'files.content':'files.name';
@@ -316,7 +397,7 @@ export class FileAdapter {
     if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
     if(provider==='everything')this.authorizeEverythingSession(context);
     const regex=safePattern(pattern,literal);
-    // Every native result must satisfy a name predicate before the IPC offset-0 cap.
+    // The native IPC2 window is filtered before MaxItems, then Node rechecks.
     const everythingNeedle=provider==='everything'?everythingNameNeedle(regex):undefined;
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
@@ -325,7 +406,8 @@ export class FileAdapter {
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
       provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
-      coverageTruncated:false,rootIsFile:root.stat?.isFile()===true,everythingNeedle,
+      coverageTruncated:false,rootIsFile:root.stat.isFile()===true,
+      ...(root.readScope?{readScope:root.readScope}:{}),everythingNeedle,
     };
     this.searches.set(job.id, job);
     void (provider==='everything'?this.runEverything(job):this.runSearch(job));
@@ -335,8 +417,11 @@ export class FileAdapter {
   private async runEverything(job:SearchJob):Promise<void> {
     try {
       await this.authorizeEverythingSearch(job);
-      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal,
-        {workspace:this.workspace,needle:job.everythingNeedle!});
+      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal,{
+        workspace:this.workspace,needle:job.everythingNeedle!,
+        // Only the trusted resolved readScope determines absolute-path semantics.
+        nameScope:job.readScope?.external===true?'absolute':'workspace_relative'
+      });
       await this.authorizeEverythingSearch(job);
       job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
       const seen=new Set<string>();
@@ -344,15 +429,20 @@ export class FileAdapter {
         if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
         if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
         // Do not expose engine counts or unchecked paths, even on malformed replies.
-        if(!inside(job.root,candidate)||!inside(this.workspace,candidate))continue;
-        let safe:Awaited<ReturnType<FileAdapter['guardPath']>>;
-        try{safe=await this.guardPath(candidate);}catch{continue;}
-        if(!safe.stat||(!safe.stat.isFile()&&!safe.stat.isDirectory()))continue;
+        if(!inside(job.root,candidate)||
+            (!job.readScope&&!inside(this.workspace,candidate)))continue;
+        let safe:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{safe=await this.guardReadPath(candidate,job.owner,'name_search');}
+        catch{continue;}
+        if(job.readScope&&(!safe.readScope||
+            safe.readScope.digest!==job.readScope.digest||
+            safe.readScope.revision!==job.readScope.revision))continue;
+        if(!safe.stat.isFile()&&!safe.stat.isDirectory())continue;
         const fromRoot=path.relative(job.root,safe.absolute);
         if(!job.rootIsFile&&fromRoot==='')continue;
         const components=fromRoot?fromRoot.split(path.sep):[];
         if(components.length>21){job.coverageTruncated=true;continue;}
-        const relative=this.relative(safe.absolute);
+        const relative=this.displayRead(safe.absolute,safe.readScope);
         if(seen.has(relative))continue;seen.add(relative);
         if(!job.includeHidden&&components.some(p=>p.startsWith('.')))continue;
         job.visited++;
@@ -381,71 +471,121 @@ export class FileAdapter {
     if(job.mode==='content'){if(stat.isFile())await this.inspectSearchFile(job,file,stat.size,MAX_CONTENT_FILE_BYTES);return;}
     if(stat.isDirectory()&&job.entryType==='files'||stat.isFile()&&job.entryType==='directories')return;
     if(!stat.isDirectory()&&!stat.isFile())return;
-    const relative=this.relative(file);
-    if(job.regex!.test(path.basename(file))||job.regex!.test(relative))this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
-      ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),metadata_source:'filesystem_readback' as const}:{})});
+    const relative=this.displayRead(file,job.readScope);
+    if(job.regex!.test(path.basename(file))||job.regex!.test(relative)){
+      const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+      this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
+        ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+          mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{}),
+        ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),
+          metadata_source:'filesystem_readback' as const}:{})});
+    }
   }
 
-  private async runSearch(job: SearchJob): Promise<void> {
-    const stat = await fs.lstat(job.root).catch(() => undefined);
-    if (!stat) { job.error = 'SEARCH_ROOT_UNAVAILABLE'; job.done = true; return; }
-    const queue: Array<{ target: string; level: number }> = [{ target: job.root, level: 0 }];
-    const maxDepth = 20; const maxFile = MAX_CONTENT_FILE_BYTES;
-    try {
-      while (queue.length) {
-        if (job.stopped || Date.now() > job.deadline || job.visited >= MAX_TRAVERSAL_ENTRIES || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES) {
-          job.truncated = !job.stopped; break;
+  private async runSearch(job:SearchJob):Promise<void>{
+    const scoped=job.readScope?this.options?.readRoots:undefined;
+    const operation=job.mode==='content'?'content_search':'name_search';
+    const queue:Array<{target:string;level:number}>=[{target:job.root,level:0}];
+    const maxDepth=20,maxFile=MAX_CONTENT_FILE_BYTES;
+    try{
+      while(queue.length){
+        if(job.stopped||Date.now()>job.deadline||job.visited>=MAX_TRAVERSAL_ENTRIES||
+            job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES){
+          job.truncated=!job.stopped;break;
         }
-        const current = queue.shift()!;
-        const currentStat = await fs.lstat(current.target);
-        if (isReparseOrLink(currentStat)) continue;
-        if (currentStat.isDirectory()) {
-          const directory = await fs.opendir(current.target);
-          for await (const entry of directory) {
-            if (!visibleName(entry.name, job.includeHidden)) continue;
-            if (++job.visited > MAX_TRAVERSAL_ENTRIES) { job.truncated = true; break; }
-            const full = path.join(current.target, entry.name);
-            const childStat = await fs.lstat(full);
-            if (isReparseOrLink(childStat)) continue;
-            if (childStat.isDirectory()) {
-              if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
-              else job.coverageTruncated=true;
+        const current=queue.shift()!;
+        let currentPath:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{currentPath=await this.guardReadPath(current.target,job.owner,operation);}
+        catch{continue;}
+        if(job.readScope&&(!currentPath.readScope||
+            currentPath.readScope.digest!==job.readScope.digest||
+            currentPath.readScope.revision!==job.readScope.revision))continue;
+        if(isReparseOrLink(currentPath.stat))continue;
+        if(currentPath.stat.isDirectory()){
+          const scan=async(dir:AsyncIterable<{name:string}>)=>{
+            for await(const entry of dir){
+              if(!visibleName(entry.name,job.includeHidden))continue;
+              if(job.stopped||job.truncated||Date.now()>job.deadline)break;
+              const full=path.join(current.target,entry.name);
+              let child:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+              try{child=await this.guardReadPath(full,job.owner,operation);}
+              catch{continue;} // Excluded/protected/reparse are never counted as matches.
+              if(job.readScope&&(!child.readScope||
+                  child.readScope.digest!==job.readScope.digest||
+                  child.readScope.revision!==job.readScope.revision))continue;
+              if(isReparseOrLink(child.stat))continue;
+              if(++job.visited>MAX_TRAVERSAL_ENTRIES){job.truncated=true;break;}
+              if(child.stat.isDirectory()){
+                if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
+                else job.coverageTruncated=true;
+              }
+              await this.inspectSearchEntry(job,child.absolute,child.stat);
+              if(job.stopped||job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES||
+                  Date.now()>job.deadline){
+                job.truncated||=!job.stopped&&
+                  (job.bytes>=MAX_SEARCH_RESULT_BYTES||Date.now()>job.deadline);break;
+              }
             }
-            await this.inspectSearchEntry(job,full,childStat);
-            if (job.stopped || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline) { job.truncated ||= !job.stopped && (job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline); break; }
+          };
+          if(currentPath.readScope)await scoped!.withDirectory(currentPath.readScope,
+            job.owner,operation,scan);
+          else {
+            const dir=await fs.opendir(currentPath.absolute);
+            try{await scan(dir);}finally{await dir.close().catch(()=>{});}
           }
-        } else if (currentStat.isFile()) {
+        }else if(currentPath.stat.isFile()){
           job.visited++;
-          await this.inspectSearchEntry(job,current.target,currentStat);
+          await this.inspectSearchEntry(job,currentPath.absolute,currentPath.stat);
         }
       }
-    } catch (error) { job.error = error instanceof Error ? error.message : 'SEARCH_FAILED'; }
-    finally { this.finishSearch(job); }
+      if(job.readScope)await scoped!.assertScope(job.readScope,job.owner,operation);
+    }catch(error){
+      if(job.readScope){job.error='READ_ROOT_REVOKED';job.matches=[];job.bytes=0;}
+      else job.error=error instanceof Error?error.message:'SEARCH_FAILED';
+    }finally{this.finishSearch(job);}
   }
 
   private async inspectSearchFile(job: SearchJob, file: string, size: number, maxFile: number): Promise<void> {
-    const relative = this.relative(file);
+    const relative = this.displayRead(file,job.readScope);
     if (job.mode === 'files') {
-      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) this.addMatch(job, { path: relative, kind: 'file' });
+      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) {
+        const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+        this.addMatch(job,{path:relative,kind:'file',
+          ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+            mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{})});
+      }
       return;
     }
     if (size > maxFile || job.matches.length >= job.resultLimit) { if (size > maxFile) job.truncated = true; return; }
-    const bytes = await fs.readFile(file);
+    let bytes:Buffer;
+    let privateIdentity:SearchMatch['privateIdentity'];
+    if(job.readScope){
+      const source=await this.guardReadPath(file,job.owner,'content_search');
+      if(!source.readScope||
+          source.readScope.digest!==job.readScope.digest||
+          source.readScope.revision!==job.readScope.revision)return;
+      const opened=await this.options!.readRoots!.readBytesVerified(
+        source.readScope,job.owner,'content_search',maxFile);
+      bytes=opened.bytes;privateIdentity=opened.identity;
+    }else bytes=await fs.readFile(file);
     if (bytes.includes(0)) return;
     const content = bytes.toString('utf8');
     const lines = content.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       if (job.stopped || job.truncated || Date.now() > job.deadline || job.bytes >= MAX_SEARCH_RESULT_BYTES) break;
       const line = lines[index];
-      if (job.regex!.test(line)) this.addMatch(job, { path: relative, kind: 'content', line: index + 1, text: line.slice(0, 512) });
+      if (job.regex!.test(line)) this.addMatch(job, {path:relative,kind:'content',
+        line:index+1,text:line.slice(0,512),
+        ...(privateIdentity?{privateIdentity}:{})});
     }
   }
 
   private addMatch(job: SearchJob, match: SearchMatch): void {
     if (job.matches.length >= job.resultLimit) { job.truncated = true; return; }
-    const bytes = Buffer.byteLength(JSON.stringify(match));
-    if (job.bytes + bytes > MAX_SEARCH_RESULT_BYTES) { job.truncated = true; return; }
-    job.matches.push(match); job.bytes += bytes;
+    const {privateIdentity:_privateIdentity,...publicMatch}=match;
+    const bytes=Buffer.byteLength(JSON.stringify(publicMatch));
+    if(job.bytes+bytes>MAX_SEARCH_RESULT_BYTES){job.truncated=true;return;}
+    job.matches.push(match);job.bytes+=bytes;
   }
 
   private searchFor(id: string, context: FileOwnerContext): SearchJob {
@@ -457,20 +597,64 @@ export class FileAdapter {
     return job;
   }
 
-  private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
-    const job = this.searchFor(args.search_id as string, context);
+  private async searchResults(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    const job=this.searchFor(args.search_id as string,context);
+    if(job.error==='READ_ROOT_REVOKED')throw new RuntimeError('READ_ROOT_REVOKED');
+    const access=this.options?.readRoots;
+    const operation=job.mode==='content'?'content_search':'name_search';
     if(job.provider==='everything') {
       await this.authorize('hostdeck_search_results',args);
       await this.authorizeEverythingSearch(job);
-    }
-    const offset = args.offset as number; const limit = args.limit as number;
-    // Sorted snapshots are published only when sealed, so page offsets cannot shift.
+    } else if(job.readScope) await this.authorize('hostdeck_search_results',args);
+    if(job.readScope) await access!.assertScope(job.readScope,context,operation);
+    const offset=args.offset as number,limit=args.limit as number;
     const matches=job.sort&&!job.done?[]:job.matches;
-    const items:SearchMatch[]=[];
-    for(const match of matches.slice(offset,offset+limit))try{await this.guardPath(match.path);items.push(match);}catch{/* Changed targets never become extra read authority. */}
+    const authorized:SearchMatch[]=[];
+    // Every retained result is checked BEFORE computing even total_results,
+    // not only the entries inside the requested page. No stale count/metadata.
+    const candidates=job.readScope?matches:matches.slice(offset,offset+limit);
+    const qualificationDeadline=Date.now()+5000;
+    for(const match of candidates){
+      // No unbounded per-result native/ACL loops for large retained searches.
+      // Failure withholds the entire page, including total_results.
+      if(job.readScope && Date.now()>=qualificationDeadline)
+        throw new RuntimeError('READ_ROOT_PAGE_BUDGET');
+      try{
+        const checked=await this.guardReadPath(match.path,context,operation);
+        if(job.readScope&&(!checked.readScope||
+            checked.readScope.digest!==job.readScope.digest||
+            checked.readScope.revision!==job.readScope.revision))continue;
+        if(match.privateIdentity){
+          const current=await fs.stat(checked.absolute,{bigint:true});
+          const prior=match.privateIdentity;
+          if(current.dev.toString()!==prior.dev||
+             current.ino.toString()!==prior.ino||
+             current.mtimeNs.toString()!==prior.mtimeNs||
+             current.size.toString()!==prior.size)continue;
+        }
+        const {privateIdentity:_privateIdentity,...publicItem}=match;
+        authorized.push(publicItem);
+      }catch{/* Failed/replaced targets cannot be disclosed. */}
+    }
     if(job.provider==='everything')await this.authorizeEverythingSearch(job);
+    if(job.readScope){
+      await this.authorize('hostdeck_search_results',args);
+      await access!.assertScope(job.readScope,context,operation);
+    }
     if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
-    return { search_id: job.id,provider:job.provider,...(job.provenance?{provenance:job.provenance}:{}), items, offset, total_results:matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':job.stopped ? 'stopped' : job.error ? 'failed' : job.truncated?'partial':'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit,matches.length),snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS };
+    const total=job.readScope?authorized.length:matches.length;
+    const items=job.readScope?authorized.slice(offset,offset+limit):authorized;
+    return {search_id:job.id,provider:job.provider,
+      ...(job.provenance?{provenance:job.provenance}:{}),
+      ...(job.readScope?{root_scope:job.readScope.root}:{}),
+      items,offset,total_results:total,complete:job.done,
+      truncated:job.truncated,stopped:job.stopped,
+      state:job.done?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
+        job.stopped?'stopped':job.error?'failed':job.truncated?'partial':'complete':'running',
+      ...(job.error?{error:job.error}:{}),
+      next_offset:Math.min(offset+limit,total),
+      snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS};
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
