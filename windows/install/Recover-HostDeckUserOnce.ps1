@@ -150,6 +150,15 @@ function Test-Receipt($receipt, $p) {
     }
     return 'terminal'
 }
+function Assert-ReleaseReceipt([string] $choice, $receipt) {
+    # An unchanged, fully verified old release may be restored after a
+    # contained failure; never label that failure an installed success.
+    if ($choice -ceq 'new' -and
+        ($receipt.status -cne 'completed-unverified-effect' -or
+         $receipt.runner_status -cne 'completed' -or $receipt.exit_code -ne 0)) {
+        Refuse 'NEW_RELEASE_NOT_VERIFIED'
+    }
+}
 function Wait-Receipt($p, [DateTimeOffset] $deadline) {
     do {
         $receipt = Read-Receipt $p
@@ -275,11 +284,7 @@ function Run-Once($p, [string] $planSha) {
         [Globalization.CultureInfo]::InvariantCulture))
     $installed = Get-InstalledPair $p
     Assert-Service $installed
-    if ($installed.choice -ceq 'new' -and
-        ($receipt.status -cne 'completed-unverified-effect' -or
-         $receipt.runner_status -cne 'completed' -or $receipt.exit_code -ne 0)) {
-        Refuse 'NEW_RELEASE_NOT_VERIFIED'
-    }
+    Assert-ReleaseReceipt $installed.choice $receipt
     $decision = Get-TrayDecision $p $installed @(Get-UserProcesses $installed)
     $trayPid = $null
     if ($decision -ceq 'launch') {
