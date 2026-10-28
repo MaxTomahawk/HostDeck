@@ -25,7 +25,7 @@ interface SearchJob {
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
   provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
   provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
-  coverageTruncated:boolean;rootIsFile:boolean;
+  coverageTruncated:boolean;rootIsFile:boolean;everythingNeedle?:string;
 }
 interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;}
 
@@ -46,6 +46,45 @@ function safePattern(pattern: string, literal: boolean): RegExp {
   // Avoid quantified groups, alternation and nested/overlapping quantifiers that can stall the service.
   if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new RuntimeError('SEARCH_REGEX_FEATURE_DENIED');
   try { return new RegExp(pattern, 'i'); } catch { throw new RuntimeError('SEARCH_PATTERN_INVALID'); }
+}
+
+
+/**
+ * A mandatory literal fragment of the validated Node regexp. Everything uses
+ * PCRE on full paths, while Node remains the final filename/relative-path
+ * matcher. Never forward a user regexp or Everything search operators.
+ */
+function everythingNameNeedle(pattern: string, literal: boolean): string {
+  if (literal) return pattern;
+  let best = '', current = '', inClass = false;
+  const flush = () => { if (current.length > best.length) best = current; current = ''; };
+  const escapedLiteral = new Set(['\\', '.', '^', '$', '[', ']', '/', '-']);
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      const escaped = pattern[++i];
+      if (inClass) continue;
+      if (escapedLiteral.has(escaped)) { current += escaped; continue; }
+      if (escaped === 'x' || escaped === 'u') {
+        const width = escaped === 'x' ? 2 : 4, hex = pattern.slice(i + 1, i + 1 + width);
+        if (hex.length !== width || !/^[0-9a-fA-F]+$/.test(hex))
+          throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
+        const code = parseInt(hex, 16);
+        if (code === 0) throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
+        current += String.fromCharCode(code); i += width; continue;
+      }
+      if ('dDwWsSbB'.includes(escaped)) { flush(); continue; }
+      throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
+    }
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { flush(); inClass = true; continue; }
+    if (ch === '.' || ch === '^' || ch === '$') { flush(); continue; }
+    current += ch;
+  }
+  flush();
+  if (!best || /[\x00-\x1f]/.test(best))
+    throw new RuntimeError('EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED');
+  return best;
 }
 
 function visibleName(name: string, includeHidden: boolean): boolean { return includeHidden || !name.startsWith('.'); }
@@ -314,14 +353,17 @@ export class FileAdapter {
     if(provider==='everything'&&capability!=='files.name')throw new RuntimeError('PROVIDER_CAPABILITY_UNSUPPORTED');
     if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
     if(provider==='everything')this.authorizeEverythingSession(context);
+    const regex=safePattern(pattern,literal);
+    // Every native result must satisfy a name predicate before the IPC offset-0 cap.
+    const everythingNeedle=provider==='everything'?everythingNameNeedle(pattern,literal):undefined;
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
-      regex: safePattern(pattern, literal), includeHidden: args.include_hidden as boolean,
+      regex, includeHidden: args.include_hidden as boolean,
       deadline: Date.now() + (args.timeout_ms as number), resultLimit: Math.min(args.limit as number, MAX_SEARCH_MATCHES),
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
       provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
-      coverageTruncated:false,rootIsFile:root.stat?.isFile()===true,
+      coverageTruncated:false,rootIsFile:root.stat?.isFile()===true,everythingNeedle,
     };
     this.searches.set(job.id, job);
     void (provider==='everything'?this.runEverything(job):this.runSearch(job));
@@ -331,7 +373,8 @@ export class FileAdapter {
   private async runEverything(job:SearchJob):Promise<void> {
     try {
       await this.authorizeEverythingSearch(job);
-      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal);
+      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal,
+        {workspace:this.workspace,needle:job.everythingNeedle!});
       await this.authorizeEverythingSearch(job);
       job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
       const seen=new Set<string>();
