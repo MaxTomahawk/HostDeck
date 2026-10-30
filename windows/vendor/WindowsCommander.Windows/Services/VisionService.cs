@@ -18,9 +18,11 @@ public sealed class OcrLanguageUnavailableException : InvalidOperationException
 
 public sealed class VisionService : IVisionService
 {
-    // The on-device engine uses one profile-selected language; this is not a claim
+    // The on-device engine uses one selected language; this is not a claim
     // that all scripts appearing in a captured image are supported or recognized.
     public string? RecognizerLanguageTag => ocrEngine?.RecognizerLanguage?.LanguageTag;
+    public string[] AvailableRecognizerLanguageTags => WinRtOcr.OcrEngine.AvailableRecognizerLanguages
+        .Select(language => language.LanguageTag).ToArray();
     // Caps the longest side of a returned capture so payloads stay small enough
     // to be usable; an explicit max_dimension argument can override this.
     private const int DefaultMaxDimension = 1400;
@@ -34,9 +36,9 @@ public sealed class VisionService : IVisionService
     // samples per axis).
     private const int BlankSampleSteps = 12;
 
-    // The Windows on-device OCR engine, created lazily from the user's
-    // installed languages and reused across calls.
+    // Keep the profile engine separate from the last explicitly selected engine.
     private WinRtOcr.OcrEngine? ocrEngine;
+    private WinRtOcr.OcrEngine? profileOcrEngine;
 
     public ScreenCaptureResult CaptureScreen(string target, long? windowHandle, int? maxDimension)
     {
@@ -71,7 +73,10 @@ public sealed class VisionService : IVisionService
         return CaptureRegion(new RectBounds(x, y, width, height), monitorId, maxDimension);
     }
 
-    public async Task<OcrResult> OcrScreenAsync(string target, long? windowHandle, RectBounds? region)
+    public Task<OcrResult> OcrScreenAsync(string target, long? windowHandle, RectBounds? region)
+        => OcrScreenAsync(target, windowHandle, region, null);
+
+    public async Task<OcrResult> OcrScreenAsync(string target, long? windowHandle, RectBounds? region, string? language)
     {
         var resolvedRegion = region ?? ResolveCaptureRegion(target, windowHandle);
         if (resolvedRegion.Width <= 0 || resolvedRegion.Height <= 0)
@@ -79,7 +84,7 @@ public sealed class VisionService : IVisionService
             throw new ArgumentException("OCR region width and height must be greater than zero.");
         }
 
-        var engine = GetOcrEngine();
+        var engine = GetOcrEngine(language);
 
         // Capture the region's pixels. For a whole-window target (no explicit
         // sub-region), PrintWindow reads the window's own pixels even when it is
@@ -126,10 +131,23 @@ public sealed class VisionService : IVisionService
         }
     }
 
-    private WinRtOcr.OcrEngine GetOcrEngine()
+    private WinRtOcr.OcrEngine GetOcrEngine(string? language)
     {
-        return ocrEngine ??= WinRtOcr.OcrEngine.TryCreateFromUserProfileLanguages()
-            ?? throw new OcrLanguageUnavailableException();
+        if (language is null)
+        {
+            // Explicit requests must not change the user's profile default.
+            ocrEngine = profileOcrEngine ??= WinRtOcr.OcrEngine.TryCreateFromUserProfileLanguages()
+                ?? throw new OcrLanguageUnavailableException();
+        }
+        else
+        {
+            var installed = WinRtOcr.OcrEngine.AvailableRecognizerLanguages.FirstOrDefault(candidate =>
+                string.Equals(candidate.LanguageTag, language, StringComparison.OrdinalIgnoreCase));
+            if (installed is null) throw new OcrLanguageUnavailableException();
+            ocrEngine = WinRtOcr.OcrEngine.TryCreateFromLanguage(installed)
+                ?? throw new OcrLanguageUnavailableException();
+        }
+        return ocrEngine;
     }
 
     // Renders a GDI bitmap (optionally scaled) into the BGRA8 SoftwareBitmap
