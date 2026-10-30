@@ -1,6 +1,6 @@
 # Security acceptance scenarios
 
-Status: required test contract, not an executed test report. Reference: `SECURITY_MODEL.md`. Synthetic identifiers below represent separate principals, devices and sessions; they are not deployment configuration.
+Status: the scenario table is a required test contract, not an executed test report. Scoped candidate evidence below does not close the full table. Reference: `SECURITY_MODEL.md`. Synthetic identifiers below represent separate principals, devices and sessions; they are not deployment configuration.
 
 Every runtime result needs the tested SHA/version, a repeatable command/scenario, the expected effect or lack of effect, sanitized evidence and independent review. Denial checks must prove the backend/effect was not reached, not merely inspect an error message. Positive controls prove legitimate authorized work remains usable.
 
@@ -63,3 +63,11 @@ B005 HD-POL-DR01-0007 / HD-TC-DR01-0007 asks for separately identifiable **and**
 The isolated diagnostic source in [windows/privilege/probes/README.md](../windows/privilege/probes/README.md) inspects **read-only** process handles and token/package/AppContainer/owner/DACL properties, without executing any broker action, altering keys or printing raw private process identities. It does not verify code signing, kernel creation provenance, app injection resistance, effective token rights or owner mandate. Actual Codex MSIX trust level, package/token binding and image-signing evidence remain **UNKNOWN until independently observed**; an MSIX package identity does not by itself prove AppContainer isolation.
 
 **Gate remains OPEN:** true negative test for an unintended same-SID process *before* elevated effect; separate protected signer/trust-root admission, per-client authorization and legitimate goal/mandate enforcement; true installed package isolation and effects. Source requirements HD-REQ-0123–0129 remain separate purpose/action/effect/context/UTC/audit cases. Any selected protected-signer/account/AppContainer solution needs a concrete owner decision and separately authorized deployment. No test of a compromised Windows administrator can be claimed as an absolute guarantee.
+
+## B007 pending authorization correction 062 — scoped source evidence
+
+A real loopback HTTP MCP regression with signed fixture tokens, an on-disk grant store and an owned file reproduces a facade race: grant revocation or revision replacement during the asynchronous executor check still permits backend dispatch and returns the synthetic private bytes. Adapter reauthorization has the same gap. The original failed runs are retained privately.
+
+The candidate rechecks current grants and token lifetime after that asynchronous check, verifies the executor binding and rejects a changed grant revision before dispatch. The same check protects the explicit manager operation and its resource reads. Thirteen affected security/gateway/manager cases pass without skips, including no backend dispatch after revocation, no private read after adapter reauthorization is revoked, expiry/renewal, token expiry while waiting, and manager-resource refusal. Positive controls permit a newly requested operation after renewal without replaying the old request.
+
+The executor barrier is controlled test instrumentation; it is not Windows peer-authentication evidence. Tokens use a fixture signing key, not the deployed OAuth provider. This source result does not close the intended-client, protected signer, streaming-event, installed acceptance or full release gates. No production grant, service or installed module is changed by these tests.

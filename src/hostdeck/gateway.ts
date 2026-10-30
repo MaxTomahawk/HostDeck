@@ -46,12 +46,22 @@ export class HostDeckFacade {
     const request = this.requests.getStore();
     if (!request) throw new RuntimeError('DENIED');
     const context = await this.options.gate.authorize(request.principal, name, args);
-    await this.options.checkExecutor?.();
     this.bound(context);
     if (context.revision !== request.context.revision) throw new RuntimeError('DENIED');
+    await this.checkCurrentContext(request.principal, name, args, context);
   }
   private bound(context: ExecutionContext): void {
     if (context.deviceId !== this.options.deviceId || context.executorId !== this.options.executorId) throw new RuntimeError('DENIED');
+  }
+  private async checkCurrentContext(principal: Principal, name: string, args: Readonly<Record<string, unknown>>, admitted: ExecutionContext): Promise<void> {
+    this.bound(admitted);
+    await this.options.checkExecutor?.();
+    // The trust lookup can wait on native/filesystem work. Re-read grants and
+    // token lifetime after it; an earlier admission cannot survive revocation
+    // or inherit a replacement grant while that lookup was pending.
+    const current = await this.options.gate.authorize(principal, name, args);
+    this.bound(current);
+    if (current.revision !== admitted.revision) throw new RuntimeError('DENIED');
   }
   async call(principal: Principal, name: string, raw: unknown): Promise<unknown> {
     if (name.length > 128) throw new RuntimeError('UNAVAILABLE');
@@ -62,16 +72,14 @@ export class HostDeckFacade {
       // HTML means no discovery and no direct invocation.
       if (!this.options.appHtml) throw new RuntimeError('UNAVAILABLE');
       return this.options.gate.execute(principal, name, args, async context => {
-        this.bound(context);
-        await this.options.checkExecutor?.();
+        await this.checkCurrentContext(principal, name, args, context);
         return { device_id: context.deviceId, view: 'providers' as const };
       });
     }
     const adapter = this.adapters.get(name);
     if (!adapter) throw new RuntimeError('UNAVAILABLE');
     return this.options.gate.execute(principal, name, args, async context => {
-      this.bound(context);
-      await this.options.checkExecutor?.();
+      await this.checkCurrentContext(principal, name, args, context);
       return this.requests.run({principal, context}, () => adapter.handle(name, args, context));
     });
   }
