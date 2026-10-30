@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export const contractVersion = '1.0.0';
+export const contractVersion = '1.2.0';
 export type Domain = 'user' | 'desktop' | 'browser' | 'service' | 'management';
 export type Effect = 'read' | 'write' | 'execute' | 'control' | 'manage';
 export interface ToolContract {
@@ -33,7 +33,10 @@ const process = { process_id: id };
 const browser = { browser_id: id };
 // JSON Schema has no RegExp flags. Character classes preserve scheme casing
 // and avoid escaped slash delimiters in connector-side pattern validators.
-const browserUrl = z.string().url().regex(/^[Hh][Tt][Tt][Pp][Ss]?:[/][/]/).max(8192);
+// Full-string connector validators reject a prefix-only pattern even for valid HTTPS URLs.
+// Keep HTTP(S) restricted in both exported JSON Schema and runtime Zod parsing;
+// use no regex flags or escaped slash tokens (some clients mishandle those).
+const browserUrl = z.string().url().regex(/^[Hh][Tt][Tt][Pp][Ss]?:[/][/].+$/).max(8192);
 const point = { x: z.number().int().min(-1_000_000).max(1_000_000), y: z.number().int().min(-1_000_000).max(1_000_000) };
 const rectangle = z.object({ ...point, width: positive.max(32768), height: positive.max(32768) }).strict();
 const cell = z.union([z.string().max(32767), z.number().finite(), z.boolean(), z.null()]);
@@ -87,7 +90,21 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('move_file', 'Move an authorized file without implicit overwrite.', { source: path, destination: path, overwrite: z.boolean().default(false) }, ['files:write'], 'user', 'write'),
   tool('delete_path', 'Delete or recycle an explicitly authorized path.', { path, recursive: z.boolean().default(false), recycle: z.boolean().default(true) }, ['files:write'], 'user', 'write'),
   tool('apply_artifact', 'Apply an owned artifact to a local destination after integrity checks.', { artifact_id: id, path, overwrite: z.boolean().default(false) }, ['artifacts:read', 'files:write'], 'user', 'write'),
-  tool('search_files', 'Start an owned bounded file/content search.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000) }, ['files:read'], 'user', 'read'),
+  // HD-WP-05 is an independent, dormant provider: never changes search_files/Everything.
+  // New scopes must be explicitly present in both verified principal and local grants.
+  tool('fulltext_preview', 'Preview owner-selected local full-text roots and budgets without creating an index.', {}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_status', 'Read only current owner-ACL-filtered full-text coverage or unconfigured state.', {}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_confirm', 'Open only the protected owner-approved exact full-text configuration digest.', {digest:z.string().regex(/^[a-f0-9]{64}$/)}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_start', 'Start an owner-confirmed full-text scan with automatically scheduled bounded steps; no watcher or implicit restart.', {}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_step', 'Request one bounded step of an owned scan; may queue behind its automatic bounded driver; no file watcher.', {run_id:id,max_operations:positive.max(256).default(32)}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_query', 'Query only currently authorized indexed document text and snippets; stale until rescanned.', {query:z.string().min(2).max(256),limit:positive.max(100).default(10)}, ['fulltext:read'], 'user', 'read'),
+  tool('fulltext_pause', 'Pause an owned confirmed full-text scan.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_resume', 'Explicitly resume an owned paused/interrupted scan with automatically scheduled bounded steps; no auto-recovery on restart.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('fulltext_cancel', 'Cancel an owned full-text scan; already indexed text remains until rescanned.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
+  tool('search_files', 'Start an owned bounded file/content search. Explicit provider selection never silently falls back.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000), provider:z.enum(['direct','everything']).optional(), entry_type:z.enum(['files','directories','all']).default('files'), sort:z.enum(['path','name']).optional(), metadata:z.boolean().default(false) }, ['files:read'], 'user', 'read'),
+  tool('list_providers', 'Inspect search providers and current owner/device/function preferences. Does not activate software.', {}, ['files:read'], 'user', 'read'),
+  tool('set_provider_preference', 'Set or clear this owner/device/function search preference; null restores the stable direct default. Does not install or start software.', {capability:z.enum(['files.name','files.content']),provider:z.enum(['direct','everything']).nullable()}, ['files:write'], 'user', 'write'),
+  tool('set_provider_enabled', 'Enable or disable this owner/device/executor Everything integration. Null clears the override (default enabled). Preserves search preferences; no install, start, stop or vendor software effect. Built-in direct is immutable.', {provider:z.literal('everything'),enabled:z.boolean().nullable()}, ['files:write'], 'user', 'write'),
   tool('search_results', 'Read an owned search page: nonnegative zero-based result offset; limit counts results.', { search_id: id, offset: integer.min(0).default(0), limit: count.default(100) }, ['files:read'], 'user', 'read'),
   tool('stop_search', 'Stop an owned search.', { search_id: id }, ['files:read'], 'user', 'control'),
   tool('start_process', 'Start a user command with a bounded initial observation; durable work uses jobs.', { command: text.min(1), shell: z.enum(['powershell', 'cmd', 'wsl']).default('powershell'), working_directory: path.optional(), timeout_ms: timeout.default(10_000) }, ['process:execute'], 'user', 'execute'),
@@ -106,7 +123,7 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('send_keys', 'Send a key chord to the explicitly owned target window.', { ...window, key: z.string().min(1).max(64), modifiers: z.array(z.enum(['ctrl', 'alt', 'shift', 'win'])).max(4).default([]) }, ['desktop:control'], 'desktop', 'control'),
   tool('mouse_action', 'Apply an explicit pointer operation in the authorized window/session.', { ...window, action: mouseAction }, ['desktop:control'], 'desktop', 'control'),
   tool('capture_screen', 'Capture a window, monitor or region as an owned image artifact.', { ...desktop, target: z.discriminatedUnion('kind', [z.object({ kind: z.literal('window'), window_id: id }).strict(), z.object({ kind: z.literal('screen'), monitor_id: id }).strict(), z.object({ kind: z.literal('region'), bounds: rectangle }).strict()]), max_dimension: positive.max(8192).default(1400) }, ['desktop:observe'], 'desktop', 'read'),
-  tool('ocr_screen', 'Recognize local screen pixels; report unavailable languages and unmeasured confidence honestly.', { ...window, region: rectangle.optional() }, ['desktop:observe'], 'desktop', 'read'),
+  tool('ocr_screen', 'Recognize local screen pixels with an optional installed recognizer language; report available languages and unmeasured confidence honestly.', { ...window, region: rectangle.optional(), language: z.string().min(2).max(63).regex(/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/).optional() }, ['desktop:observe'], 'desktop', 'read'),
   tool('read_clipboard', 'Read authorized session clipboard data with private artifact delivery for binary formats.', { ...desktop, format: z.enum(['text', 'html', 'image', 'files']).default('text') }, ['desktop:observe'], 'desktop', 'read'),
   tool('write_clipboard', 'Write text to the authorized session clipboard.', { ...desktop, text }, ['desktop:control'], 'desktop', 'control'),
   tool('write_clipboard_artifact', 'Write an owned rich-format artifact to the authorized session clipboard.', { ...desktop, artifact_id: id, format: z.enum(['html', 'image', 'files']) }, ['desktop:control', 'artifacts:read'], 'desktop', 'control'),
@@ -122,6 +139,7 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('cancel_job', 'Cancel owned job work with truthful descendant/effect status.', { job_id: id }, ['jobs:control'], 'service', 'control'),
   tool('read_artifact', 'Read owned raw artifact bytes and integrity metadata: nonnegative zero-based byte offset and byte length.', { artifact_id: id, offset: integer.min(0).default(0), length: positive.max(1_048_576).default(65536) }, ['artifacts:read'], 'service', 'read'),
   tool('read_events', 'Read events with sequence strictly greater than nonnegative after (0 starts the retained stream); limit counts events.', { after: integer.min(0).default(0), limit: positive.max(1000).default(100) }, ['devices:read', 'jobs:read'], 'service', 'read'),
+  tool('open_manager', 'Open the full HostDeck extension manager on explicit request for one authorized device. Ordinary provider/device questions use data tools without UI. Read-only; no installation, configuration or lifecycle effect.', {}, ['devices:read'], 'service', 'read'),
   tool('device_status', 'Read health and eligible session metadata for the granted device.', {}, ['devices:read'], 'service', 'read'),
   tool('diagnostics', 'Create a sanitized owner-scoped diagnostic artifact.', { include_jobs: z.boolean().default(false) }, ['devices:read', 'jobs:read'], 'service', 'read'),
   tool('manage_host', 'Request only a registered bounded management action; protected approval remains separate.', { action_id: z.string().min(1).max(256), intent_id: id }, ['host:manage'], 'management', 'manage'),

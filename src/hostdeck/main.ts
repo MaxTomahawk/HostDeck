@@ -25,15 +25,32 @@ import {RuntimeError} from './runtime-error.js';
 import {loadOAuthMetadata} from './oauth-metadata.js';
 import {loadBackendTls} from './tls.js';
 import {PrivilegeAdapter} from './privilege.js';
+import {ProviderRegistry} from './providers.js';
+import {EverythingClient} from './everything.js';
+import {FullTextAdapter} from './fulltext/adapter.js';
+import {FullTextNativeBridge} from './fulltext-native-bridge.js';
+import {ReadRootSelectionStore,readRootsConfigSchema} from './read-root-selection-store.js';
+import {ReadRootAccess} from './read-root-access.js';
 
 const absolute=z.string().min(1).max(4096).refine(path.isAbsolute);
 const identifier=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const https=z.string().url().refine(value=>new URL(value).protocol==='https:'&&!new URL(value).username&&!new URL(value).password);
-const scopes=z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage'])).max(11);
+const scopes=z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage','fulltext:read','fulltext:index'])).max(13);
 const configuration=z.object({
   version:z.literal(1),device_id:identifier,executor_id:identifier,expected_user_sid:z.string().regex(/^S-1-5-[0-9-]+$/),
-  workspace:absolute,state_directory:absolute,desktop_worker:absolute,browser_executable:absolute.optional(),grants_file:absolute,
+  workspace:absolute,state_directory:absolute,desktop_worker:absolute,
+  // Installer-pinned local binary hash; NEVER derive this trust pin from an
+  // MCP request, a caller filename or the live executable being verified.
+  desktop_worker_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+  // Protected owner records are separate from the user-writable index. Only
+  // trusted local installation configuration may select this directory.
+  fulltext_owner_directory:absolute.optional(),
+  fulltext_index_directory:absolute.optional(),
+  // Optional protected-config roots; absent means exactly workspace-only.
+  read_roots:readRootsConfigSchema.optional(),
+  browser_executable:absolute.optional(),grants_file:absolute,
   installed:z.boolean().default(false),enrollment_file:absolute.optional(),
+  everything:z.object({executable:absolute,sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),version:z.string().regex(/^1\.[45]\.\d+\.\d+b?$/),instance:z.string().regex(/^[A-Za-z0-9_. -]{0,64}$/)}).strict().optional(),
   privilege_broker:z.object({enabled:z.boolean(),allow_remote:z.boolean().default(false),powershell_executable:absolute,
     submit_script:absolute,submit_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),receipt_script:absolute,receipt_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),
     verification_script:absolute,verification_sha256:z.string().regex(/^[a-fA-F0-9]{64}$/),signer_thumbprint:z.string().regex(/^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/),
@@ -42,7 +59,7 @@ const configuration=z.object({
   http:z.object({port:z.number().int().min(1024).max(65535),resource:https,issuer:https,jwks_uri:https,
     access_token_profile:z.enum(['rfc9068','keycloak']).default('rfc9068'),oauth_client_id:z.string().min(1).max(256).optional(),
     auth_mode:z.enum(['native-oauth','cloudflare-access']).default('native-oauth'),
-    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage'])).min(1).max(11)}).strict().optional(),
+    cloudflare_access:z.object({audience:z.string().min(1).max(256),capability_ceiling:z.array(z.enum(['files:read','files:write','process:execute','desktop:observe','desktop:control','browser:control','jobs:read','jobs:control','artifacts:read','devices:read','host:manage','fulltext:read','fulltext:index'])).min(1).max(13)}).strict().optional(),
     allowed_origins:z.array(z.string().url()).max(20).default([]),proxy_hosts:z.array(z.string().regex(/^[A-Za-z0-9.:[\]-]{1,255}$/)).max(10).default([])}).strict().optional(),
 }).strict();
 const grantSchema=z.array(z.object({issuer:z.string().min(1).max(2048),subject:z.string().min(1).max(256),clientId:z.string().min(1).max(256),
@@ -119,18 +136,71 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     })().finally(()=>{diagnosticTask=undefined;});
   };
   const environment:Record<string,string>={};
-  for(const key of ['SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA']) if(process.env[key])environment[key]=process.env[key]!;
+  for(const key of ['SystemRoot','SystemDrive','WINDIR','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA']) if(process.env[key])environment[key]=process.env[key]!;
   const systemRoot=process.env.SystemRoot;
   if(!systemRoot||!path.isAbsolute(systemRoot))throw new RuntimeError('EXECUTOR_UNAVAILABLE');
   const shell=path.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
   if(config.privilege_broker&&path.resolve(config.privilege_broker.powershell_executable).toLowerCase()!==path.resolve(shell).toLowerCase())throw new RuntimeError('PRIVILEGE_CONFIGURATION_INVALID');
   environment.PATH=[path.join(systemRoot,'System32'),systemRoot,path.dirname(shell),path.dirname(process.execPath)].join(path.delimiter);
+  // PowerShell 5.1 otherwise treats native executables as shell-open targets.
+  environment.PATHEXT='.COM;.EXE;.BAT;.CMD';
   const state=StateServices.create({root:path.join(config.state_directory,'state'),deviceId:config.device_id,workspace,shellExecutable:shell,
     environment,desktopWorkerExecutable:config.desktop_worker});
   let facade:HostDeckFacade;
   const reauthorize=(name:string,args:Readonly<Record<string,unknown>>)=>facade.reauthorize(name,args);
   const committer=await SafeCommitter.create({workspace,reauthorize});
-  const files=await FileAdapter.create({workspace,reauthorize});
+  const providers=await ProviderRegistry.open(path.join(config.state_directory,'provider-preferences.sqlite'));
+  const everything=config.everything?new EverythingClient({worker:config.desktop_worker,...config.everything,identity}):undefined;
+  // Always dormant unless an independently approved protected local selection
+  // exists AND both fresh principal/grant scopes permit the requested call.
+  // Merely constructing the bridge reads nothing, starts no helper and
+  // activates no index. Without an installer pin or effective protected ACL
+  // proof the fulltext provider remains dormant and fail-closed.
+  const fulltextNative=config.installed&&config.desktop_worker_sha256
+    ? new FullTextNativeBridge({
+        workerExecutable:config.desktop_worker,
+        workerSha256:config.desktop_worker_sha256,
+        expectedExecutor:{
+          sid:identity.sid,logonId:identity.logon_id,sessionId:identity.session_id,
+        },
+      })
+    : undefined;
+  // One existing protected config and existing PolicyGate/grants. No new
+  // selection files, approval register, service or caller-controlled roots.
+  // Native proof is required for external reads and Windows attributes.
+  const readRootStore=config.read_roots
+    ? new ReadRootSelectionStore(configPath,workspace,{
+        deviceId:config.device_id,executorId:config.executor_id,
+        sid:identity.sid,sessionId:identity.session_id,
+      },fulltextNative)
+    : undefined;
+  const readRoots=readRootStore
+    ? new ReadRootAccess(workspace,[
+        configPath,config.state_directory,config.grants_file,config.desktop_worker,
+        ...(config.enrollment_file?[config.enrollment_file]:[]),
+        ...(config.fulltext_owner_directory?[config.fulltext_owner_directory]:[]),
+        ...(config.fulltext_index_directory?[config.fulltext_index_directory]:[]),
+        ...(config.browser_executable?[config.browser_executable]:[]),
+        ...(config.remote_tls?[config.remote_tls.pfx_file]:[]),
+        ...(config.everything?[config.everything.executable]:[]),
+        ...(config.privilege_broker?[
+          config.privilege_broker.powershell_executable,
+          config.privilege_broker.submit_script,
+          config.privilege_broker.receipt_script,
+          config.privilege_broker.verification_script,
+        ]:[]),
+      ],readRootStore,fulltextNative)
+    : undefined;
+  const files=await FileAdapter.create({workspace,reauthorize,providers,everything,
+    ...(readRoots?{readRoots}:{})});
+  const fulltext=new FullTextAdapter({
+    stateDirectory:config.fulltext_index_directory??config.state_directory,workspace,reauthorize,
+    protectedOwnerDirectory:config.fulltext_owner_directory,
+    nativeAttributes:fulltextNative,
+    verifyProtectedOwnerAcl:fulltextNative
+      ? paths=>fulltextNative.verifyProtectedOwnerAcl(paths)
+      : undefined,
+  });
   const documents=await DocumentAdapter.create({workspace,browserExecutable:config.browser_executable});
   const desktop=await DesktopAdapter.create({executable:config.desktop_worker,expectedSid:config.expected_user_sid,identity,
     reauthorize,storeArtifact:(context,bytes,name,mime)=>state.storeArtifact(context,Buffer.from(bytes),name,mime),
@@ -147,10 +217,11 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
       let runtime=runtimes.get(context.ownerId);
       if(!runtime){if(runtimes.size>=8)throw new RuntimeError('LIMIT_EXCEEDED');
         runtime=UserRuntime.create({deviceId:config.device_id,workspace,environment,shells:{powershell:shell,cmd:path.join(systemRoot,'System32','cmd.exe')},
+          ...(readRoots?{readRoots}:{}),
           authorize:async(operation,arguments_)=>{await reauthorize(operation,arguments_);return true;}});
         runtimes.set(context.ownerId,runtime);
       }
-      return(await runtime).invoke(name,args);
+      return(await runtime).invoke(name,args,context);
     }};
   const documentAdapter:Adapter={implementedTools:documents.implementedTools,async handle(name,args,context){
     const expected=name==='hostdeck_edit_document'?await committer.snapshot(String(args.path)):undefined;
@@ -188,7 +259,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
     }
   }catch{throw new RuntimeError('APP_ASSETS_MISSING');}
   facade=new HostDeckFacade({deviceId:config.device_id,executorId:config.executor_id,gate,appHtml,checkExecutor,diagnostic,
-    adapters:[runtimeAdapter,processAdapter,files,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
+    adapters:[runtimeAdapter,processAdapter,files,fulltext,documentAdapter,stateAdapter,desktop,...(browser?[browser]:[]),...(privilege?[privilege]:[])]});
   let stopTransport:()=>Promise<void>;
   if(transport==='stdio'){
     // Re-mint only from the still-running native identity bootstrap; every tool rechecks current grants.
@@ -224,6 +295,7 @@ export async function startHostDeck(configPath:string,transport:'stdio'|'http') 
   const close=async()=>{if(closed)return;closed=true;if(stopTimer)clearInterval(stopTimer);await stopTransport();
     await diagnosticTask;
     await Promise.allSettled([processes.dispose(),desktop.dispose(),browser?.dispose(),privilege?.dispose(),...[...runtimes.values()].map(async runtime=>(await runtime).dispose())]);
+    try{await fulltext.close();}finally{await fulltextNative?.close();}
     await state.close();audit.close();
     if(transport==='http')try{if((await jsonFile(controlPath) as {generation?:string}).generation===generation){await fs.rm(controlPath,{force:true});await fs.rm(stopPath,{force:true});}}catch{/* A replacement agent owns its own generation. */}
   };

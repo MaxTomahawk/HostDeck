@@ -15,7 +15,7 @@
     {
       "repository": "https://github.com/exalsch/windows-commander-mcp",
       "commit": "a5b33fed0994dc65782bf8cfb8e1168253098fcf",
-      "role": "primary desktop-session source candidate; not yet imported",
+      "role": "copied and modified desktop-session dependency; DesktopWorker references vendored WindowsCommander.Windows project",
       "license": "MIT",
       "license_path": "LICENSE",
       "license_sha256": "72399cdf5576d8a9837b00c23bd7ae7e9df6d6831c6f5d869b0b0e4cd66dcbbe"

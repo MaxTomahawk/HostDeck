@@ -40,8 +40,66 @@ function Verify-Release([string] $source) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or
             (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne [string]$item.sha256) { throw 'Release hash mismatch.' }
     }
-    foreach ($required in @('service/HostDeck.Lifecycle.exe', 'desktop/HostDeck.DesktopWorker.exe', 'tray/HostDeck.Tray.exe')) {
+    foreach ($required in @('service/HostDeck.Lifecycle.exe', 'desktop/HostDeck.DesktopWorker.exe', 'tray/HostDeck.Tray.exe',
+            'agent/node.exe', 'agent/dist/hostdeck/main.js', 'agent/ui/newtree/index.html', 'licenses/Node.LICENSE')) {
         if (-not $paths.Contains($required)) { throw 'Incomplete previous release.' }
+    }
+}
+
+function Get-WorkerReleaseHash([string] $release) {
+    $binary = Join-Path $release 'desktop/HostDeck.DesktopWorker.exe'
+    $manifest = Get-Content -LiteralPath (Join-Path $release 'manifest.json') -Raw | ConvertFrom-Json
+    $entries = @($manifest.files | Where-Object { $_.path -ceq 'desktop/HostDeck.DesktopWorker.exe' })
+    if ($entries.Count -ne 1) { throw 'Desktop worker missing from verified release manifest.' }
+    $actual = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($actual -ne [string]$entries[0].sha256) { throw 'Desktop worker release hash mismatch.' }
+    return $actual.ToLowerInvariant()
+}
+
+function Get-WorkerConfigState([string] $configPath, [string] $releaseRoot) {
+    $bytes = [IO.File]::ReadAllBytes($configPath)
+    $value = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    $json = if ($value.Length -gt 0 -and $value[0] -eq [char]0xfeff) { $value.Substring(1) } else { $value }
+    $parsed = $json | ConvertFrom-Json
+    $expectedPath = Join-Path $releaseRoot 'current/desktop/HostDeck.DesktopWorker.exe'
+    if (-not [string]::Equals([IO.Path]::GetFullPath([string]$parsed.desktop_worker),
+            [IO.Path]::GetFullPath($expectedPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Configured desktop worker path is not bound to current release.'
+    }
+    $matches = [regex]::Matches($value, '"desktop_worker_sha256"\s*:\s*"([a-fA-F0-9]{64})"')
+    if ($matches.Count -ne 1 -or [string]$parsed.desktop_worker_sha256 -ne $matches[0].Groups[1].Value) {
+        throw 'Configured desktop worker pin missing or ambiguous.'
+    }
+    return @{ Bytes = $bytes; Text = $value; Match = $matches[0]; Hash = $matches[0].Groups[1].Value.ToLowerInvariant() }
+}
+
+function Set-WorkerConfigHash([string] $configPath, [hashtable] $original, [string] $newHash) {
+    if ($original.Hash -eq $newHash) { return $null }
+    $old = $original.Match
+    $replacement = $original.Text.Substring(0, $old.Groups[1].Index) + $newHash +
+        $original.Text.Substring($old.Groups[1].Index + $old.Groups[1].Length)
+    $temporary = $configPath + '.stage-' + [guid]::NewGuid().ToString('N')
+    $backup = $configPath + '.worker-pin-backup-' + [guid]::NewGuid().ToString('N')
+    try {
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
+            throw 'Protected facade config changed during release transaction.'
+        }
+        [IO.File]::WriteAllBytes($temporary, [Text.Encoding]::UTF8.GetBytes($replacement))
+        [IO.File]::Replace($temporary, $configPath, $backup)
+        return $backup
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Restore-WorkerConfig([string] $configPath, [string] $backup, [hashtable] $original) {
+    if ($backup) {
+        $discard = $configPath + '.failed-pin-' + [guid]::NewGuid().ToString('N')
+        [IO.File]::Replace($backup, $configPath, $discard)
+        Remove-Item -LiteralPath $discard -Force
+    }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
+        throw 'Original protected facade bytes not restored; refusing service restart.'
     }
 }
 
@@ -54,6 +112,12 @@ foreach ($process in Get-CimInstance -ClassName Win32_Process -Filter "Name='Hos
 }
 Verify-Release $current
 Verify-Release $previous
+$facadeConfig = Join-Path $root 'config/facade.json'
+Assert-NoReparse $facadeConfig
+$originalWorker = Get-WorkerConfigState $facadeConfig $root
+if ($originalWorker.Hash -ne (Get-WorkerReleaseHash $current)) { throw 'Current worker pin does not match installed release.' }
+$rollbackWorkerHash = Get-WorkerReleaseHash $previous
+$configBackup = $null
 $failed = Join-Path $root ('rolled-back-' + [guid]::NewGuid().ToString('N'))
 $movedCurrent = $false
 $movedPrevious = $false
@@ -66,11 +130,15 @@ try {
     $movedCurrent = $true
     Move-Item -LiteralPath $previous -Destination $current
     $movedPrevious = $true
+    $configBackup = Set-WorkerConfigHash $facadeConfig $originalWorker $rollbackWorkerHash
     Start-Service -Name HostDeck -ErrorAction Stop
     (Get-Service -Name HostDeck).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
 } catch {
     if ($movedPrevious -and (Test-Path -LiteralPath $current)) { Move-Item -LiteralPath $current -Destination $previous }
     if ($movedCurrent -and (Test-Path -LiteralPath $failed)) { Move-Item -LiteralPath $failed -Destination $current }
+    Restore-WorkerConfig $facadeConfig $configBackup $originalWorker
     if ($stopped) { Start-Service -Name HostDeck -ErrorAction SilentlyContinue }
     throw
 }
+
+if ($configBackup) { Remove-Item -LiteralPath $configBackup -Force }

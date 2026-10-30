@@ -3,7 +3,13 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Bridge.Common.ps1')
 Assert-System
 $trust=Read-Trust
-foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $script:BridgeRoot 'inbox') -Filter '*.verify.json' -Recurse -File | Sort-Object CreationTimeUtc | Select-Object -First 10)) {
+# Retained, already reserved reports and invalid filenames must not consume
+# every slot on every tick. The CreateNew reservation below remains the fence.
+$pending=@(Get-ChildItem -LiteralPath (Join-Path $script:BridgeRoot 'inbox') -Filter '*.verify.json' -Recurse -File | Where-Object {
+ $candidateId=$_.Name.Substring(0,$_.Name.Length-'.verify.json'.Length)
+ (Test-IsUuid $candidateId) -and -not (Test-Path -LiteralPath (Join-Path $script:BridgeRoot ('state\'+$candidateId+'.verify.reserved')))
+} | Sort-Object CreationTimeUtc | Select-Object -First 10)
+foreach($file in $pending) {
  $verificationId=$file.Name.Substring(0,$file.Name.Length-'.verify.json'.Length)
  if(-not(Test-IsUuid $verificationId)){continue}
  $reserved=Join-Path $script:BridgeRoot ('state\'+$verificationId+'.verify.reserved')

@@ -4,23 +4,35 @@ import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseToolArguments } from './contracts.js';
+import {RuntimeError} from './runtime-error.js';
+import type {ProviderRegistry,SearchProvider,SearchCapability} from './providers.js';
+import {everythingNameNeedle, type EverythingClient} from './everything.js';
+import type {ReadRootAccess,ReadRootScope} from './read-root-access.js';
+import type {ReadOnlyOperation} from './read-root-boundary.js';
 
 const execFile = promisify(execFileCallback);
-const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes'] as const;
+const TOOL_NAMES = ['hostdeck_list_directory', 'hostdeck_create_directory', 'hostdeck_move_file', 'hostdeck_delete_path', 'hostdeck_search_files', 'hostdeck_search_results', 'hostdeck_stop_search', 'hostdeck_list_processes','hostdeck_list_providers','hostdeck_set_provider_preference','hostdeck_set_provider_enabled'] as const;
 const MAX_TRAVERSAL_ENTRIES = 100_000;
 const MAX_SEARCH_MATCHES = 10_000;
 const MAX_SEARCH_RESULT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTENT_FILE_BYTES = 1024 * 1024;
 const SEARCH_RETENTION_MS = 10 * 60_000;
 
-export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; }
+export interface FileOwnerContext { ownerId: string; deviceId: string; executorId: string; revision?:string;sessionId?:number;sessionIds?:readonly number[]; }
 export type Reauthorize = (name: string, args: Record<string, unknown>) => Promise<void>;
-interface SearchMatch { path: string; kind: 'file' | 'content'; line?: number; text?: string; }
+interface SearchMatch { path: string; kind: 'file' | 'directory' | 'content'; line?: number; text?: string; size?:number;modified?:string;metadata_source?:'filesystem_readback';
+  /** Internal only; never serialize this with public result-page items. */
+  privateIdentity?:{dev:string;ino:string;mtimeNs:string;size:string};
+}
 interface SearchJob {
   id: string; owner: FileOwnerContext; root: string; pattern: string; mode: 'files' | 'content'; regex?: RegExp;
   includeHidden: boolean; deadline: number; resultLimit: number; matches: SearchMatch[]; bytes: number;
   visited: number; truncated: boolean; done: boolean; stopped: boolean; error?: string; startedAt: number; touchedAt: number;
+  provider:SearchProvider; entryType:'files'|'directories'|'all'; sort?:'path'|'name'; metadata:boolean; abort:AbortController;
+  provenance?:{version:string;instance:string;session_id:number;runtime_id:string};
+  coverageTruncated:boolean;rootIsFile:boolean;readScope?:ReadRootScope;everythingNeedle?:string;
 }
+interface FileOptions {workspace:string;reauthorize?:Reauthorize;providers?:ProviderRegistry;everything?:Pick<EverythingClient,'status'|'query'|'sessionId'>;readRoots?:ReadRootAccess;}
 
 function inside(root: string, value: string): boolean {
   const relative = path.relative(root, value);
@@ -34,11 +46,11 @@ function ownerMatches(a: FileOwnerContext, b: FileOwnerContext): boolean {
 }
 
 function safePattern(pattern: string, literal: boolean): RegExp {
-  if (pattern.length > 256) throw new Error('SEARCH_PATTERN_LIMIT');
+  if (pattern.length > 256) throw new RuntimeError('SEARCH_PATTERN_LIMIT');
   if (literal) return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   // Avoid quantified groups, alternation and nested/overlapping quantifiers that can stall the service.
-  if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new Error('SEARCH_REGEX_FEATURE_DENIED');
-  try { return new RegExp(pattern, 'i'); } catch { throw new Error('SEARCH_PATTERN_INVALID'); }
+  if (/[?*+{}()|]/.test(pattern) || /\\[1-9]/.test(pattern)) throw new RuntimeError('SEARCH_REGEX_FEATURE_DENIED');
+  try { return new RegExp(pattern, 'i'); } catch { throw new RuntimeError('SEARCH_PATTERN_INVALID'); }
 }
 
 function visibleName(name: string, includeHidden: boolean): boolean { return includeHidden || !name.startsWith('.'); }
@@ -47,12 +59,12 @@ function psQuote(value: string): string { return `'${value.replace(/'/g, "''")}'
 export class FileAdapter {
   readonly implementedTools = new Set<string>(TOOL_NAMES);
   private readonly searches = new Map<string, SearchJob>();
-  private constructor(private readonly workspace: string, private readonly reauthorize?: Reauthorize) {}
+  private constructor(private readonly workspace: string, private readonly reauthorize?: Reauthorize,private readonly options?:FileOptions) {}
 
-  static async create(options: { workspace: string; reauthorize?: Reauthorize }): Promise<FileAdapter> {
+  static async create(options: FileOptions): Promise<FileAdapter> {
     if (!path.isAbsolute(options.workspace)) throw new Error('FILES_WORKSPACE_MUST_BE_ABSOLUTE');
     await fs.mkdir(options.workspace, { recursive: true });
-    return new FileAdapter(await fs.realpath(options.workspace), options.reauthorize);
+    return new FileAdapter(await fs.realpath(options.workspace), options.reauthorize,options);
   }
 
   private async guardPath(input: unknown, allowMissing = false): Promise<{ absolute: string; stat?: import('node:fs').Stats }> {
@@ -82,6 +94,34 @@ export class FileAdapter {
     return { absolute: canonical, stat: lastStat };
   }
 
+  /** Read authority is additive and external-only; all write guards stay unmodified. */
+  private async guardReadPath(input: unknown, context: FileOwnerContext,
+    operation: ReadOnlyOperation): Promise<{absolute:string;stat:import('node:fs').Stats;
+      readScope?:ReadRootScope}> {
+    if(typeof input!=='string'||!input.trim())throw new RuntimeError('FILES_PATH_INVALID');
+    const target=path.resolve(this.workspace,input);
+    if(inside(this.workspace,target)){
+      const baseline=await this.guardPath(input);
+      if(!baseline.stat)throw new RuntimeError('FILES_PATH_INVALID');
+      return {absolute:baseline.absolute,stat:baseline.stat};
+    }
+    const access=this.options?.readRoots;
+    if(!access)throw new RuntimeError('FILES_PATH_OUTSIDE_WORKSPACE');
+    const candidate=await access.resolve(input,context,operation);
+    if(!candidate.external||!candidate.rootIdentity||!candidate.revision||!candidate.digest)
+      throw new RuntimeError('READ_ROOT_DENIED');
+    const scope=candidate as ReadRootScope;
+    const observed=await access.metadata(scope,context,operation);
+    const stat=await fs.lstat(scope.absolute);
+    if((observed.isFile!==stat.isFile())||(observed.isDirectory!==stat.isDirectory()))
+      throw new RuntimeError('READ_ROOT_CHANGED');
+    return {absolute:scope.absolute,stat,readScope:scope};
+  }
+
+  private displayRead(value:string,scope?:ReadRootScope):string{
+    return scope?.external?value:this.relative(value);
+  }
+
   private relative(value: string): string {
     const rel = path.relative(this.workspace, value);
     return rel || '.';
@@ -95,7 +135,7 @@ export class FileAdapter {
     const args = parseToolArguments(name, rawArgs);
     if (args.device_id !== context.deviceId) throw new Error('FILES_DEVICE_CONTEXT_MISMATCH');
     switch (name) {
-      case 'hostdeck_list_directory': return this.listDirectory(args);
+      case 'hostdeck_list_directory': return this.listDirectory(args,context);
       case 'hostdeck_create_directory': return this.createDirectory(name, args);
       case 'hostdeck_move_file': return this.moveFile(name, args);
       case 'hostdeck_delete_path': return this.deletePath(name, args);
@@ -103,39 +143,103 @@ export class FileAdapter {
       case 'hostdeck_search_results': return this.searchResults(args, context);
       case 'hostdeck_stop_search': return this.stopSearch(args, context);
       case 'hostdeck_list_processes': return this.listProcesses(args);
+      case 'hostdeck_list_providers': {
+        await this.authorize(name,args);
+        const result=await this.listProviders(context);
+        await this.authorize(name,args);
+        return result;
+      }
+      case 'hostdeck_set_provider_enabled': {
+        if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
+        if(!this.reauthorize)throw new RuntimeError('DENIED');
+        await this.authorize(name,args);
+        await this.options.providers.setEnabled(context,args.provider as SearchProvider,args.enabled as boolean|null);
+        if(args.enabled===false)for(const job of this.searches.values())if(job.provider==='everything'&&ownerMatches(job.owner,context))this.disableSearch(job);
+        return {provider:args.provider,enabledOverride:args.enabled,desiredEnabled:args.enabled??true,scope:'owner_device_executor',updated:true};
+      }
+      case 'hostdeck_set_provider_preference': {
+        if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
+        if(!this.reauthorize)throw new RuntimeError('DENIED');
+        await this.authorize(name,args);
+        await this.options.providers.set(context,args.capability as SearchCapability,args.provider as SearchProvider|null);
+        return {capability:args.capability,preference:args.provider,scope:'owner_device_function',updated:true};
+      }
       default: throw new Error('UNKNOWN_FILE_OPERATION');
     }
   }
 
-  private async listDirectory(args: Record<string, unknown>): Promise<unknown> {
-    const base = await this.guardPath(args.path);
-    if (!base.stat?.isDirectory()) throw new Error('FILES_NOT_A_DIRECTORY');
-    const depth = args.depth as number;
-    const limit = args.limit as number;
-    const deadline = Date.now() + 3000;
-    const results: Array<Record<string, unknown>> = [];
-    const queue: Array<{ dir: string; level: number }> = [{ dir: base.absolute, level: 0 }];
-    let visited = 0; let skippedLinks = 0; let outputBytes = 0; let truncated = false;
-    while (queue.length) {
-      if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-      const current = queue.shift()!;
-      const directory = await fs.opendir(current.dir);
-      for await (const entry of directory) {
-        if (Date.now() >= deadline || visited >= MAX_TRAVERSAL_ENTRIES || results.length >= limit) { truncated = true; break; }
-        if (!visibleName(entry.name, false)) continue;
-        visited++;
-        const full = path.join(current.dir, entry.name);
-        const stat = await fs.lstat(full);
-        if (isReparseOrLink(stat)) { skippedLinks++; continue; }
-        const isDirectory = stat.isDirectory();
-        const result = { path: this.relative(full), name: entry.name, type: isDirectory ? 'directory' : stat.isFile() ? 'file' : 'other', size: stat.isFile() ? stat.size : undefined, modified: stat.mtime.toISOString(), depth: current.level + 1 };
-        const bytes = Buffer.byteLength(JSON.stringify(result));
-        if (outputBytes + bytes > MAX_SEARCH_RESULT_BYTES) { truncated = true; break; }
-        results.push(result); outputBytes += bytes;
-        if (isDirectory && current.level + 1 < depth) queue.push({ dir: full, level: current.level + 1 });
+  private async listDirectory(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_list_directory',args);
+    const base=await this.guardReadPath(args.path,context,'list_directory');
+    if(!base.stat.isDirectory())throw new RuntimeError('FILES_NOT_A_DIRECTORY');
+    const depth=args.depth as number,limit=args.limit as number;
+    const deadline=Date.now()+3000;
+    const results:Array<Record<string,unknown>>=[];
+    const queue:Array<{dir:string;level:number}>=[{dir:base.absolute,level:0}];
+    let visited=0,skippedLinks=0,outputBytes=0,truncated=false;
+    while(queue.length){
+      if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+        truncated=true;break;
+      }
+      const current=queue.shift()!;
+      const guarded=await this.guardReadPath(current.dir,context,'list_directory');
+      if(!guarded.stat.isDirectory())continue;
+      if(base.readScope&&(!guarded.readScope||
+          guarded.readScope.digest!==base.readScope.digest||
+          guarded.readScope.revision!==base.readScope.revision))
+        throw new RuntimeError('READ_ROOT_REVOKED');
+      const scan=async(directory:AsyncIterable<{name:string}>):Promise<void>=>{
+        for await(const entry of directory){
+          if(Date.now()>=deadline||visited>=MAX_TRAVERSAL_ENTRIES||results.length>=limit){
+            truncated=true;break;
+          }
+          if(!visibleName(entry.name,false))continue;
+          const full=path.join(current.dir,entry.name);
+          let item:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+          try{item=await this.guardReadPath(full,context,'list_directory');}
+          catch{
+            // Rejected external entries must not leak their existence even via
+            // skipped/visited counters. Retain old workspace counter semantics.
+            if(!base.readScope)skippedLinks++;
+            continue;
+          }
+          if(isReparseOrLink(item.stat)){skippedLinks++;continue;}
+          if(base.readScope&&(!item.readScope||
+              item.readScope.digest!==base.readScope.digest||
+              item.readScope.revision!==base.readScope.revision))continue;
+          visited++;
+          const isDirectory=item.stat.isDirectory();
+          const result={path:this.displayRead(item.absolute,item.readScope),
+            name:entry.name,type:isDirectory?'directory':item.stat.isFile()?'file':'other',
+            size:item.stat.isFile()?item.stat.size:undefined,
+            modified:item.stat.mtime.toISOString(),depth:current.level+1,
+            ...(item.readScope?{root_scope:item.readScope.root}: {})};
+          const bytes=Buffer.byteLength(JSON.stringify(result));
+          if(outputBytes+bytes>MAX_SEARCH_RESULT_BYTES){truncated=true;break;}
+          results.push(result);outputBytes+=bytes;
+          if(isDirectory&&current.level+1<depth)
+            queue.push({dir:item.absolute,level:current.level+1});
+        }
+      };
+      if(guarded.readScope){
+        await this.options!.readRoots!.withDirectory(guarded.readScope,context,
+          'list_directory',scan);
+      }else{
+        const directory=await fs.opendir(guarded.absolute);
+        try{await scan(directory);}finally{await directory.close().catch(()=>{});}
       }
     }
-    return { directory: this.relative(base.absolute), entries: results, truncated, visited, skipped_reparse_points: skippedLinks };
+    // A selection revoked during enumeration must withhold EVERY result.
+    if(base.readScope){
+      await this.authorize('hostdeck_list_directory',args);
+      await this.options!.readRoots!.assertScope(base.readScope,context,'list_directory');
+    }
+    return {directory:this.displayRead(base.absolute,base.readScope),
+      entries:results,truncated,visited,skipped_reparse_points:skippedLinks,
+      ...(base.readScope?{root_scope:base.readScope.root}: {})};
   }
 
   private async createDirectory(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -239,100 +343,336 @@ export class FileAdapter {
     for (const [id, job] of this.searches) if (job.done) this.searches.delete(id);
   }
 
+  private async listProviders(context:FileOwnerContext):Promise<unknown> {
+    const enabledOverride=await this.options?.providers?.enabledOverride(context,'everything')??null;
+    const desiredEnabled=enabledOverride??true;
+    let everything:unknown={installed:null,running:null,compatible:null,healthy:null,reason:'not_configured',qualified:'not_independently_accepted'};
+    if(this.options?.everything)try{this.authorizeEverythingSession(context);everything=await this.options.everything.status();}
+    catch(e){everything={installed:null,running:null,compatible:null,healthy:null,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
+    return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,configured:true,enabled:true,desiredEnabled:true,enabledOverride:null,running:'on_demand',compatible:true,healthy:true},
+      {id:'everything',capabilities:['files.name'],...(everything as object),configured:!!this.options?.everything,enabled:desiredEnabled,desiredEnabled,enabledOverride}],functions:await Promise.all((['files.name','files.content'] as const).map(async capability=>({
+        capability,preference:await this.options?.providers?.preference(context,capability)??null,default:'direct',selected:await this.options?.providers?.select(context,capability)??'direct'})))};
+  }
+
+  private authorizeEverythingSession(context:FileOwnerContext):void {
+    if(!this.options?.everything||!context.sessionIds?.includes(this.options.everything.sessionId)
+      ||context.sessionId!==undefined&&context.sessionId!==this.options.everything.sessionId)throw new RuntimeError('EVERYTHING_WRONG_SESSION');
+  }
+
+  private async assertProviderEnabled(context:FileOwnerContext,provider:SearchProvider):Promise<void> {
+    if(await this.options?.providers?.enabled(context,provider)===false)throw new RuntimeError('PROVIDER_DISABLED');
+  }
+
+  private disableSearch(job:SearchJob):void {
+    job.error='PROVIDER_DISABLED';job.matches=[];job.bytes=0;job.abort.abort();
+  }
+
+  private async authorizeEverythingSearch(job:SearchJob):Promise<void> {
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+    await this.authorize('hostdeck_search_files',{device_id:job.owner.deviceId,session_id:this.options?.everything?.sessionId,path:job.root,pattern:job.pattern,mode:job.mode,provider:'everything'});
+    try{await this.assertProviderEnabled(job.owner,'everything');}
+    catch(error){if(error instanceof RuntimeError&&error.code==='PROVIDER_DISABLED')this.disableSearch(job);throw error;}
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+  }
+
   private async startSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     this.pruneSearches();
     if (this.searches.size >= 100) throw new Error('SEARCH_CAPACITY_REACHED');
-    const root = await this.guardPath(args.path);
+    const mode=args.mode==='content'?'content_search':'name_search';
+    // Current PolicyGate/grant revision must be checked before any external
+    // root metadata or search handle can be disclosed.
+    if(path.isAbsolute(args.path as string) &&
+        !inside(this.workspace,path.resolve(args.path as string)))
+      await this.authorize('hostdeck_search_files',args);
+    const root=await this.guardReadPath(args.path,context,mode);
     const pattern = args.pattern as string;
     const literal = args.literal as boolean;
+    const capability=args.mode==='content'?'files.content':'files.name';
+    const provider=await this.options?.providers?.select(context,capability,args.provider as SearchProvider|undefined)??args.provider as SearchProvider|undefined??'direct';
+    if(provider==='everything') {
+      await this.authorize('hostdeck_search_files',args);
+      await this.assertProviderEnabled(context,provider);
+    }
+    if(provider==='everything'&&capability!=='files.name')throw new RuntimeError('PROVIDER_CAPABILITY_UNSUPPORTED');
+    if(provider==='everything'&&!this.options?.everything)throw new RuntimeError('EVERYTHING_NOT_CONFIGURED');
+    if(provider==='everything')this.authorizeEverythingSession(context);
+    const regex=safePattern(pattern,literal);
+    // The native IPC2 window is filtered before MaxItems, then Node rechecks.
+    const everythingNeedle=provider==='everything'?everythingNameNeedle(regex):undefined;
     const job: SearchJob = {
       id: randomUUID(), owner: { ...context }, root: root.absolute, pattern, mode: args.mode as 'files' | 'content',
-      regex: safePattern(pattern, literal), includeHidden: args.include_hidden as boolean,
+      regex, includeHidden: args.include_hidden as boolean,
       deadline: Date.now() + (args.timeout_ms as number), resultLimit: Math.min(args.limit as number, MAX_SEARCH_MATCHES),
       matches: [], bytes: 0, visited: 0, truncated: false, done: false, stopped: false,
       startedAt: Date.now(), touchedAt: Date.now(),
+      provider,entryType:args.entry_type as SearchJob['entryType'],sort:args.sort as SearchJob['sort'],metadata:args.metadata===true,abort:new AbortController(),
+      coverageTruncated:false,rootIsFile:root.stat.isFile()===true,
+      ...(root.readScope?{readScope:root.readScope}:{}),everythingNeedle,
     };
     this.searches.set(job.id, job);
-    void this.runSearch(job);
-    return { search_id: job.id, state: 'running', result_limit: job.resultLimit };
+    void (provider==='everything'?this.runEverything(job):this.runSearch(job));
+    return { search_id: job.id, state: 'running', result_limit: job.resultLimit,provider,retention_ms:SEARCH_RETENTION_MS };
   }
 
-  private async runSearch(job: SearchJob): Promise<void> {
-    const stat = await fs.lstat(job.root).catch(() => undefined);
-    if (!stat) { job.error = 'SEARCH_ROOT_UNAVAILABLE'; job.done = true; return; }
-    const queue: Array<{ target: string; level: number }> = [{ target: job.root, level: 0 }];
-    const maxDepth = 20; const maxFile = MAX_CONTENT_FILE_BYTES;
+  private async runEverything(job:SearchJob):Promise<void> {
     try {
-      while (queue.length) {
-        if (job.stopped || Date.now() > job.deadline || job.visited >= MAX_TRAVERSAL_ENTRIES || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES) {
-          job.truncated = !job.stopped; break;
+      await this.authorizeEverythingSearch(job);
+      const result=await this.options!.everything!.query(job.root,Math.max(1,job.deadline-Date.now()),job.abort.signal,{
+        workspace:this.workspace,needle:job.everythingNeedle!,
+        // Only the trusted resolved readScope determines absolute-path semantics.
+        nameScope:job.readScope?.external===true?'absolute':'workspace_relative'
+      });
+      await this.authorizeEverythingSearch(job);
+      job.provenance={version:result.version,instance:result.instance,session_id:result.session_id,runtime_id:result.runtime_id};
+      const seen=new Set<string>();
+      for(const candidate of result.paths){
+        if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+        if(job.stopped||Date.now()>job.deadline||job.truncated){job.truncated||=!job.stopped;break;}
+        // Do not expose engine counts or unchecked paths, even on malformed replies.
+        if(!inside(job.root,candidate)||
+            (!job.readScope&&!inside(this.workspace,candidate)))continue;
+        let safe:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{safe=await this.guardReadPath(candidate,job.owner,'name_search');}
+        catch{continue;}
+        if(job.readScope&&(!safe.readScope||
+            safe.readScope.digest!==job.readScope.digest||
+            safe.readScope.revision!==job.readScope.revision))continue;
+        if(!safe.stat.isFile()&&!safe.stat.isDirectory())continue;
+        const fromRoot=path.relative(job.root,safe.absolute);
+        if(!job.rootIsFile&&fromRoot==='')continue;
+        const components=fromRoot?fromRoot.split(path.sep):[];
+        if(components.length>21){job.coverageTruncated=true;continue;}
+        const relative=this.displayRead(safe.absolute,safe.readScope);
+        if(seen.has(relative))continue;seen.add(relative);
+        if(!job.includeHidden&&components.some(p=>p.startsWith('.')))continue;
+        job.visited++;
+        await this.inspectSearchEntry(job,safe.absolute,safe.stat);
+      }
+      job.truncated ||= result.truncated;
+      await this.authorizeEverythingSearch(job);
+    }catch(e){
+      if(e instanceof RuntimeError&&e.code==='EVERYTHING_TERMINATION_UNCERTAIN')job.error=e.code;
+      else if(!job.stopped)job.error=job.error??(e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE');
+      if(job.error==='PROVIDER_DISABLED'||job.error==='DENIED'){job.matches=[];job.bytes=0;}
+    }
+    finally{this.finishSearch(job);}
+  }
+
+  private finishSearch(job:SearchJob):void {
+    job.truncated ||= job.coverageTruncated;
+    if(job.sort)job.matches.sort((a,b)=>{
+      const key=(m:SearchMatch)=>job.sort==='name'?path.basename(m.path):m.path;
+      const x=key(a),y=key(b);return x<y?-1:x>y?1:a.path<b.path?-1:a.path>b.path?1:0;
+    });
+    job.done=true;job.touchedAt=Date.now();
+  }
+
+  private async inspectSearchEntry(job:SearchJob,file:string,stat:import('node:fs').Stats):Promise<void> {
+    if(job.mode==='content'){if(stat.isFile())await this.inspectSearchFile(job,file,stat.size,MAX_CONTENT_FILE_BYTES);return;}
+    if(stat.isDirectory()&&job.entryType==='files'||stat.isFile()&&job.entryType==='directories')return;
+    if(!stat.isDirectory()&&!stat.isFile())return;
+    const relative=this.displayRead(file,job.readScope);
+    if(job.regex!.test(path.basename(file))||job.regex!.test(relative)){
+      const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+      this.addMatch(job,{path:relative,kind:stat.isDirectory()?'directory':'file',
+        ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+          mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{}),
+        ...(job.metadata?{size:stat.isFile()?stat.size:undefined,modified:stat.mtime.toISOString(),
+          metadata_source:'filesystem_readback' as const}:{})});
+    }
+  }
+
+  private async runSearch(job:SearchJob):Promise<void>{
+    const scoped=job.readScope?this.options?.readRoots:undefined;
+    const operation=job.mode==='content'?'content_search':'name_search';
+    const queue:Array<{target:string;level:number}>=[{target:job.root,level:0}];
+    const maxDepth=20,maxFile=MAX_CONTENT_FILE_BYTES;
+    try{
+      while(queue.length){
+        if(job.stopped||Date.now()>job.deadline||job.visited>=MAX_TRAVERSAL_ENTRIES||
+            job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES){
+          job.truncated=!job.stopped;break;
         }
-        const current = queue.shift()!;
-        const currentStat = await fs.lstat(current.target);
-        if (isReparseOrLink(currentStat)) continue;
-        if (currentStat.isDirectory()) {
-          const directory = await fs.opendir(current.target);
-          for await (const entry of directory) {
-            if (!visibleName(entry.name, job.includeHidden)) continue;
-            if (++job.visited > MAX_TRAVERSAL_ENTRIES) { job.truncated = true; break; }
-            const full = path.join(current.target, entry.name);
-            const childStat = await fs.lstat(full);
-            if (isReparseOrLink(childStat)) continue;
-            if (childStat.isDirectory() && current.level < maxDepth) queue.push({ target: full, level: current.level + 1 });
-            else if (childStat.isFile()) await this.inspectSearchFile(job, full, childStat.size, maxFile);
-            if (job.stopped || job.truncated || job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline) { job.truncated ||= !job.stopped && (job.bytes >= MAX_SEARCH_RESULT_BYTES || Date.now() > job.deadline); break; }
+        const current=queue.shift()!;
+        let currentPath:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+        try{currentPath=await this.guardReadPath(current.target,job.owner,operation);}
+        catch(error){if(current.target===job.root)throw error;continue;}
+        if(job.readScope&&(!currentPath.readScope||
+            currentPath.readScope.digest!==job.readScope.digest||
+            currentPath.readScope.revision!==job.readScope.revision))continue;
+        if(isReparseOrLink(currentPath.stat))continue;
+        if(currentPath.stat.isDirectory()){
+          const scan=async(dir:AsyncIterable<{name:string}>)=>{
+            for await(const entry of dir){
+              if(!visibleName(entry.name,job.includeHidden))continue;
+              if(job.stopped||job.truncated||Date.now()>job.deadline)break;
+              const full=path.join(current.target,entry.name);
+              let child:Awaited<ReturnType<FileAdapter['guardReadPath']>>;
+              try{child=await this.guardReadPath(full,job.owner,operation);}
+              catch{continue;} // Excluded/protected/reparse are never counted as matches.
+              if(job.readScope&&(!child.readScope||
+                  child.readScope.digest!==job.readScope.digest||
+                  child.readScope.revision!==job.readScope.revision))continue;
+              if(isReparseOrLink(child.stat))continue;
+              if(++job.visited>MAX_TRAVERSAL_ENTRIES){job.truncated=true;break;}
+              if(child.stat.isDirectory()){
+                if(current.level<maxDepth)queue.push({target:full,level:current.level+1});
+                else job.coverageTruncated=true;
+              }
+              await this.inspectSearchEntry(job,child.absolute,child.stat);
+              if(job.stopped||job.truncated||job.bytes>=MAX_SEARCH_RESULT_BYTES||
+                  Date.now()>job.deadline){
+                job.truncated||=!job.stopped&&
+                  (job.bytes>=MAX_SEARCH_RESULT_BYTES||Date.now()>job.deadline);break;
+              }
+            }
+          };
+          if(currentPath.readScope)await scoped!.withDirectory(currentPath.readScope,
+            job.owner,operation,scan);
+          else {
+            const dir=await fs.opendir(currentPath.absolute);
+            try{await scan(dir);}finally{await dir.close().catch(()=>{});}
           }
-        } else if (currentStat.isFile()) {
+        }else if(currentPath.stat.isFile()){
           job.visited++;
-          await this.inspectSearchFile(job, current.target, currentStat.size, maxFile);
+          await this.inspectSearchEntry(job,currentPath.absolute,currentPath.stat);
         }
       }
-    } catch (error) { job.error = error instanceof Error ? error.message : 'SEARCH_FAILED'; }
-    finally { job.done = true; job.touchedAt = Date.now(); }
+      if(job.readScope)await scoped!.assertScope(job.readScope,job.owner,operation);
+    }catch(error){
+      if(job.readScope){job.error='READ_ROOT_REVOKED';job.matches=[];job.bytes=0;}
+      else job.error=error instanceof Error?error.message:'SEARCH_FAILED';
+    }finally{this.finishSearch(job);}
   }
 
   private async inspectSearchFile(job: SearchJob, file: string, size: number, maxFile: number): Promise<void> {
-    const relative = this.relative(file);
+    const relative = this.displayRead(file,job.readScope);
     if (job.mode === 'files') {
-      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) this.addMatch(job, { path: relative, kind: 'file' });
+      if (job.regex!.test(path.basename(file)) || job.regex!.test(relative)) {
+        const observed=job.readScope?await fs.stat(file,{bigint:true}):null;
+        this.addMatch(job,{path:relative,kind:'file',
+          ...(observed?{privateIdentity:{dev:observed.dev.toString(),ino:observed.ino.toString(),
+            mtimeNs:observed.mtimeNs.toString(),size:observed.size.toString()}}:{})});
+      }
       return;
     }
     if (size > maxFile || job.matches.length >= job.resultLimit) { if (size > maxFile) job.truncated = true; return; }
-    const bytes = await fs.readFile(file);
+    let bytes:Buffer;
+    let privateIdentity:SearchMatch['privateIdentity'];
+    if(job.readScope){
+      const source=await this.guardReadPath(file,job.owner,'content_search');
+      if(!source.readScope||
+          source.readScope.digest!==job.readScope.digest||
+          source.readScope.revision!==job.readScope.revision)return;
+      const opened=await this.options!.readRoots!.readBytesVerified(
+        source.readScope,job.owner,'content_search',maxFile);
+      bytes=opened.bytes;privateIdentity=opened.identity;
+    }else bytes=await fs.readFile(file);
     if (bytes.includes(0)) return;
     const content = bytes.toString('utf8');
     const lines = content.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       if (job.stopped || job.truncated || Date.now() > job.deadline || job.bytes >= MAX_SEARCH_RESULT_BYTES) break;
       const line = lines[index];
-      if (job.regex!.test(line)) this.addMatch(job, { path: relative, kind: 'content', line: index + 1, text: line.slice(0, 512) });
+      if (job.regex!.test(line)) this.addMatch(job, {path:relative,kind:'content',
+        line:index+1,text:line.slice(0,512),
+        ...(privateIdentity?{privateIdentity}:{})});
     }
   }
 
   private addMatch(job: SearchJob, match: SearchMatch): void {
     if (job.matches.length >= job.resultLimit) { job.truncated = true; return; }
-    const bytes = Buffer.byteLength(JSON.stringify(match));
-    if (job.bytes + bytes > MAX_SEARCH_RESULT_BYTES) { job.truncated = true; return; }
-    job.matches.push(match); job.bytes += bytes;
+    const {privateIdentity:_privateIdentity,...publicMatch}=match;
+    const bytes=Buffer.byteLength(JSON.stringify(publicMatch));
+    if(job.bytes+bytes>MAX_SEARCH_RESULT_BYTES){job.truncated=true;return;}
+    job.matches.push(match);job.bytes+=bytes;
   }
 
   private searchFor(id: string, context: FileOwnerContext): SearchJob {
     const job = this.searches.get(id);
-    if (!job || !ownerMatches(job.owner, context)) throw new Error('SEARCH_NOT_OWNED');
+    if (!job || !ownerMatches(job.owner, context)) throw new RuntimeError('SEARCH_NOT_OWNED');
+    if(job.provider==='everything')this.authorizeEverythingSession(context);
+    if(job.done&&Date.now()-job.touchedAt>SEARCH_RETENTION_MS){this.searches.delete(id);throw new RuntimeError('SEARCH_EXPIRED');}
     job.touchedAt = Date.now();
     return job;
   }
 
-  private async searchResults(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
-    const job = this.searchFor(args.search_id as string, context);
-    const offset = args.offset as number; const limit = args.limit as number;
-    return { search_id: job.id, items: job.matches.slice(offset, offset + limit), offset, total_results: job.matches.length, complete: job.done, truncated: job.truncated, stopped: job.stopped, state: job.done ? job.stopped ? 'stopped' : job.error ? 'failed' : 'complete' : 'running', ...(job.error ? { error: job.error } : {}), next_offset: Math.min(offset + limit, job.matches.length) };
+  private async searchResults(args: Record<string, unknown>,
+    context: FileOwnerContext): Promise<unknown> {
+    const job=this.searchFor(args.search_id as string,context);
+    if(job.error==='READ_ROOT_REVOKED')throw new RuntimeError('READ_ROOT_REVOKED');
+    const access=this.options?.readRoots;
+    const operation=job.mode==='content'?'content_search':'name_search';
+    if(job.provider==='everything') {
+      await this.authorize('hostdeck_search_results',args);
+      await this.authorizeEverythingSearch(job);
+    } else if(job.readScope) await this.authorize('hostdeck_search_results',args);
+    if(job.readScope) await access!.assertScope(job.readScope,context,operation);
+    const offset=args.offset as number,limit=args.limit as number;
+    // A running search may append or finish while page checks await native I/O.
+    // Bind this response's membership and completion flag to the same instant.
+    const complete=job.done;
+    const matches=job.sort&&!complete?[]:[...job.matches];
+    const authorized:SearchMatch[]=[];
+    // Every retained result is checked BEFORE computing even total_results,
+    // not only the entries inside the requested page. No stale count/metadata.
+    const candidates=job.readScope?matches:matches.slice(offset,offset+limit);
+    const qualificationDeadline=Date.now()+5000;
+    for(const match of candidates){
+      // No unbounded per-result native/ACL loops for large retained searches.
+      // Failure withholds the entire page, including total_results.
+      if(job.readScope && Date.now()>=qualificationDeadline)
+        throw new RuntimeError('READ_ROOT_PAGE_BUDGET');
+      try{
+        const checked=await this.guardReadPath(match.path,context,operation);
+        if(job.readScope&&(!checked.readScope||
+            checked.readScope.digest!==job.readScope.digest||
+            checked.readScope.revision!==job.readScope.revision))continue;
+        if(match.privateIdentity){
+          const current=await fs.stat(checked.absolute,{bigint:true});
+          const prior=match.privateIdentity;
+          if(current.dev.toString()!==prior.dev||
+             current.ino.toString()!==prior.ino||
+             current.mtimeNs.toString()!==prior.mtimeNs||
+             current.size.toString()!==prior.size)continue;
+        }
+        const {privateIdentity:_privateIdentity,...publicItem}=match;
+        authorized.push(publicItem);
+      }catch{/* Failed/replaced targets cannot be disclosed. */}
+    }
+    if(job.provider==='everything')await this.authorizeEverythingSearch(job);
+    if(job.readScope){
+      await this.authorize('hostdeck_search_results',args);
+      await access!.assertScope(job.readScope,context,operation);
+    }
+    if(job.error==='PROVIDER_DISABLED')throw new RuntimeError('PROVIDER_DISABLED');
+    if(job.error==='READ_ROOT_REVOKED')throw new RuntimeError('READ_ROOT_REVOKED');
+    // External pages must neither compact retained offsets nor expose stale
+    // counts. A changed/denied entry invalidates this page; retry a fresh query.
+    if(job.readScope&&authorized.length!==matches.length)
+      throw new RuntimeError('READ_ROOT_CHANGED');
+    const total=job.readScope?authorized.length:matches.length;
+    const items=job.readScope?authorized.slice(offset,offset+limit):authorized;
+    return {search_id:job.id,provider:job.provider,
+      ...(job.provenance?{provenance:job.provenance}:{}),
+      ...(job.readScope?{root_scope:job.readScope.root}:{}),
+      items,offset,total_results:total,complete,
+      truncated:job.truncated,stopped:job.stopped,
+      state:complete?job.error==='EVERYTHING_TERMINATION_UNCERTAIN'?'uncertain':
+        job.stopped?'stopped':job.error?'failed':job.truncated?'partial':'complete':'running',
+      ...(job.error?{error:job.error}:{}),
+      next_offset:Math.min(offset+limit,total),
+      snapshot:'retained_query_results',retention_ms:SEARCH_RETENTION_MS};
   }
 
   private async stopSearch(args: Record<string, unknown>, context: FileOwnerContext): Promise<unknown> {
     const job = this.searchFor(args.search_id as string, context);
+    if(job.provider==='everything') {
+      await this.authorize('hostdeck_stop_search',args);
+      await this.authorizeEverythingSearch(job);
+    }
     if (job.done) return { search_id: job.id, stopped: false, complete: true };
-    job.stopped = true; job.touchedAt = Date.now();
+    job.stopped = true; job.abort.abort(); job.touchedAt = Date.now();
     return { search_id: job.id, stopped: true, complete: false };
   }
 

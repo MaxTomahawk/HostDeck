@@ -361,7 +361,8 @@ public sealed class InputService : IInputService
 
     private static byte ToVirtualKey(string key)
     {
-        return key.ToLowerInvariant() switch
+        key = key.ToLowerInvariant();
+        return key switch
         {
             "ctrl" or "control" => 0x11,
             "shift" => 0x10,

@@ -68,6 +68,13 @@ function Set-ExactAcl([string] $path, [string] $profile, [bool] $recursive = $fa
     }
 }
 
+# Existing state may have separately qualified ACLs for the writable fulltext index.
+# Upgrade never re-profiles its live files or directories.
+function Prepare-StateAcl([string] $path, [bool] $existingInstall) {
+    Assert-NoReparseTree $path
+    if (-not $existingInstall) { Set-ExactAcl $path 'state' $true }
+}
+
 function Verify-Package([string] $source) {
     $manifestPath = Join-Path $source 'manifest.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Missing manifest.json.' }
@@ -89,6 +96,63 @@ function Verify-Package([string] $source) {
         if (-not $paths.Contains($required)) { throw 'Missing required package file.' }
     }
     return $manifest
+}
+
+function Get-WorkerReleaseHash([string] $release) {
+    $binary = Join-Path $release 'desktop/HostDeck.DesktopWorker.exe'
+    $manifest = Get-Content -LiteralPath (Join-Path $release 'manifest.json') -Raw | ConvertFrom-Json
+    $entries = @($manifest.files | Where-Object { $_.path -ceq 'desktop/HostDeck.DesktopWorker.exe' })
+    if ($entries.Count -ne 1) { throw 'Desktop worker missing from verified release manifest.' }
+    $actual = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($actual -ne [string]$entries[0].sha256) { throw 'Desktop worker release hash mismatch.' }
+    return $actual.ToLowerInvariant()
+}
+
+function Get-WorkerConfigState([string] $configPath, [string] $releaseRoot) {
+    $bytes = [IO.File]::ReadAllBytes($configPath)
+    $value = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    $json = if ($value.Length -gt 0 -and $value[0] -eq [char]0xfeff) { $value.Substring(1) } else { $value }
+    $parsed = $json | ConvertFrom-Json
+    $expectedPath = Join-Path $releaseRoot 'current/desktop/HostDeck.DesktopWorker.exe'
+    if (-not [string]::Equals([IO.Path]::GetFullPath([string]$parsed.desktop_worker),
+            [IO.Path]::GetFullPath($expectedPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Configured desktop worker path is not bound to current release.'
+    }
+    $matches = [regex]::Matches($value, '"desktop_worker_sha256"\s*:\s*"([a-fA-F0-9]{64})"')
+    if ($matches.Count -ne 1 -or [string]$parsed.desktop_worker_sha256 -ne $matches[0].Groups[1].Value) {
+        throw 'Configured desktop worker pin missing or ambiguous.'
+    }
+    return @{ Bytes = $bytes; Text = $value; Match = $matches[0]; Hash = $matches[0].Groups[1].Value.ToLowerInvariant() }
+}
+
+function Set-WorkerConfigHash([string] $configPath, [hashtable] $original, [string] $newHash) {
+    if ($original.Hash -eq $newHash) { return $null }
+    $old = $original.Match
+    $replacement = $original.Text.Substring(0, $old.Groups[1].Index) + $newHash +
+        $original.Text.Substring($old.Groups[1].Index + $old.Groups[1].Length)
+    $temporary = $configPath + '.stage-' + [guid]::NewGuid().ToString('N')
+    $backup = $configPath + '.worker-pin-backup-' + [guid]::NewGuid().ToString('N')
+    try {
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
+            throw 'Protected facade config changed during release transaction.'
+        }
+        [IO.File]::WriteAllBytes($temporary, [Text.Encoding]::UTF8.GetBytes($replacement))
+        [IO.File]::Replace($temporary, $configPath, $backup)
+        return $backup
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Restore-WorkerConfig([string] $configPath, [string] $backup, [hashtable] $original) {
+    if ($backup) {
+        $discard = $configPath + '.failed-pin-' + [guid]::NewGuid().ToString('N')
+        [IO.File]::Replace($backup, $configPath, $discard)
+        Remove-Item -LiteralPath $discard -Force
+    }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath)) -ne [Convert]::ToBase64String($original.Bytes)) {
+        throw 'Original protected facade bytes not restored; refusing service restart.'
+    }
 }
 
 Assert-Administrator
@@ -217,6 +281,7 @@ if (-not (Test-Path -LiteralPath $facadeConfig)) {
     New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
     New-Item -ItemType Directory -Path $state | Out-Null
     $sourceConfig.desktop_worker = Join-Path $current 'desktop/HostDeck.DesktopWorker.exe'
+    $sourceConfig | Add-Member -NotePropertyName desktop_worker_sha256 -NotePropertyValue (Get-WorkerReleaseHash $package) -Force
     $sourceConfig.device_id = $deviceId
     $sourceConfig.grants_file = $protectedGrants
     $sourceConfig.state_directory = $state
@@ -229,8 +294,7 @@ $configDirectory = Split-Path -Parent $facadeConfig
 Assert-NoReparseTree $configDirectory
 Set-ExactAcl $configDirectory 'config' $true
 $state = [IO.Path]::GetFullPath([string](Get-Content -LiteralPath $facadeConfig -Raw | ConvertFrom-Json).state_directory)
-Assert-NoReparseTree $state
-Set-ExactAcl $state 'state' $true
+Prepare-StateAcl $state ([bool]$existing)
 if (-not (Test-Path -LiteralPath $enrollmentDirectory)) {
     New-Item -ItemType Directory -Path $enrollmentDirectory | Out-Null
 }
@@ -258,6 +322,14 @@ Verify-Package $stage | Out-Null
 # needs read/execute access but cannot replace the native worker executable.
 Set-ExactAcl $stage 'release' $true
 
+$workerOriginal = $null
+$workerConfigBackup = $null
+if ($existing) {
+    $workerOriginal = Get-WorkerConfigState $facadeConfig $root
+    $oldWorkerHash = Get-WorkerReleaseHash $current
+    if ($workerOriginal.Hash -ne $oldWorkerHash) { throw 'Current worker pin does not match installed release.' }
+}
+$newWorkerHash = Get-WorkerReleaseHash $stage
 $movedOld = $false
 $installedNew = $false
 $archivedPrevious = $null
@@ -277,6 +349,7 @@ try {
     }
     Move-Item -LiteralPath $stage -Destination $current
     $installedNew = $true
+    if ($existing) { $workerConfigBackup = Set-WorkerConfigHash $facadeConfig $workerOriginal $newWorkerHash }
     $servicePath = Join-Path $current 'service/HostDeck.Lifecycle.exe'
     @{ enrolled_user_sid = $EnrolledUserSid; enrollment_directory = $enrollmentDirectory; device_id = $deviceId } |
         ConvertTo-Json -Compress | Set-Content -LiteralPath $serviceConfig -Encoding utf8
@@ -305,15 +378,16 @@ try {
         $failed = Join-Path $root ('failed-' + [guid]::NewGuid().ToString('N'))
         Move-Item -LiteralPath $current -Destination $failed
     }
-    if ($movedOld) {
-        Move-Item -LiteralPath $previous -Destination $current
-        Start-Service -Name HostDeck -ErrorAction SilentlyContinue
-    } elseif ($existing) {
-        Start-Service -Name HostDeck -ErrorAction SilentlyContinue
+    if ($movedOld) { Move-Item -LiteralPath $previous -Destination $current }
+    if ($existing -and $workerOriginal) {
+        Restore-WorkerConfig $facadeConfig $workerConfigBackup $workerOriginal
     }
+    if ($existing) { Start-Service -Name HostDeck -ErrorAction SilentlyContinue }
     if ($archivedPrevious -and (Test-Path -LiteralPath $archivedPrevious)) {
         Move-Item -LiteralPath $archivedPrevious -Destination $previous
     }
     throw $installError
 }
 Write-Output 'HostDeck service installed. Enroll the user tray separately with Register-HostDeckUser.ps1.'
+
+if ($workerConfigBackup) { Remove-Item -LiteralPath $workerConfigBackup -Force }

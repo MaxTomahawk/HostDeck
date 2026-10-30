@@ -18,6 +18,25 @@ internal static class Program
     {
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
+        // Private read-only file metadata/ACL transport. Reuse one bounded
+        // stdio worker for batches; no public MCP or desktop operation added.
+        if (args.Length == 1 && args[0] == "--fulltext-native") {
+            await FullTextNative.Run();
+            return;
+        }
+        if (args.Length == 1 && args[0] == "--everything") {
+            try {
+                var ipcLine = Console.In.ReadLine();
+                if (ipcLine is null || ipcLine.Length > 65536) throw new WorkerError("EVERYTHING_INVALID_ARGUMENTS");
+                using var request = JsonDocument.Parse(ipcLine);
+                Console.Out.WriteLine(JsonSerializer.Serialize(new { result = EverythingIpc.Execute(request.RootElement) }));
+            } catch (Exception error) {
+                var code = error is WorkerError known && known.Message.StartsWith("EVERYTHING_", StringComparison.Ordinal)
+                    ? known.Message : "EVERYTHING_UNAVAILABLE";
+                Console.Out.WriteLine(JsonSerializer.Serialize(new { error = code }));
+            }
+            return;
+        }
         // The launching user executor owns both pipe ends. No TCP listener or
         // service-side desktop injection is available in this process.
         if (args.Length == 2 && args[0] == "--job-status") {
@@ -172,10 +191,15 @@ internal sealed class DesktopWorker
                 var window = ResolveWindow(args);
                 RectBounds? region = args.TryGetProperty("region", out var r) ? Rect(r) : null;
                 if (region is not null) RequireRegionWithin(window, region);
-                var result = await vision.OcrScreenAsync("window", window, region);
+                OcrResult result;
+                try { result = await vision.OcrScreenAsync("window", window, region, Optional(args, "language")); }
+                catch (OcrLanguageUnavailableException) { throw new WorkerError("OCR_LANGUAGE_UNAVAILABLE"); }
                 return new { text = result.CombinedText, blocks = result.Blocks.Take(500).Select(b => new {
                     text = b.Text, bounds = Bounds(b.Bounds), confidence = (double?)null
                 }).ToArray(), confidence = (double?)null, confidence_status = "unmeasured",
+                    recognizer_language = vision.RecognizerLanguageTag,
+                    available_recognizer_languages = vision.AvailableRecognizerLanguageTags,
+                    language_coverage = "not_verified",
                     region = Bounds(result.Region) };
             }
             case "hostdeck_read_clipboard":
@@ -332,6 +356,7 @@ internal sealed class DesktopWorker
 
     private static void GuardDesktop()
     {
+        if (!Native.SessionUnlocked()) throw new WorkerError("SECURE_DESKTOP");
         var station = Native.GetProcessWindowStation();
         var current = Native.GetThreadDesktop(Native.GetCurrentThreadId());
         var active = Native.OpenInputDesktop(0, false, 0x0001);
@@ -360,6 +385,54 @@ internal sealed class DesktopWorker
 
 internal static class Native
 {
+    // WTSINFOEXW (Win10+): DWORD Level, 4 bytes padding, 224-byte
+    // WTSINFOEX_LEVEL1_W union data. SessionId/State/Flags start at 8/12/16.
+    // Only the fixed-size, versioned and same-session Level 1 result is trusted.
+    [StructLayout(LayoutKind.Explicit, Size = 232)]
+    private struct WtsInfoExLevel1W
+    {
+        [FieldOffset(0)] public int Level;
+        [FieldOffset(8)] public uint SessionId;
+        [FieldOffset(12)] public int SessionState;
+        [FieldOffset(16)] public int SessionFlags;
+    }
+
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSQuerySessionInformation(nint server, uint sessionId, int infoClass,
+        out nint buffer, out uint bytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    private static extern void WTSFreeMemory(nint buffer);
+
+    internal static bool SessionUnlocked()
+    {
+        var sessionId = Process.GetCurrentProcess().SessionId;
+        if (sessionId <= 0) return false;
+        nint buffer = nint.Zero;
+        try
+        {
+            // WTS_CURRENT_SERVER_HANDLE = NULL; WTSSessionInfoEx = 25.
+            var queried = WTSQuerySessionInformation(nint.Zero, (uint)sessionId, 25, out buffer, out var bytesReturned);
+            return IsUnlockedWtsInfoEx(queried, buffer, bytesReturned, (uint)sessionId);
+        }
+        finally
+        {
+            if (buffer != nint.Zero) WTSFreeMemory(buffer);
+        }
+    }
+
+    // Pure decision seam for malformed/failed native-buffer regressions.
+    internal static bool IsUnlockedWtsInfoEx(bool queried, nint buffer, uint bytesReturned, uint expectedSession)
+    {
+        if (!queried || expectedSession == 0 || buffer == nint.Zero ||
+            bytesReturned < (uint)Marshal.SizeOf<WtsInfoExLevel1W>()) return false;
+        var info = Marshal.PtrToStructure<WtsInfoExLevel1W>(buffer);
+        // WTSActive = 0; WTS_SESSIONSTATE_UNLOCK = 1. LOCK=0/UNKNOWN=-1 fail closed.
+        return info.Level == 1 && info.SessionId == expectedSession &&
+            info.SessionState == 0 && info.SessionFlags == 1;
+    }
+
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
@@ -397,7 +470,11 @@ internal static class Native
     internal static string LogonId()
     {
         if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0008, out var token)) return "unavailable";
-        try {
+        try { return TokenLogonId(token); }
+        finally { CloseHandle(token); }
+    }
+    internal static string TokenLogonId(nint token)
+    {
             var size = Marshal.SizeOf<TokenStatistics>();
             var buffer = Marshal.AllocHGlobal(size);
             try {
@@ -405,7 +482,6 @@ internal static class Native
                 var value = Marshal.PtrToStructure<TokenStatistics>(buffer);
                 return $"{value.AuthenticationId.HighPart:x8}{value.AuthenticationId.LowPart:x8}";
             } finally { Marshal.FreeHGlobal(buffer); }
-        } finally { CloseHandle(token); }
     }
     internal static string Integrity()
     {

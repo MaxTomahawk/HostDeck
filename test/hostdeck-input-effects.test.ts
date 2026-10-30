@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {spawn} from 'node:child_process';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,realpath,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {DesktopAdapter,inspectDesktopIdentity} from '../src/hostdeck/desktop.js';
 
 test('native UTF-8 UI values, absolute pointer coordinates and focused hotkeys have real fixture effects',
  {skip:process.platform!=='win32'||process.env.HOSTDECK_TEST_UI!=='1'},async t=>{
- const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-input-fixture-'));
+ const temporaryParent=await realpath(os.tmpdir());
+ const root=await realpath(await mkdtemp(path.join(temporaryParent,'hostdeck-input-fixture-')));
+ assert.equal(path.dirname(root),temporaryParent,'owned cleanup stays inside canonical temporary directory');
  const statePath=path.join(root,'state.json'),title='HostDeck fixture '+path.basename(root);
  const executable=process.env.HOSTDECK_TEST_WORKER??path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
  const identity=await inspectDesktopIdentity(executable);assert.ok(identity.eligible);

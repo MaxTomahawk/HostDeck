@@ -4,19 +4,32 @@ import {
   discoverTools, getToolContract, parseToolArguments, resolveResource, renderPrompt,
 } from '../src/hostdeck/contracts.js';
 
-test('serialized browser discovery and runtime agree on HTTP scheme casing and reject other schemes', () => {
+test('browser HTTP(S) discovery survives connector full-string pattern matching', () => {
   for (const name of ['hostdeck_browser_open', 'hostdeck_browser_navigate']) {
     const descriptor = JSON.parse(JSON.stringify(discoverTools(new Set([name]))[0]));
-    const pattern = new RegExp(descriptor.inputSchema.properties.url.pattern);
+    const schemaPattern: string = descriptor.inputSchema.properties.url.pattern;
+    // ChatGPT rejected valid URLs for a scheme-only prefix pattern. Simulate
+    // the connector's full-input matching, not just a successful prefix match.
+    assert.ok(schemaPattern.startsWith('^') && schemaPattern.endsWith('$'));
+    assert.equal(schemaPattern.includes('\\/'), false, 'no escaped slash tokens in JSON Schema');
+    const wholeString = new RegExp(`^(?:${schemaPattern})$`);
     const base = name.endsWith('_open') ? {device_id:'device_a',session_id:1} : {device_id:'device_a',browser_id:'browser_a'};
-    for (const url of ['https://example.com/', 'http://127.0.0.1:18763/', 'HTTPS://example.com/', 'hTtP://example.com/']) {
+    for (const url of [
+      'https://example.com/', 'https://example.com/path?q=1#part',
+      'http://127.0.0.1:18763/', 'HTTPS://example.com/', 'hTtP://example.com/',
+    ]) {
       assert.equal(parseToolArguments(name, {...base,url}).url, url);
-      assert.equal(pattern.test(url), true, `${name}: serialized schema rejects ${url}`);
+      assert.equal(wholeString.test(url), true, `${name}: full-string connector simulation rejects ${url}`);
     }
-    for (const url of ['file:///private', 'javascript:alert(1)', 'ftp://example.com/', 'https:/example.com/']) {
+    for (const url of [
+      'file:///private', 'javascript:alert(1)', 'ftp://example.com/',
+      'https:/example.com/', 'https://', 'https://example.com/\nnot-a-url',
+    ]) {
       assert.throws(() => parseToolArguments(name, {...base,url}));
-      assert.equal(pattern.test(url), false);
+      assert.equal(wholeString.test(url), false, `${name}: invalid URL passes exported pattern`);
     }
+    if (name === 'hostdeck_browser_open')
+      assert.equal(parseToolArguments(name, base).url, undefined);
   }
 });
 

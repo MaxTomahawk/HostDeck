@@ -58,3 +58,5 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+test/native-boundaries/bin/
+test/native-boundaries/obj/

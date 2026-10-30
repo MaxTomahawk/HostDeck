@@ -1,6 +1,20 @@
 # HostDeck MCP contract v1
 
-Status: implemented contract registry; backend, transport, authorization and end-to-end acceptance remain separate. Canonical code is `src/hostdeck/contracts.ts`, `contractVersion = 1.0.0`. This is an additive catalog for the full product scope, not a claim that the catalogued capabilities are already installed or exposed.
+Status: implemented contract registry; backend, transport, authorization and end-to-end acceptance remain separate. Canonical code is `src/hostdeck/contracts.ts`, `contractVersion = 1.1.0`. This is an additive catalog for the full product scope, not a claim that the catalogued capabilities are already installed or exposed.
+
+## Search providers (additive v1.1)
+
+`search_files` accepts an optional `provider` (`direct` or `everything`), `entry_type` (`files`, the existing default; `directories`; `all`), optional `sort` (`path` or `name`, ordinal with path tie-breaking), and `metadata` (default false). Existing file/content, case-insensitive literal/restricted-regex and dot-name visibility semantics remain. Explicit roots are searched even if a root name begins with a dot; hidden descendants are excluded unless requested. Windows Hidden attributes are not a new filter. Traversal depth remains bounded at twenty directories, with omitted deeper coverage reported as truncated. Everything supplies filename/path discovery only; content mode with Everything is refused explicitly. Metadata is current authorized filesystem readback, not an assertion about indexed metadata freshness.
+
+`list_providers` requires `files:read`; it observes configured providers on request and does not start/install/reconfigure them. Presence, integration enablement, runtime, compatibility, health and independent qualification are separate fields. Not configured means installation status is unknown. `set_provider_preference` requires `files:write`, reauthorization and a HostDeck-owned private preference store. Preference keys bind owner/device/executor/function; explicit query overrides do not rewrite them. Null clears a preference to the stable direct default. A saved unavailable provider returns its own failure and remains saved; no general fallback policy is selected.
+
+Everything queries apply a mandatory escaped literal fragment of the validated Node name matcher before the vendor's bounded candidate window. Node still performs the original final name match after authorization. The private native request distinguishes workspace-relative names from absolute names for an already-authorized external read scope; no new MCP scope argument exists. The native expression checks the same root fence before the name lookahead, including in absolute mode. A valid restricted regexp without a safe mandatory literal fragment is refused with `EVERYTHING_QUERY_SEMANTICS_UNSUPPORTED`; invalid and prohibited regexp features retain `SEARCH_PATTERN_INVALID` and `SEARCH_REGEX_FEATURE_DENIED`. Direct search keeps its existing regexp support. Filtering does not promise global top-K or complete coverage when the resulting candidate window is still truncated.
+
+`set_provider_enabled` requires `files:write` and fresh existing authorization. Only `provider:"everything"` and `enabled:true|false|null` are accepted. The private setting binds owner/device/executor; null removes the override and restores the enabled default. Direct cannot be disabled. Disabled Everything refuses explicit/preferred queries and retained pages with `PROVIDER_DISABLED`; it does not fall back or clear the saved preference. A cancellation that cannot prove client termination retains `EVERYTHING_TERMINATION_UNCERTAIN`. `list_providers` reports `desiredEnabled`, `enabledOverride` and `configured` separately from vendor installation/running/health. No vendor lifecycle or grant mutation is introduced.
+
+Search handles are ephemeral, owner/device/executor-bound and expire after ten idle minutes once complete. Agent restart invalidates them. `search_results` additionally rechecks the current grant for an Everything query's bound Windows session. Workspace results are relative and checked for canonical/reparse boundaries before exposure; explicitly configured external roots use the absolute paths described below. Engine-global counts are never returned. Sorted results are withheld until the retained snapshot is sealed; ordinary unsorted results remain append-only while running. Page offsets index that retained snapshot. For workspace-only searches, a target removed or replaced by a refused path is omitted at readback; its retained offset is still consumed. `total_results` describes the authorized snapshot at collection, not a live global index count. External pages additionally withhold the entire response when any retained target no longer qualifies, as described below. Truncated queries have state `partial`; timeout, loading, unavailable and real zero results remain distinct. Cancellation is complete only after the owned native client exits; unconfirmed termination has state `uncertain` and `EVERYTHING_TERMINATION_UNCERTAIN`.
+
+`search_files.limit` bounds how many matches are retained **before** optional sorting. A truncated query therefore sorts a bounded subset and does not promise the global first K results. `search_results.limit` is a page size within the retained snapshot. To collect a complete sorted set, the search must finish without truncation and all result pages must be read.
 
 ## Registry and discovery
 
@@ -11,6 +25,8 @@ The registry itself has no networking, authentication, dispatch or OS effects. I
 Every tool requires an explicit `device_id`. Desktop tools require a positive nonzero Windows `session_id`; window input and UIA operations use opaque `window_id`/`element_ref` values bound by the future worker to the authorized process/session/generation. These selectors are never proof of ownership. Process mutations accept an owned `process_id`, not a raw PID/process-group number. A missing target must not select another device/session. Bounds in the contract supplement ingress byte limits and OS/object checks; they do not establish a path sandbox or resource quota alone.
 
 The initial catalog covers files/documents/search, interactive terminal/processes, window/UIA/input/capture/OCR/clipboard, owned browser sessions/DOM actions, durable jobs, artifacts, events, device diagnostics and bounded host management. Format-specific document options and compound desktop/browser actions use explicit nested variants; arbitrary renderer options, browser debug endpoints, upstream telemetry flags or submitted authentication/approval fields are rejected.
+
+`hostdeck_ocr_screen` accepts an optional `language` tag from its returned `available_recognizer_languages` (for example, `nl-NL` when installed). An unavailable requested language returns `OCR_LANGUAGE_UNAVAILABLE` without falling back or installing a language. Omitting the argument uses the Windows profile default, including after an explicit selection. Results identify the actual `recognizer_language`; confidence remains null/unmeasured and `language_coverage` remains `not_verified`. Choosing a recognizer does not establish that every script in the image was recognized.
 
 Some catalog entries deliberately precede their backend: recycle/rich clipboard, managed browser control, durable jobs and host management still need implementation and real tests. Discovery must exclude unbound entries and must never report an accepted command as completed merely because its schema parsed. Unavailable native support returns a truthful capability error at the facade. The catalog can expand through reviewed additive changes; it does not reduce the masterplan's final capabilities.
 
@@ -44,3 +60,102 @@ npm run build
 ```
 
 The hand-authored contract tests exercise actual Zod validation, generated discovery schemas, explicit action requirements, canonical resource routing and structured prompt rendering. They are compatibility/registry checks; they do not prove filesystem containment, token verification, Windows ACLs, real GUI/browser behavior, installed service lifecycle or ChatGPT operation. Native dependency setup and runtime hooks must be reviewed separately before execution. `SECURITY_ACCEPTANCE.md` retains those full acceptance requirements.
+
+
+## B007 Office document compatibility (draft behavior; independent Windows acceptance pending)
+
+The existing \`hostdeck_edit_document\` API retains its established \`text_replace\` and \`table_range\` changes; it stages bytes and does not modify the source on a rejected edit. The following bounded behavior is proposed by the B007 Office patch:
+
+- DOCX \`text_replace\` uses **visible literal \`w:t\` text in one paragraph**, including a text span split across ordinary runs. It compares \`expected_replacements\` against the total across document body, headers and footers **before** staging changes. Matches do not span paragraphs, fields/instructions, tabs, line breaks or other explicit non-text boundaries. A replacement inherits the **first affected run's styling**; remaining run/style elements are preserved, but their replaced text nodes become empty. The patch is not a general Word layout or fields editing engine.
+- Input search and replacement are Unicode text, not raw XML fragments. Text entities are decoded for matching and escaped on output; XML/DTD/field instructions and unrelated package entries must not be altered.
+- For **openpyxl-comment-layout XLSX workbooks**, existing-cell edits use a narrow OOXML worksheet-patch route. Original comment XML, VML drawings, relationships, other worksheets, media and styles retain their uncompressed ZIP-part bytes. Missing target cells, unsupported cell-owned markup, unsafe package relationships and new-sheet/full-sheet edits are rejected rather than silently losing features. This is not a universal Excel edit/layout-preservation claim. Other ExcelJS-supported workbooks retain the existing edit route.
+- Such commented workbooks are read from safe OOXML cell/value parts when ExcelJS 4.4.0 cannot parse their comments. Notes are retained as source package parts, **not exposed as rendered cell comments by the read tool**.
+- Uncached Excel formula cells return an explicit structure such as \`{ "formula":"=B1*2", "calculated":false, "cachedResultAvailable":false }\`. **No formula calculation is performed.** Existing non-null cached results remain the previously useful primitive values where supported.
+- The ordinary HostDeck DOCX read output documents the actual \`hostdeck_edit_document\` tool and no longer recommends \`edit_block\` or direct low-level raw XML replacement. ExcelJS's upstream generic handler may still expose separate legacy guidance outside HostDeck's JSON read adapter.
+- OOXML modifications now validate the **actual document root, nesting, and Word/Spreadsheet/package-relationship namespace bindings** with Saxes 5.0.1 before changing a ZIP entry; lookalike tags in an unrelated namespace and nested substitute roots fail closed. Validated XML remains in its original serialized form except for the specifically patched text/cell.
+- Shared, array, data-table, or otherwise attributed formula target cells are refused with `XLSX_FORMULA_GROUP_EDIT_UNSUPPORTED` before staging: neither shared master nor dependent may be rewritten alone. **Unrelated A1 edits retain all formula-group XML in the same worksheet** and leave other ZIP parts unchanged. Reads report `status:"UNSUPPORTED_FORMULA_GROUP"` with `formulaType` and cache presence, never a misleading blank `null` for a shared dependent without a cached result; formula evaluation is not performed.
+- DOCX replacements introducing leading/trailing whitespace convert `xml:space="default"` on an affected `w:t` to `xml:space="preserve"` without changing unaffected runs or parts.
+- Structural/archive/path/DTD limits, source byte integrity on errors and separate independent client acceptance remain mandatory. Included unit/fixture tests must run on the Codex Windows environment with the exact pinned dependencies before claiming a repaired installed product.
+
+### B007 Office follow-up: date typing, DOCX guidance and public errors
+
+- The openpyxl-comment compatibility **read** route interprets numerical date cells using validated `xl/styles.xml` style indices/number formats and `xl/workbook.xml` `date1904`. Valid dates return UTC ISO strings matching the existing ExcelJS HostDeck JSON read representation (e.g. `2026-01-02T00:00:00.000Z`), rather than untyped Excel serials. Other numbers stay numeric. Unsupported styles, unknown custom format IDs and non-representable date serials receive explicit `UNSUPPORTED_*` status objects. This is **not** a complete Excel number-format renderer.
+- The targeted XLSX **edit** route remains unchanged: it modifies only the selected worksheet XML and preserves the uncompressed bytes of all other ZIP parts, including original comments, VML, styling and relationships.
+- `hostdeck_read_document` removes the two exact upstream `edit_block`/`read_file offset=1` tooltips only from the generated DOCX outline header, and the legacy Python suggestion only from the generated suffix. These are not generic substitutions in document body/header/footer content.
+- Own Office XML root/namespace/structure, unsupported formula, range and count exceptions now have bounded explicit `RuntimeError` codes. For replacement-count conflict, public MCP returns `DOCUMENT_REPLACEMENT_COUNT`, while the internal direct adapter error retains the numbers `Expected N occurrence(s) but found M`; no private text or path is included. The existing `publicError` masks unrelated arbitrary `Error.message` text as `IO_ERROR` and no global whitelist is added.
+- The local Windows build and real python-docx/openpyxl/ExcelJS cross-library tests are separate gates; the ordinary ChatGPT implementer does not independently certify its own patch. F002 remains OPEN. No Word/Excel installation, Actions, source merge or deployment is authorized.
+
+## B007 explicitly configured owner read/search roots — source candidate
+
+The existing installer-controlled HostDeck configuration may optionally include a
+**protected** `read_roots` object:
+
+```json
+{
+  "owner_id": "authorized_owner_identifier",
+  "revision": "read_scope_rev1",
+  "roots": ["X:\\ExampleData"],
+  "excluded_roots": ["X:\\ExampleData\\Private"],
+  "fixed_volume_roots": []
+}
+```
+
+This object is a field **inside the existing main config**, not a new
+selection/approval file. It has no MCP setter. When absent, all read, list,
+search, write, document and process paths keep their pre-existing workspace-only
+boundaries. Grant scopes or `broadUserAuthority`, search hits, tool arguments and
+provider preference do not create roots.
+
+The existing PolicyGate controls scope, owner, device, executor, grant revision
+and eligible session. Each external read refreshes the original, physically
+protected config file by verified native effective-ACL check and actual open
+file identity, binds the configured owner and config bytes/revision, and
+requires the existing pinned, non-elevated FullTextNativeBridge. Its original
+`attributes_batch` checks Windows Hidden/System/reparse on every ancestor;
+the existing `qualifyFixedVolumes` performs Windows DriveInfo.Fixed checks for
+any explicitly listed complete drive root. An unqualified native worker,
+config ACL, directory handle, root or attribute state denies the external read.
+
+`hostdeck_list_directory` and direct directory search reuse FileAdapter's
+bounds while enumerating names through the **already-existing native worker**,
+extended only with a bounded `directory_page` operation. The worker compares
+the actual opened directory HANDLE's FileID against the independently observed
+target before emitting names; rechecked root/config/owner/grant and directory
+identity are mandatory before disclosure. Node `opendir` is retained for
+workspace-only paths, because its handle is not available to that native
+identity check. Existing `hostdeck_read_file`, `hostdeck_file_info`, direct
+name/content search and Everything name search can read from the selected
+external roots only; every retained page rechecks scope and individual
+FileID/mtime/size before publishing paths, snippets, metadata or counts.
+If any retained external target disappears, changes identity/content metadata
+or loses authority, the entire page fails with `READ_ROOT_CHANGED`, including
+its counts and next offset. It never compacts the retained set and silently
+skips a still-valid entry on a later page. Start a fresh query after such a
+change. Failure to revalidate the direct traversal's search root also fails
+the search, rather than reporting a successful empty result.
+Missing excluded paths stay protected by canonicalizing the nearest existing
+ancestor. All other external roots remain denied.
+
+**Unchanged write boundary:** write/edit/create/move/delete, SafeCommitter,
+document handling, process working directory and artifact writes all keep the
+original workspace-only path guards. The existing logical provider
+enable/disable/default/preference behavior is preserved, with no new indexer,
+service or tool exposed.
+
+**Status: CODE INSTALLED, EXTERNAL ROOTS UNCONFIGURED, INDEPENDENT ACCEPTANCE OPEN.** Local
+Windows cases qualify actual native HANDLE/FileID and Node descriptor binding,
+Unicode reads, Hidden/System/junction refusal, and directory swap-and-restore
+rejection. The worker checks the opened directory's actual final path before
+enumeration and before return. Only physical fixed-volume anchor flags are
+excluded from the Hidden/System check; no selected root is widened, and all
+components below that anchor remain checked. A separate real Everything
+fixture qualifies selective vendor responses, external ancestor/drive-prefix
+matches and workspace-relative ancestor exclusion. Synthetic owner/root
+selection in these fixtures is not protected production configuration or a
+grant. True fixed-volume selection, protected ACL behavior, session renewal,
+independent remote external pages remain separate gates. The existing
+self-contained package and a bounded native/agent update have actual local
+execution and integrity evidence; the installed `read_roots` field remains
+absent. No personal roots, grants or index are activated. This does not accept
+production external-root behavior or full Windows lifecycle. Historical
+failures remain retained.
