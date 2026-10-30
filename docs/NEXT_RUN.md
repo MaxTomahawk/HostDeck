@@ -1,6 +1,23 @@
 # HostDeck next run
 
-## Current execution — 28 October / HD-DELIVERY-B007
+## Current execution — 30 October / HD-DELIVERY-B007
+
+The owner reinstated the complete `HD-GOAL-COMPLETE-WINDOWS-001`. Preserve all 140 requirements, eight policies, 18 Everything criteria and 17 quality criteria. The 79 extension candidates remain inventoried for work after the first working delivery. The goal's product scope is unchanged.
+
+**Accepted baseline:** upgrade 048 installed manifest `bc50f441` from installer source `b61c61c`, reusing runtime `7f92e6e`. Separate checks verify all 23,035 installed files, exact membership, unchanged config and protected data pins, retained previous/archive, 15 protected ACLs and the running automatic LocalService. Actual installed MCP discovers 57 tools and passes nine scoped Unicode/Everything/cleanup calls. Connected ChatGPT reports ready, Everything ready and fulltext `selected_not_active`. The 88 jobs and 172 current artifact hashes/expiry, both vendor INIs and empty provider tables are preserved. Eight earlier artifacts expired under the existing retention policy; the original failed equality check and exact removal assessment remain retained.
+
+**Independent user recovery:** source `b3eca6f` integrates PR45. Eighteen focused cases pass on Windows PowerShell 5.1 and PowerShell 7.5+. Actual launch through the existing Explorer desktop proves no job membership. The helper follows one exact submitted request, verifies terminal containment and known installed state, then restores the exact tray. It actually restored the old release after the retained inside-root package refusal, and restored the new release after successful upgrade 048. Shared outbox permissions were not expanded. This does not prove automatic logon/reboot startup.
+
+**Current work:** rollback 049 is submitted once as request `403c85dd-3223-438d-9a5a-0bab76fa8fce`. Its independently verified helper was ready before the captured tray/agent stopped and GO was published. Observe this exact receipt and helper result; do not replay or start a competing recovery. Expected target is prior manifest `adef7a20`, with former current `bc50f441` retained. Rollback effect and subsequent rollforward are not yet accepted. Private raw evidence is in the existing B007 audit area; Operator W5 checkpoint 131 records the handoff.
+
+**Next actions:** finish the current rollback's separate byte/state/ACL/MCP checks, then qualify rollforward with the same independent recovery guard. Continue the remaining logon/reboot, active-job durability, client/security, document/Office/PDF/OCR, input/clipboard and supported hosted/mobile/accessibility cases against the existing matrices. Arrange only actually missing protected owner inputs. Finish integrated independent acceptance, reviewed/tested main and release/privacy/history gates. Historical credential findings still block release; history rewriting is not authorized. GitHub Actions and automatic upstream monitoring remain inactive.
+
+Use existing ordinary ChatGPT assignments for bounded independent work; no new Work chats, Codex subagents or duplicate review loops. Prefer raw requirements, actual diffs/receipts and runtime readback to stale summaries. Report each block's completed criteria, evidence, rework, remaining criteria and usage where attributable. Test changed, failed or unproved paths; reuse accepted evidence.
+
+<details>
+<summary>Earlier 28 October execution plan — retained history, superseded above</summary>
+
+## Earlier execution — 28 October / HD-DELIVERY-B007
 
 The full `HD-GOAL-COMPLETE-WINDOWS-001` remains unfinished. The original 140 requirements, eight policies, 18 Everything criteria and 17 quality gates remain authoritative. The owner has deferred expansion of the 79 extension candidates until after the first working delivery; retain the inventory and implement applicable candidates afterward. This does not waive mandatory Windows, security, lifecycle, document, client or release requirements.
 
@@ -32,6 +49,8 @@ Installed input qualification 047 confirms one F6 event and exactly one real but
 **Reusable procedure after the first working delivery:** take one existing catalogue candidate; pin the existing local/RDC/fork function and identify the exact adapter gap; verify applicability, version, license, Windows compatibility and authority; reuse ProviderRegistry, PolicyGate, manager and existing engines with minimal code; prove a bounded owned regression and Windows behavior; perform authorized install/effect/rollback/negative/independent checks; update the candidate's existing status and evidence with honest UNKNOWN/SKIP/FAIL. Ordinary chats use the same canonical plan and Operator project. Do not create 79 plans, speculative engines or automatic adoption/install actions.
 
 Git is the content authority; `docs/MASTERPLAN.md` remains on its existing draft branch. Private B007 canon and existing Operator W5 checkpoints retain requirement bindings and raw evidence. All previous failures and evidence remain in Git history and the private audit area. Two earlier owned temporary test directories remain after automatic cleanup rejection; do not replay that rejected cleanup action.
+
+</details>
 
 <details>
 <summary>Retained historical execution checkpoints and earlier baselines</summary>
