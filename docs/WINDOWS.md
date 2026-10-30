@@ -109,17 +109,32 @@ reconcile a missing receipt as uncertain, not success.
 
 Build the three projects with `dotnet build windows/HostDeck.DesktopWorker/HostDeck.DesktopWorker.csproj`,
 and likewise `HostDeck.Lifecycle` and `HostDeck.Tray`. Packaging requires a
-reviewed, built Node facade, Node executable and a new output directory:
+reviewed, built Node facade, Node executable and a new output directory. Stage
+the facade into a fresh runtime directory instead of packaging the development
+`dist` tree: `npm run build` also copies legacy setup/telemetry hooks and unused
+preview bundles there. From the reviewed repository root, after installing
+dependencies with `npm ci --ignore-scripts`:
 
 ```powershell
-pwsh -NoProfile -File windows/install/New-HostDeckPackage.ps1 -AgentRuntimeDirectory <repository> -NodeExecutable <node.exe> -PackageDirectory <new-package-directory>
+node scripts/build-ui-runtime.cjs
+if ($LASTEXITCODE -ne 0) { throw 'Management UI build failed.' }
+$runtime = '<new-absolute-runtime-directory>'
+New-Item -ItemType Directory -Path $runtime -ErrorAction Stop | Out-Null
+node node_modules/typescript/bin/tsc --outDir (Join-Path $runtime 'dist')
+if ($LASTEXITCODE -ne 0) { throw 'Facade build failed.' }
+Copy-Item -LiteralPath package.json,package-lock.json,LICENSE -Destination $runtime
+New-Item -ItemType Directory -Path (Join-Path $runtime 'vendor'),(Join-Path $runtime 'ui') | Out-Null
+Copy-Item -LiteralPath vendor/telemetry-contract -Destination (Join-Path $runtime 'vendor/telemetry-contract') -Recurse
+Copy-Item -LiteralPath ui/newtree -Destination (Join-Path $runtime 'ui/newtree') -Recurse
+pwsh -NoProfile -File windows/install/New-HostDeckPackage.ps1 -AgentRuntimeDirectory $runtime -NodeExecutable <node.exe> -PackageDirectory <new-package-directory>
 ```
 
 The package builder requires PowerShell 7; parsing it in Windows PowerShell 5.1 does not establish runtime compatibility. Packaging publishes self-contained win-x64 .NET binaries, copies the facade
 distribution and management UI under `agent/ui/newtree`, installs Node production dependencies with
 `npm ci --omit=dev --ignore-scripts`, copies Node, and hashes every packaged
 file into `manifest.json`. Review the resulting public-source and dependency
-contents before release. The installer is an administrative transaction and
+contents before release, including unexpected additions relative to the accepted
+package; matching manifest hashes alone do not justify new payload. The installer is an administrative transaction and
 must be run only by the owner/integration gate:
 
 ```powershell
