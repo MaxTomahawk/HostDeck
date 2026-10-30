@@ -100,7 +100,12 @@ export class StateServices {
     child.on('error',()=>{if(this.closed)return;j.status='interrupted';j.error='Runner could not be started.';j.updated=new Date().toISOString();this.saveJob(j);this.event(j.ownerId,'job_runner_error',{jobId:j.id,status:j.status})});
     child.on('close',async()=>{if(timer)clearTimeout(timer);this.children.delete(j.id);if(this.closed||j.status==='timed_out')return;try{if(!await this.reconcile(j)&&['queued','running','cancelling','uncertain'].includes(j.status)){j.status='uncertain';j.error='Runner exited without a completion receipt; command outcome is uncertain.';j.updated=new Date().toISOString();this.saveJob(j);this.event(j.ownerId,'job_uncertain',{jobId:j.id,status:j.status})}}catch{if(['queued','running','cancelling','uncertain'].includes(j.status)){j.status='uncertain';j.error='Runner exited without a completion receipt; command outcome is uncertain.';j.updated=new Date().toISOString();this.saveJob(j);this.event(j.ownerId,'job_uncertain',{jobId:j.id,status:j.status})}} });
   }
-  private minimalEnvironment(){const env:NodeJS.ProcessEnv={SystemRoot:process.env.SystemRoot, SystemDrive:process.env.SystemDrive, windir:process.env.windir, TEMP:process.env.TEMP,TMP:process.env.TMP,PSModulePath:process.env.PSModulePath, ...this.options.environment};for(const k of Object.keys(env))if(/TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY/i.test(k))delete env[k];return env;}
+  private minimalEnvironment(){
+    // The host may run under PowerShell 7 while jobs use Windows PowerShell 5.1.
+    // Let the selected shell discover its own modules instead of inheriting an
+    // incompatible host search path. Explicit configured environment still wins.
+    const env:NodeJS.ProcessEnv={SystemRoot:process.env.SystemRoot, SystemDrive:process.env.SystemDrive, windir:process.env.windir, TEMP:process.env.TEMP,TMP:process.env.TMP, ...this.options.environment};for(const k of Object.keys(env))if(/TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY/i.test(k))delete env[k];return env;
+  }
   async handle(name:string,args:unknown,context:StateContext):Promise<unknown>{await this.ready;name=name.startsWith('hostdeck_')?name.slice('hostdeck_'.length):name;const a=safe(args),c=context;this.assertContext(c);
     if(name==='submit_job'){
       const command=a.command, idem=String(a.idempotency_key??''), timeout=Number(a.timeout_seconds);
