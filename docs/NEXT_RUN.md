@@ -2,7 +2,7 @@
 
 ## Current execution — 30 October / HD-DELIVERY-B007
 
-The owner reinstated the complete `HD-GOAL-COMPLETE-WINDOWS-001`. Preserve all 140 requirements, eight policies, 18 Everything criteria and 17 quality criteria. The 79 extension candidates remain inventoried for work after the first working delivery. The goal's product scope is unchanged.
+The owner reinstated the complete `HD-GOAL-COMPLETE-WINDOWS-001`. Preserve all 140 requirements, eight policies, 18 Everything criteria and 17 quality criteria. The 79 extension candidates remain inventoried for work after the first working delivery. The goal's product scope is unchanged. Independent ordinary ChatGPT has now also read the terminal 052 job and both artifacts, decoded the actual bytes and checked both hashes and unique BEGIN/END markers; its private Git evidence is pinned in Operator. That corroborates terminal status/output, while the crash and intermediate continuity remain separately observed root evidence.
 
 **Accepted baseline:** upgrade 048 installed manifest `bc50f441` from installer source `b61c61c`, reusing runtime `7f92e6e`. Separate checks verify all 23,035 installed files, exact membership, unchanged config and protected data pins, retained previous/archive, 15 protected ACLs and the running automatic LocalService. Actual installed MCP discovers 57 tools and passes nine scoped Unicode/Everything/cleanup calls. Connected ChatGPT reports ready, Everything ready and fulltext `selected_not_active`. The 88 jobs and 172 current artifact hashes/expiry, both vendor INIs and empty provider tables are preserved. Eight earlier artifacts expired under the existing retention policy; the original failed equality check and exact removal assessment remain retained.
 
