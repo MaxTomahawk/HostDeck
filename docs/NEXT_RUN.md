@@ -65,8 +65,44 @@ button: the backend performs the protected digest/owner approval check. The
 browser fixture now includes those real notice codes; the three changed UI
 cases pass again without skips. The browser sources also receive an explicit
 strict type check before bundling; backend tsc alone did not cover ui/.
-The initial full package is retained as a pre-remediation intermediate; qualify
-a separate composition with the repaired native DLL and updated UI bytes.
+The initial full package is retained as a pre-remediation intermediate. A separate
+private candidate from source `e1bd12f` now composes its repaired native DLL and
+updated UI bytes. Independent disk readback verifies all 23,037 member hashes,
+exact membership, no reparse points and all eighteen internal broker pins.
+Compared with installed 068 it changes fifteen existing files, adds one UI
+source file and removes none. Fresh compilation also changes service/tray/
+runner bytes, despite their unchanged sources; prior lifecycle acceptance is
+retained for its original binaries, not transferred to this candidate. All
+three native applications include the same qualified .NET runtime version.
+The candidate's own Node, production dependencies, facade and native worker
+pass twelve actual local MCP/protocol checks with isolated state/workspace:
+device readiness, explicit versioned manager resource containing the new
+controls, legacy-resource refusal, templates/prompts, Unicode write/read/hash
+and exact cleanup. It discovers 53 tools under this deliberately isolated
+configuration; this is not installed complete-catalog or ordinary-ChatGPT
+acceptance. The private candidate remains unsigned and uninstalled.
+
+The current protected index selection exists, but its approval record is
+literally null. The owner has been asked separately whether to approve the
+existing selection without starting an index; no reply or approval is inferred.
+Only that dependent action waits. Do not request the already configured roots
+again, fill the approval autonomously or start personal indexing implicitly.
+
+Test-cache evidence 080/081/082/083/085 is privately archived and every ZIP
+member is independently hash-verified. The execution layer rejects the owned
+cache cleanup command before PowerShell starts; no cleanup request is submitted
+and all five protected caches remain. Do not route the rejected deletion through
+another tool. Original failed/diagnostic cases retain their verdicts. The 085
+effect assertion is separately recorded as a signed client observation, not OS
+attestation. The live installed manifest/configuration and running service PID
+remain unchanged throughout this round.
+
+Next consolidated boundary: retain this candidate and its evidence; resolve
+actual intended-client isolation and historical publication findings, and
+prepare the remaining supported client/lifecycle acceptance together. Any
+installation or disruptive acceptance still needs a new concrete maintenance
+window. Native Word PDF-export timeout is retained as an oracle limitation;
+do not silently add Word-to-PDF conversion to the defined Markdown-to-PDF API.
 
 1. **Availability restored and independently observed:** installed service, tray and user agent are running; the connected MCP returns ready. The existing ordinary-ChatGPT acceptance chat independently confirms device readiness, eligible session and display metadata. Its previous access denial does not recur in this scoped check. This is not complete client or lifecycle acceptance.
 2. **Everything user startup repair:** the service was running but its existing qualified user query instance was absent. Only that missing hash/version-pinned instance was started using its existing startup command. Its actual provider state transitions from not running through loading to healthy/ready; preserve the original independent failure. The same command is registered under the enrolled user's previously absent, nonconflicting Everything startup value. Separate comparison preserves all 296 existing volume/folder/content/index settings and unchanged provider preferences. No service, tray, agent, tunnel or session is interrupted. The same ordinary-ChatGPT acceptance chat independently confirms the repaired provider is running, compatible and healthy/ready. Actual next-logon startup remains unaccepted.

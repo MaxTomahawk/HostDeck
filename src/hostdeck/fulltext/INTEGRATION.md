@@ -48,8 +48,10 @@ Everything's filename index is not a document-content index.
    independently reviewed contract/selection change; no silent fallback.
 4. Call `port.close()` on process shutdown; after a restart `openConfirmed`
    marks a previously running scan `interrupted` and only an explicit
-   `resume` can continue. A scan advances only through a bounded
-   `step` call, not background scheduling. A requested cancel/pause may
+   `resume` can continue. Direct engine/port calls advance through bounded
+   `step` calls. The MCP start/resume adapter explicitly schedules the one-shot
+   bounded driver; opening an index never launches it. There is no watcher,
+   periodic rescan or automatic resume after restart. A requested cancel/pause may
    complete at the next guarded boundary; already committed documents remain.
 5. Apply installer-local ACLs to the index database **and WAL/SHM sidecars**
    **and the persistent `.writerlock.sqlite` companion**. This lock companion
