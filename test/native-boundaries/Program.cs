@@ -68,6 +68,14 @@ for(var key=1;key<=24;key++) {
         } catch(TargetInvocationException) { failures.Add($"function key {prefix}{key} was refused"); }
     }
 }
+// INPUT074: END failed in the installed remote tool before Ctrl+A could run.
+// Decode only: this regression never injects keyboard input.
+foreach(var name in new[]{"end","END","End"}) {
+    try {
+        if((byte)keyCode.Invoke(null,new object[]{name})! != 0x23)
+            failures.Add($"navigation key {name} mapped incorrectly");
+    } catch(TargetInvocationException) { failures.Add($"navigation key {name} was refused"); }
+}
 foreach(var unsupported in new[]{"F0","F25","not-a-key"}) {
     bool denied=false;
     try { keyCode.Invoke(null,new object[]{unsupported}); }

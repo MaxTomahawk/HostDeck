@@ -374,6 +374,7 @@ public sealed class InputService : IInputService
             "space" => 0x20,
             "backspace" => 0x08,
             "delete" => 0x2E,
+            "end" => 0x23,
             "left" => 0x25,
             "up" => 0x26,
             "right" => 0x27,

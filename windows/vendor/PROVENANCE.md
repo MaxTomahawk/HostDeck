@@ -12,6 +12,11 @@ HostDeck also preserves explicit pointer coordinates instead of replacing them
 with the window centre, and starts a drag at the previously selected origin.
 Window/session bounds remain checked by HostDeck before invoking the service.
 
+HostDeck normalizes function-key names and maps the End navigation key to its
+Windows virtual-key code. Native decode regressions do not themselves prove
+installed keyboard effects. The original source revision and MIT attribution
+remain unchanged.
+
 HostDeck's local `VisionService` modification exposes the selected on-device
 WinRT OCR recognizer language and throws a typed, bounded missing-language
 error. This does not import a newer upstream revision or claim multilingual
