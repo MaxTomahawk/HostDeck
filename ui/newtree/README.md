@@ -1,5 +1,16 @@
 # HostDeck MCP App management panel
 
+The **Document content** section reuses the existing authorized full-text tools.
+Opening the section makes no request. Status and configuration preview are
+explicit reads; opening a protected owner-approved configuration, starting,
+pausing, resuming and cancelling each require a separate user action. The view
+cannot choose roots, grant permissions, install software or approve its own
+configuration digest. Search displays authorized snippets as plain text and
+retains partial-coverage and last-scan limits. There is no automatic polling,
+activation, resumption or mutation retry. After an unverified change, controls
+remain disabled until a fresh status readback. Device/view changes invalidate
+outstanding responses and subsequent actions.
+
 `index.html`, the bundled `app.js`, and `styles.css` are served as the versioned `ui://hostdeck/management/v2` MCP App and by the standalone same-origin `/ui` route. Rebuild `app.js` from `app.ts` with `npx esbuild ui/newtree/app.ts --bundle --format=esm --platform=browser --outfile=ui/newtree/app.js` after changing the source. MCP Apps use the official `@modelcontextprotocol/ext-apps` `App` and `PostMessageTransport`; standalone mode uses the official MCP SDK Streamable HTTP client and an in-memory short-lived bearer token. Both paths show actual server responses, require an authorized device ID, and keep untrusted tool output in text nodes.
 
 ## B007 extension manager

@@ -17,6 +17,13 @@ Windows virtual-key code. Native decode regressions do not themselves prove
 installed keyboard effects. The original source revision and MIT attribution
 remain unchanged.
 
+HostDeck's clipboard paste path now requires a complete independently cloned
+snapshot before replacing clipboard data, preserves an empty clipboard and
+refuses unreadable or unsupported payloads without exposing their contents.
+Observed clipboard sequence changes skip restoration over a later copy; these
+checks are not an atomic transaction across applications. Synthetic native
+regressions do not establish installed or full rich-clipboard acceptance.
+
 HostDeck's local `VisionService` modification exposes the selected on-device
 WinRT OCR recognizer language and throws a typed, bounded missing-language
 error. This does not import a newer upstream revision or claim multilingual

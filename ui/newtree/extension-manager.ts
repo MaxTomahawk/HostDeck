@@ -8,6 +8,7 @@ import {
   type ManagerEntry, type ProviderSnapshot, type LiveFunction,
 } from './extension-catalog.js';
 import {readDeviceReadiness} from './extension-device-readiness.js';
+import {mountDocumentIndex} from './document-index.js';
 
 export interface ManagerConnection {
   call: (name: string, args?: Record<string, unknown>) => Promise<any>;
@@ -67,6 +68,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   nav.setAttribute('role', 'group'); nav.setAttribute('aria-label', 'Manager sections');
   const tabLibrary = button(nav, 'Library', () => switchTab('library'));
   const tabFunctions = button(nav, 'Functions and preferences', () => switchTab('functions'));
+  const tabDocuments = button(nav, 'Document content', () => switchTab('documents'));
   const tabChanges = button(nav, 'Changes', () => switchTab('changes'));
 
   const library = add(host, 'section', undefined, 'manager-section');
@@ -75,6 +77,9 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   functions.setAttribute('aria-label', 'Provider functions and preferences');
   const changes = add(host, 'section', undefined, 'manager-section');
   changes.setAttribute('aria-label', 'Change evidence in this page session');
+  const documents = add(host, 'section', undefined, 'manager-section');
+  documents.setAttribute('aria-label', 'Document content search and index controls');
+  mountDocumentIndex(documents, connection);
   const filters = add(library, 'div', undefined, 'manager-filters');
   const searchLabel = add(filters, 'label', 'Search candidate, ID, category or source');
   const search = document.createElement('input');
@@ -142,7 +147,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
 
   let entries: ManagerEntry[] = mergeManagerCatalog({ providers: [], functions: [] });
   let snapshot: ProviderSnapshot | null = null;
-  let tab: 'library' | 'functions' | 'changes' = 'library';
+  let tab: 'library' | 'functions' | 'documents' | 'changes' = 'library';
   let selectedId: string | null = null;
   let limit = 30, busy = false, saving = false;
   let lastChange: { capability: string; preference: string | null; outcome: string; readback: string } | null = null;
@@ -150,11 +155,13 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
   let snapshotDevice = '';
   let enableFeedback = 'No integration change attempted.';
 
-  function switchTab(target: 'library' | 'functions' | 'changes'): void {
+  function switchTab(target: 'library' | 'functions' | 'documents' | 'changes'): void {
     tab = target;
     library.hidden = target !== 'library'; functions.hidden = target !== 'functions'; changes.hidden = target !== 'changes';
+    documents.hidden = target !== 'documents';
     tabLibrary.setAttribute('aria-pressed', String(target === 'library'));
     tabFunctions.setAttribute('aria-pressed', String(target === 'functions'));
+    tabDocuments.setAttribute('aria-pressed', String(target === 'documents'));
     tabChanges.setAttribute('aria-pressed', String(target === 'changes'));
     if (target === 'functions') renderFunctions();
     if (target === 'changes') renderChanges();

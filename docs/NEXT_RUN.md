@@ -4,6 +4,49 @@
 
 The complete product goal remains open. Resume from these current observations rather than replaying completed requests:
 
+### Owner-directed consolidated delivery round 084
+
+The owner replaces per-patch execution/review/test loops with complete,
+coherent build rounds. Finish the remaining authorized implementation, compile
+as needed, compose one candidate, then run one integrated Windows and ordinary
+ChatGPT acceptance round. Retain focused security/data-preservation checks.
+Bundle acceptance defects into a repair round and rerun only affected paths.
+This changes execution order, not the original 140 requirements, eight policies,
+18 Everything criteria or 17 quality gates. The 79 extensions stay deferred.
+
+| Existing requirement group | Implemented / installed baseline | Remaining delivery boundary |
+|---|---|---|
+| 0001–0015: coherent Windows runtime and lifecycle | Service, tray, session worker, installer; real upgrade/rollback/rollforward and selected crash recovery | Automatic logon/reboot and remaining recovery acceptance; complete resource assessment |
+| 0016–0026: files and search | Installed authorized file operations and independently exercised Unicode/Everything paths | Reconcile remaining negative/paging/large-output criteria against retained evidence |
+| 0027–0033: documents | Installed DOCX/XLSX/PDF repairs; independent edit preservation and native Excel fixture | Word/PDF export and broader document/rendering limits remain unaccepted |
+| 0034–0047: processes, jobs, artifacts and devices | Installed native execution, durable state, containment, cancellation and scoped independent output checks | Remaining recovery/output/measurement criteria; preserve uncertain originals |
+| 0048–0056: desktop and clipboard | Installed session/lock guards; actual scoped UIA, F6, click and modern-control Ctrl+A | End and clipboard source fixes need candidate composition; rich remote clipboard, drag/mixed-DPI and OCR edge acceptance |
+| 0057–0063: browser | Installed owned-context and URL-schema repairs; scoped actual navigation and private-egress refusal | Reconcile remaining DOM/evaluation/context-cleanup cases without replaying accepted work |
+| 0064–0072: MCP contracts and interactive surfaces | Installed stdio/HTTP, discovery, resources/prompts and explicit manager | Real supported hosted rendering and remaining protocol/unsupported-host classification |
+| 0073–0083: remote authentication and administration | Working authenticated remote access; installed authorization-race repair and bounded signed administration | Intended-client isolation beyond shared same-user keys, renewal/revocation and independent installed security acceptance |
+| 0084–0090: ChatGPT plugin and UX | Existing plugin/Skills, ordinary ChatGPT operations, data-first tools and explicit UI | Actual supported desktop/mobile/accessibility and sustained chat-stability acceptance |
+| 0091–0105: providers, manager and document index | Provider catalog/preferences and controlled fulltext backend exist; personal indexing inactive | Complete index controls in existing manager, explicit protected setup/selection, performance and remaining 18-criterion Everything acceptance |
+| 0106–0122: provenance, governance and release | Original mappings and historical evidence retained; local build/review/public screening workflow exists | Reconcile original criteria, dispose of historical credential findings, review/test main and produce release |
+| 0123–0140: audit, resource use, diagnostics and local operation | Scoped actual broker/audit/diagnostic/resource evidence | Remaining cross-surface audit, persistence/resource/lifecycle acceptance and user/admin documentation |
+
+These are delivery groups, not accepted requirement counts. Source, built,
+installed and independently accepted remain separate. Finish missing code and
+the composed package before more small live probes. Keep the current runtime
+available; the previous maintenance window is over. No new outage, personal
+index activation, infrastructure/grant change or stable release is authorized.
+
+Round 084 source now adds a Document content manager section using the existing
+fulltext APIs: explicit status/preview, protected-approved opening, start,
+pause/resume/cancel and safe-text search. Mounting performs no index request;
+opening does not start a scan. An uncertain mutation disables effects until
+status reconciliation, and a device/view change invalidates pending responses.
+No root selection, grants, personal indexing or installed assets are changed.
+The TypeScript/UI build and one combined 24-case affected integration pass
+succeed without skips, including actual Chrome control flows and the official
+SDK iframe's repeated-notification case. Native boundary/End/clipboard checks
+also pass on Windows. Synthetic backend/browser fixture evidence is distinct
+from actual installed ordinary-ChatGPT acceptance.
+
 1. **Availability restored and independently observed:** installed service, tray and user agent are running; the connected MCP returns ready. The existing ordinary-ChatGPT acceptance chat independently confirms device readiness, eligible session and display metadata. Its previous access denial does not recur in this scoped check. This is not complete client or lifecycle acceptance.
 2. **Everything user startup repair:** the service was running but its existing qualified user query instance was absent. Only that missing hash/version-pinned instance was started using its existing startup command. Its actual provider state transitions from not running through loading to healthy/ready; preserve the original independent failure. The same command is registered under the enrolled user's previously absent, nonconflicting Everything startup value. Separate comparison preserves all 296 existing volume/folder/content/index settings and unchanged provider preferences. No service, tray, agent, tunnel or session is interrupted. The same ordinary-ChatGPT acceptance chat independently confirms the repaired provider is running, compatible and healthy/ready. Actual next-logon startup remains unaccepted.
 3. **Candidate 068 installed and separately verified — transition 072:** the owner explicitly approved the proposed twenty-minute window without reboot. Exactly one new GO-gated request completes with exit zero and contained descendants. The recovery helper is independently verified under the existing Explorer, outside any Job Object, before the captured tray/agent are stopped. It restores the known new release at 00:19:17 local time, within the window begun at 00:07:42. Separate readback verifies all 23,036 installed member hashes, exact membership, the predicted worker-pin-only configuration bytes, previous/archive preservation, fifteen protected ACL paths and the running automatic LocalService. All 109 original jobs, both vendor INIs and provider tables are unchanged. All 202 previously stored artifacts had already expired; each removal is checked against the unchanged seven-day retention policy. This is not loss of unexpired data. Actual installed MCP passes nine owned Unicode/Everything/cleanup calls; one signed client effect assertion is actually recorded by the broker, without claiming independent OS attestation. Preserve the original 069 staging request and all failed preparation evidence; no reboot, tunnel, grant or index-scope change occurs.
@@ -14,7 +57,13 @@ The complete product goal remains open. Resume from these current observations r
 
 7. **Independent remote input 073–077, scoped results:** 073 correctly stops before input when the test writer raises its own modal exception, producing duplicate title/process matches. The original failure is preserved; a typed atomic-write correction removes that harness ambiguity without changing HostDeck. In 074 the actual ordinary-ChatGPT F6 call produces exactly one native event, but End is refused; Ctrl+A and click are not attempted after that failure. Source qualification 075 reproduces refusal for end/END/End, adds only the missing Windows virtual-key mapping, and passes the native root/token/WTS/function-key and navigation assertions. This correction is source only, not installed. The original 076 Ctrl+A selection failure remains: completed:true does not select the field. In 077 a passive native event trace observes key code 65 with Control true exactly once while the selection still does not change; do not conflate delivery with application effect or invent its cause. A separate single physical click at the actual UIA button center produces exactly one click/down/up in the owned form. All owned fixtures are archived/hash-matched and removed nonrecursively; runtime processes and global timeout remain unchanged. Earlier fixtures restore the original foreground, but 077's immediate closing observation does not confirm that restoration; it is not accepted and no forced focus is used. These results contribute only to HD-REQ-0050/0051 and QA02/QA14; general input, drag/mixed-DPI, clipboard and complete product acceptance remain open.
 
-Next: qualify the text-field oracle against the actual supported application before changing a working key-delivery path. Preserve the failed selection evidence and unconfirmed foreground restoration. Compose and qualify the source-only End correction with the next required candidate before requesting another installation window; do not interrupt the currently working runtime for this source change. Reconcile the original acceptance matrices and remaining clipboard/document/client/security gates using existing evidence. Continue only changed, failed or genuinely unproved non-disruptive paths. The approved installation window has been used and the runtime is restored; further interruptions require another explicit owner-designated maintenance window. Do not replay accepted upgrade/rollback/job tests, index personal content, rewrite history, publish a release or enable upstream monitoring to bypass an open gate. This installed candidate is not a stable main release.
+8. **Selection oracle 078–079 reconciled:** identical owned-control command processing refuses Ctrl+A under legacy Windows PowerShell/.NET Framework and selects all under modern PowerShell/.NET. A separate ordinary-ChatGPT call against the modern passive fixture actually selects its complete unchanged text after explicit owned-window focus. No custom SelectAll handler is added. The original 076/077 failures and unconfirmed 077 foreground restoration remain preserved. This accepts that one modern control, not every application or keyboard workflow.
+
+9. **Clipboard source qualification 080–083:** preserve all formats before writing temporary paste text; reject unreadable/unsupported formats before overwrite; retain an observed later copy. Empty, Unicode text and HTML/text pass actual Windows clipboard component cases in 081. Bitmap, file list and observed later-copy cases pass in 083 after a native bitmap-alias correction reproduced by 082. These tests run only in an owned noninteractive session-zero window station, with no personal clipboard access or actual keyboard paste. Original access-denied, STA desktop-assignment, compile and bitmap failures remain evidence. All four protected test caches have independently hash-verified private ZIP archives; cleanup is still pending. Sequence checks do not create an atomic cross-application clipboard transaction. The correction is source only, not installed or complete remote clipboard acceptance.
+
+10. **Publication gate failure retained:** the delegated clipboard author published two commits before the mandatory local public-source guard. The root stopped further delegated publication and screened their exact incoming tree locally; that screen passes but cannot retroactively satisfy the missed gate. The source is integrated locally with corrections and actual Windows qualification. Original commits and the W2 incident checkpoint remain; no history rewrite or claim of compliant prepublication screening is made. New root commits still require exact staging and the trusted scanner.
+
+Next: finish the consolidated round above, including explicit manager index controls and the End/clipboard composition. Compile the whole changed surface, run one affected integration pass, then prepare the complete candidate and independent acceptance handoff. Preserve accepted upgrade/rollback/job evidence and all original failures. No service/tray/agent/tunnel/session interruption occurs without a new explicit maintenance window. The installed candidate is not a stable main release.
 
 <details>
 <summary>Retained 30 October checkpoint and preparation</summary>
