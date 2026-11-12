@@ -1,5 +1,87 @@
 # HostDeck next run
 
+## Active execution — 13 November / HD-DELIVERY-B007
+
+Goal `HD-GOAL-COMPLETE-WINDOWS-001` is OPEN: 140 requirements, eight policies,
+18 Everything criteria and 17 quality gates. The 79 extensions remain deferred.
+Git is source authority; reuse Operator project/W5 and PR14. No Actions or
+upstream monitoring. Work in coherent build/repair rounds; do not replay finished
+or uncertain requests/jobs or requalify unchanged paths.
+
+**Availability:** keep the working service/tray/agent/tunnel/user session running.
+The previous maintenance window is over. The 01:35 heartbeat resumes work only;
+it is not permission for an outage, reboot, index start, grants, identities,
+remote infrastructure, history rewrite or usage reset. Five archived protected
+test caches remain after an execution-layer cleanup rejection; no alternate route.
+
+| Delivery component | Actual boundary |
+|---|---|
+| Installed068 / transition072 | Manifest `e26238ea`, config `9cd02886`; current service still Running/Auto, same PID. Actual Windows/ordinary-ChatGPT scoped evidence is retained. |
+| Windows candidate084 | Source `e1bd12f`, manifest `ff207604`; 23,037 members previously verified. End/clipboard preservation and explicit index controls built/qualified; NOT installed. |
+| Portable plugin089 | Source `294afa6`; 67 source contracts, four templates, three prompts. Updated workflows and exact nine-file source-template ZIP; two builds have identical bytes. NOT a live plugin update. |
+| Owner selection087 | Existing selected volumes/formats/budgets approved; real installed reader accepts the digest. No scan started. Do not ask for that same selection/approval again. |
+| Client observation090 | Existing ordinary ChatGPT: two read-only calls succeed and observer reports host display confirmation. Actual visual/keyboard/mobile/accessibility interaction remains unaccepted. |
+| Transition preview091 | Actual pinned installer functions on a private copy predict config `7fe4898f`; separate byte/JSON comparison proves only the worker hash changes. Live config/service unchanged; NOT protected-staged or executable recovery. |
+
+### Cheap repeatable checks
+
+`python scripts/check-delivery.py` summarizes Git and the pinned original scope.
+Add `--evidence-root <private-root> --proof-index <private-index.json>
+--candidate-root <existing-candidate> --live` for bounded proof hashes, manifest
+binding and actual Windows service/health/config identity. Exit 0 is NOT product
+acceptance. It starts no tests/index/jobs and replays no effects.
+
+`node --import tsx scripts/sync-hostdeck-reference.mjs --check` detects source
+reference drift. Only explicit `--write` regenerates it; no server is started.
+`python scripts/package-hostdeck-plugin.py --output <new-private-plugin.zip>`
+validates the exact source set, JSON/YAML/links/license and reproduces the ZIP.
+It preserves the unresolved endpoint; never overwrites, uploads or reconnects.
+Python/PyYAML and the reviewed development dependencies must already exist.
+
+Eight helper/release tests and four actual plugin-package tests pass. The
+initial mistaken unittest-discovery invocation ran zero tests and is retained;
+the actual seven-case helper run and release variants then pass. Six inherited
+`npm run release*` modes now refuse before Git/npm/network/Actions effects.
+No candidate/runtime rebuild is needed for these source-tool/documentation edits.
+
+### Concrete remaining work
+
+1. **Client authority:** DR01-0007 remains OPEN. Same-SID CurrentUser keys and
+   process/package metadata are insufficient. Assessment092 examines a protected
+   launcher: initial-object DACLs are plausible, but future runtime threads,
+   application IPC/influence and the actual Codex route remain unproved. Do not
+   build a narrow initial-object probe as if it qualified a complete client,
+   add a generic signer proxy or change production identities without mandate.
+2. **Grouped acceptance:** preserve048/049/052 and the original failures.
+   Reconcile retained file/search negative/paging, document/OCR/input/clipboard, resource,
+   host/mobile/accessibility, logon/reboot/lifecycle and resource-impact criteria
+   require their actual scoped evidence. Browser/SDK fixtures are not host proof.
+   The owner has been asked to expand the existing inline acceptance panel;
+   Computer Use activation and verified navigation are currently unavailable.
+3. **Transition:** retain084 and copy-only091. Before a permitted installation,
+   prepare/verify exact protected staging, fresh preservation preconditions and
+   request-bound recovery. A NEW concrete maintenance window is required before
+   any switch/restart; current preview is expressly unbound and unauthorized.
+4. **Publication/release:** the historical review already identifies27 credential
+   candidates plus seven fixtures/examples. Do not repeat research, test values,
+   ignore scanner findings or rewrite refs. Owner/upstream credential disposition,
+   complete independent acceptance, source review/tested main and release remain
+   open. Public-source staged screens pass for089; history is NOT declared clean.
+
+Private raw outputs, archives, scripts and receipts remain in the existing
+Git audit store under delivery089, transition091 and their retained predecessors.
+The private two-level metadata index covers over600 existing JSON records in
+about4MiB, without walking packages or reading full logs. Its IDs/verdict words
+are lookup hints, never accepted coverage. Consult it before choosing another
+probe; audit-time and search/paging work already have retained records.
+Operator checkpoints carry source/evidence pointers; they are reports, not effect
+proof. The one heartbeat runs 13 November01:35 Europe/Amsterdam in this thread;
+pause it on delivery and do not create another watcher or duplicate plan.
+
+<details>
+<summary>Retained earlier execution notes and original evidence boundaries — historical, not a second plan</summary>
+
+
 ## Current execution — 12 November / HD-DELIVERY-B007
 
 The complete product goal remains open. Resume from these current observations rather than replaying completed requests:
@@ -503,5 +585,7 @@ The HostDeck service also lacked SCM failure actions. Its installer now register
 3. Review and merge the tested product through PR review to `main`, then run public-source and artifact screening for release. The candidate history contains 27 credential findings; a full private backup has been verified, and the owner's disposition is pending. Do not rewrite history by default or release while this remains unresolved.
 
 The installed broker still needs an action-local native-command environment preamble, documented in the global discovery guide; the corrected native runner has been built for future packaging. The installed signed route is the durable local administrative path; no further UAC is needed for the current work. Preserve the original installer, service/session, desktop, jobs/artifacts, remote ingress, ChatGPT, and rollback scope. Use the existing Operator project and GitHub as the work/evidence authorities; do not create Linear plans or run GitHub Actions. No automatic upstream monitoring until full acceptance and explicit owner permission.
+
+</details>
 
 </details>

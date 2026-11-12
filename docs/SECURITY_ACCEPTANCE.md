@@ -88,6 +88,29 @@ before SYSTEM admission/effect while each intended client succeeds through an
 independently verified identity, without an accessible arbitrary signing proxy.
 No new signer, principal, key, grant or production route is selected or deployed.
 
+### Protected-launcher assessment 092 — not an implemented client boundary
+
+An independent source assessment examines SYSTEM-owned process/thread/token
+objects established before a pinned user client resumes. This can support a
+narrow initial-object experiment; it does not authenticate the actual Codex
+transport or supply a protected goal/action mandate. No such experiment or
+production security change is performed in this round.
+
+The initial thread descriptor does not automatically cover later runtime
+threads: their default descriptors come from the creating token. A changed
+token default DACL also affects other newly created securable objects, requiring
+application compatibility qualification. An asynchronous DACL repair monitor is
+not evidence of atomic protection. See Microsoft's
+[CreateThread contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createthread)
+and [token default DACL](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_default_dacl).
+
+This limits that launcher proposal; it is not a claim that every future Windows
+client design is impossible or a new requirement for absolute injection/admin
+resistance. Keep the original policy scope: independently verified intended
+client identity/authorization and separate goal/action checks before elevated
+effect. Current file-queue signatures still do not establish an exclusive
+origin. No unsupported process-isolation or completed DR01-0007 verdict is made.
+
 ## B007 pending authorization correction 062 — scoped source evidence
 
 A real loopback HTTP MCP regression with signed fixture tokens, an on-disk grant store and an owned file reproduces a facade race: grant revocation or revision replacement during the asynchronous executor check still permits backend dispatch and returns the synthetic private bytes. Adapter reauthorization has the same gap. The original failed runs are retained privately.
