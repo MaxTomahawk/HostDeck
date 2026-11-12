@@ -82,11 +82,19 @@ and exact cleanup. It discovers 53 tools under this deliberately isolated
 configuration; this is not installed complete-catalog or ordinary-ChatGPT
 acceptance. The private candidate remains unsigned and uninstalled.
 
-The current protected index selection exists, but its approval record is
-literally null. The owner has been asked separately whether to approve the
-existing selection without starting an index; no reply or approval is inferred.
-Only that dependent action waits. Do not request the already configured roots
-again, fill the approval autonomously or start personal indexing implicitly.
+The owner explicitly answers the concrete existing-selection proposal:
+approve the selection, do not start. One exact bounded action 087 atomically
+replaces the null protected approval with its approved owner/config digest and
+retains the original null record as a protected backup. Separate readback
+matches the prepared bytes and original backup, unchanged selection and all
+four existing ACLs, unchanged running service, and zero index files. The actual
+installed production selection-store reader accepts that exact digest with the
+installer-pinned native effective-ACL tuple under the observed user identity.
+No engine is opened, confirmed or started; connected HostDeck remains ready.
+This is approval/readback evidence, not remote index-use acceptance or OS
+attestation. Do not request the selected roots or this same approval again;
+personal indexing still requires an explicit start, and live maintenance still
+requires its own concrete window.
 
 Test-cache evidence 080/081/082/083/085 is privately archived and every ZIP
 member is independently hash-verified. The execution layer rejects the owned
