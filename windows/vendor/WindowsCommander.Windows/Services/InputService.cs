@@ -1,3 +1,6 @@
+using System.Collections.Specialized;
+using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WindowsCommander.Core.Models;
 using WindowsCommander.Core.Services;
@@ -66,77 +69,163 @@ public sealed class InputService : IInputService
         return Task.FromResult(new InputActionResult("type_text", Completed: true, text.Length));
     }
 
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
+
     private void PasteText(string text)
     {
         RunOnStaThread(() =>
         {
-            var restoreClipboard = CaptureClipboard();
-            try
-            {
-                Clipboard.SetText(text);
-                SendHotkey(new[] { "ctrl" }, "v");
-
-                // The target reads the clipboard asynchronously when it handles
-                // the Ctrl+V. Restoring the previous contents too soon wins the
-                // race and the target pastes nothing, so wait long enough for
-                // even a busy app to have consumed the paste.
-                Thread.Sleep(400);
-            }
-            finally
-            {
-                restoreClipboard();
-            }
-
+            PasteWithPreservation(text, Clipboard.GetDataObject, Clipboard.SetText,
+                snapshot =>
+                {
+                    if (snapshot.GetFormats(autoConvert: false).Length == 0)
+                        Clipboard.Clear();
+                    else
+                        Clipboard.SetDataObject(snapshot, copy: true);
+                },
+                GetClipboardSequenceNumber,
+                () =>
+                {
+                    SendHotkey(new[] { "ctrl" }, "v");
+                    // The target consumes Ctrl+V asynchronously.
+                    Thread.Sleep(400);
+                });
             return true;
         });
     }
 
-    // Snapshots every format currently on the clipboard and returns an action
-    // that restores it. This preserves images and file lists too, not just
-    // text, so a type_text call never silently destroys what the user copied.
-    // Must be called on an STA thread.
-    private static Action CaptureClipboard()
+    // Narrow test seam: callers supply synthetic IDataObject/sequence/write
+    // delegates; no test needs access to the actual user's clipboard.
+    internal static void PasteWithPreservation(
+        string text, Func<IDataObject?> read, Action<string> write,
+        Action<DataObject> restore, Func<uint> sequence, Action paste)
     {
+        DataObject snapshot;
+        uint before;
         try
         {
-            var current = Clipboard.GetDataObject();
-            var formats = current?.GetFormats(autoConvert: false);
-            if (current is null || formats is null || formats.Length == 0)
-            {
-                // The clipboard was empty: restoring means clearing the text
-                // this paste is about to put there.
-                return static () => Clipboard.Clear();
-            }
-
-            var snapshot = new DataObject();
-            var captured = false;
-            foreach (var format in formats)
-            {
-                try
-                {
-                    var data = current.GetData(format, autoConvert: false);
-                    if (data is not null)
-                    {
-                        snapshot.SetData(format, data);
-                        captured = true;
-                    }
-                }
-                catch
-                {
-                    // Some formats expose data that cannot be read or cloned
-                    // (delay-rendered or COM-backed); skip them.
-                }
-            }
-
-            // If nothing could be cloned, leave the typed text on the clipboard
-            // rather than blindly clearing content we failed to capture.
-            return captured
-                ? () => Clipboard.SetDataObject(snapshot, copy: true)
-                : static () => { };
+            before = sequence();
+            snapshot = SnapshotClipboardData(read());
+            if (!SameClipboardSequence(before, sequence()))
+                throw new InvalidOperationException();
         }
         catch
         {
-            return static () => { };
+            // Never include clipboard data, format names or provider errors.
+            throw new InvalidOperationException("Clipboard cannot be preserved before typing.");
+        }
+
+        uint pasted = 0;
+        try
+        {
+            write(text);
+            pasted = sequence();
+            if (pasted == 0 || pasted == before)
+                throw new InvalidOperationException("Clipboard write identity unavailable.");
+            paste();
+        }
+        finally
+        {
+            if (pasted != 0)
+            {
+                var current = sequence();
+                if (current == 0)
+                    throw new InvalidOperationException("Clipboard state unavailable after typing.");
+                // A later user copy wins; never blindly restore over it.
+                if (SameClipboardSequence(pasted, current))
+                {
+                    try { restore(snapshot); }
+                    catch { throw new InvalidOperationException("Clipboard could not be restored."); }
+                }
+            }
+        }
+    }
+
+    internal static bool SameClipboardSequence(uint expected, uint actual) =>
+        expected != 0 && expected == actual;
+
+    // All formats must be independently cloneable before the first SetText.
+    // A partially readable/delay-rendered clipboard is unsafe to replace.
+    internal static DataObject SnapshotClipboardData(IDataObject? source)
+    {
+        try
+        {
+            if (source is null)
+                throw new InvalidOperationException();
+            var formats = source.GetFormats(autoConvert: false);
+            if (formats is null)
+                throw new InvalidOperationException();
+
+            var snapshot = new DataObject();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var format in formats)
+            {
+                if (string.IsNullOrWhiteSpace(format) || !seen.Add(format))
+                    throw new InvalidOperationException();
+                var value = source.GetData(format, autoConvert: false);
+                if (value is null)
+                    throw new InvalidOperationException();
+                snapshot.SetData(format, autoConvert: false, CloneClipboardValue(value));
+                if (!snapshot.GetDataPresent(format, autoConvert: false))
+                    throw new InvalidOperationException();
+            }
+            if (snapshot.GetFormats(autoConvert: false).Length != formats.Length)
+                throw new InvalidOperationException();
+            return snapshot;
+        }
+        catch
+        {
+            throw new InvalidOperationException("Clipboard formats could not all be preserved.");
+        }
+    }
+
+    private static object CloneClipboardValue(object value) => value switch
+    {
+        string text => text,
+        byte[] bytes => (byte[])bytes.Clone(),
+        string[] files => (string[])files.Clone(),
+        StringCollection files => CloneFileList(files),
+        Image image => image.Clone(),
+        Stream stream => CloneStream(stream),
+        _ => throw new InvalidOperationException()
+    };
+
+    private static StringCollection CloneFileList(StringCollection files)
+    {
+        var result = new StringCollection();
+        foreach (string? file in files)
+        {
+            if (file is null) throw new InvalidOperationException();
+            result.Add(file);
+        }
+        return result;
+    }
+
+    private static MemoryStream CloneStream(Stream source)
+    {
+        if (!source.CanRead || !source.CanSeek)
+            throw new InvalidOperationException();
+        const long maxBytes = 64L * 1024 * 1024;
+        var originalPosition = source.Position;
+        try
+        {
+            source.Position = 0;
+            var result = new MemoryStream();
+            var buffer = new byte[8192];
+            int count;
+            while ((count = source.Read(buffer, 0, buffer.Length)) != 0)
+            {
+                if (result.Length + count > maxBytes)
+                    throw new InvalidOperationException();
+                result.Write(buffer, 0, count);
+            }
+            result.Position = 0;
+            return result;
+        }
+        finally
+        {
+            source.Position = originalPosition;
         }
     }
 
