@@ -4,6 +4,34 @@
 
 The complete product goal remains open. Resume from these current observations rather than replaying completed requests:
 
+### Repeatable resumption 089
+
+The owner requests small programs for repeated work. Use
+`python scripts/check-delivery.py` with the retained private round-084 proof
+index/evidence root and `--candidate-root ... --live` to summarize Git, the
+original 140/8/18/17 inventory, 25 proof hashes, candidate manifest, live service,
+loopback health and installed manifest/config hashes. It executes no tests,
+effects or retries and makes no acceptance decision. It does not rehash the
+entire payload or treat old proof contents as fresh effects. Keep private inputs
+outside Git. Source-only focused tests qualify this helper and the retired
+release entry point; no candidate rebuild or installed update is needed for
+these engineering-tool/documentation changes.
+
+The inherited six `npm run release*` modes now refuse before any version, Git,
+network, npm or Actions operation. They previously targeted an upstream CI
+publisher; use the local Windows packaging reference instead. Historical
+credential review already distinguishes 27 real credential candidates from
+seven fixtures/examples. Do not repeat that research, probe validity or weaken
+the scanner: protected ownership/revocation disposition remains missing.
+User/client/Windows docs now distinguish retained actual installed evidence
+from candidate-only manager/clipboard changes and still-open full acceptance.
+
+One heartbeat resumes this thread on 13 November at 01:35 Europe/Amsterdam.
+It is not a maintenance window, index-start permission or a recurring watcher.
+Pause it when delivered. Continue the existing goal and Operator project;
+exclusive intended-client identity, remaining integrated acceptance, historical
+credential disposition and reviewed tested main/release are still open.
+
 ### Owner-directed consolidated delivery round 084
 
 The owner replaces per-patch execution/review/test loops with complete,

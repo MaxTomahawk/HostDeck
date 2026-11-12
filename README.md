@@ -26,6 +26,10 @@ The `hostdeck` npm executable points to the same built entry point after packagi
 
 ## Current status
 
-This source package is under development. A build or focused test does not establish a complete Windows installation or product acceptance. Service lifecycle, installer and rollback, remote OAuth/ingress, real ChatGPT tool discovery and interaction, and independent end-to-end acceptance remain outstanding. Automatic upstream monitoring is inactive.
+This source package is under development. Scoped actual Windows evidence covers installation, upgrade/rollback/rollforward, durable-job recovery and connected ordinary-ChatGPT operations. These results belong to their recorded builds; they do not qualify every later candidate. Automatic logon/reboot, complete supported-host interaction, intended administrator-client isolation, historical credential disposition and final independent product acceptance remain open. Automatic upstream monitoring is inactive.
+
+For daily use, keep the installed service and enrolled-user tray running and use the existing authorized client connection. A source build does not update that installation. Do not run an installer, rollback or stop command against a working installation outside an owner-designated maintenance window. See [Windows operation](docs/WINDOWS.md) and [client setup](docs/CLIENT.md).
+
+The inherited `npm run release*` commands are retired and exit without effects. Local package preparation is documented in [docs/WINDOWS.md](docs/WINDOWS.md); publishing still requires reviewed, tested `main`, complete acceptance and the privacy/history gates.
 
 Read [docs/NEXT_RUN.md](docs/NEXT_RUN.md) for the current execution checkpoint and [docs/PUBLIC_SOURCE_POLICY.md](docs/PUBLIC_SOURCE_POLICY.md) before preparing public changes.

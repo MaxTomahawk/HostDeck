@@ -116,7 +116,7 @@ preview bundles there. From the reviewed repository root, after installing
 dependencies with `npm ci --ignore-scripts`:
 
 ```powershell
-node scripts/build-ui-runtime.cjs
+node scripts/build-hostdeck-ui.mjs
 if ($LASTEXITCODE -ne 0) { throw 'Management UI build failed.' }
 $runtime = '<new-absolute-runtime-directory>'
 New-Item -ItemType Directory -Path $runtime -ErrorAction Stop | Out-Null
@@ -156,12 +156,49 @@ rule or change a tunnel, DNS or production identity. An enrolled user then
 runs `windows/install/Register-HostDeckUser.ps1` unelevated with
 `-InstallRoot`; it verifies the enrolled SID and sets only that user's HKCU Run entry.
 `windows/install/Rollback-HostDeck.ps1 -InstallRoot <path>` restores the
-previous package. A real fresh installation and package update completed;
-installed enrollment initially revealed Windows process-query permission failures.
-The subsequent update passes repeated signed enrollment challenges, enrolled-user
-tray startup and loopback HTTP checks. Installed detached-job reconnect still
-requires its startup fix. Reboot recovery and final upgrade/rollback acceptance remain pending; see
-[NEXT_RUN.md](NEXT_RUN.md) for the current checkpoint.
+previous package. Real fresh installation, upgrade, rollback and rollforward
+evidence is retained for the recorded packages. Installed detached-job execution
+and active-job agent recovery also have scoped actual evidence. A later rebuild
+does not inherit those verdicts automatically. Automatic logon/reboot and
+remaining lifecycle acceptance stay open; see [NEXT_RUN.md](NEXT_RUN.md).
+
+On an already working installation, use the existing enrolled-user tray and
+service. Source/package preparation does not require stopping either one.
+Installation, rollback, service/session restarts and crash/reboot acceptance
+require a concrete owner-designated maintenance window and a prepared exact
+package/configuration/recovery transaction. Do not register a duplicate tray
+or rerun enrollment to repair an unrelated client problem.
+
+## Local release and resumable checks
+
+All inherited `npm run release*` entry points are retired. They return exit 2
+without building, bumping versions, changing Git, pushing tags, invoking Actions
+or publishing packages. This includes dry-run, rehearsal and alpha flags. The
+package builder above prepares a local candidate; it does not publish a release.
+A release must come from reviewed, tested `main` with complete independent
+acceptance, reviewed package/license provenance, a recovery path and passing
+staged and all-reachable-history public-source checks. Existing credential
+findings are unresolved; do not ignore them or test their values against a service.
+
+For cheap resumption, run `python scripts/check-delivery.py`. It reads Git and
+the pinned original 140/8/18/17 scope. To verify retained private evidence and
+the current Windows runtime in the same command:
+
+```powershell
+python scripts/check-delivery.py --evidence-root <private-evidence-root> --proof-index <private-proof-index.json> --candidate-root <existing-candidate-directory> --live
+```
+
+The private proof index lists relative evidence paths, byte counts, SHA-256
+hashes, the operative package source and candidate manifest hash. Paths cannot
+escape the evidence root or traverse a reparse point. The program hashes only
+these bounded proof files and the candidate manifest, not the full package on
+every run. It also observes the service, loopback health and installed
+manifest/config hashes. Its compact JSON contains no proof contents or private
+paths. Exit 0 means those observations succeeded; it never marks the full goal
+accepted, reruns a test, retries a job, starts an index or changes the service.
+Exit 1 means changed/missing evidence; exit 2 means an unavailable or invalid
+observation. Full payload validation, signature/effect verification, usage and
+the current Operator lease still require their appropriate checks.
 
 ## Direct Cloudflare Tunnel
 
