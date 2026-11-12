@@ -32,6 +32,33 @@ Pause it when delivered. Continue the existing goal and Operator project;
 exclusive intended-client identity, remaining integrated acceptance, historical
 credential disposition and reviewed tested main/release are still open.
 
+The portable plugin skill source now documents explicit manager opening, the
+versioned resource, selected/approved/opened/started index states and exact-run
+reconciliation without effect replay. `node --import tsx
+scripts/sync-hostdeck-reference.mjs --check` cheaply detects source-reference
+drift; only explicit `--write` regenerates the 67-contract/four-template/three-
+prompt index. No server is started by this program, and source definitions do
+not prove live discovery. The original stale-reference check fails as expected,
+then regeneration/check succeeds. These are portable source changes, not a
+published update of the existing connected plugin or a new production identity.
+
+The offline `scripts/package-hostdeck-plugin.py` packages exactly nine reviewed
+portable files, including the unchanged upstream MIT license. JSON/YAML and
+relative references are checked; unlisted/hidden files and reparse points are
+refused. It writes only a new ZIP outside the source, never overwrites or
+uploads, and preserves the unresolved endpoint template. Two actual builds
+have identical bytes; refusal leaves the first archive unchanged. These plugin
+sources/artifacts are separate from the unchanged round-084 Windows candidate.
+
+Independent ordinary-ChatGPT observation 090 makes exactly two read-only calls:
+device ready and explicit manager open succeed, and the observer reports the
+host's embedded-UI-display confirmation. Actual visual/keyboard/mobile/
+accessibility interaction remains unaccepted. Root's Computer Use cannot
+activate the captured window; app navigation reports success but does not
+produce a verified target view, and the MCP side-panel inventory is empty.
+No input retry or settings change is used. A concise owner request asks to
+expand the existing inline panel; continue other work while that input is absent.
+
 ### Owner-directed consolidated delivery round 084
 
 The owner replaces per-patch execution/review/test loops with complete,
