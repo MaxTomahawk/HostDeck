@@ -1,4 +1,7 @@
 using System.Buffers.Binary;
+using System.Collections.Specialized;
+using System.Drawing;
+using System.Windows.Forms;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -83,6 +86,153 @@ foreach(var unsupported in new[]{"F0","F25","not-a-key"}) {
     if(!denied)failures.Add("unsupported key must be refused");
 }
 
+
+// INPUT clipboard safety: synthetic IDataObject and callbacks only.
+// Absolutely no real Clipboard.Get/Set, keyboard events or user content.
+var snapshotMethod=inputType.GetMethod("SnapshotClipboardData",flags)!;
+var pasteMethod=inputType.GetMethod("PasteWithPreservation",flags)!;
+var sequenceMethod=inputType.GetMethod("SameClipboardSequence",flags)!;
+void Check(bool condition,string message) { if(!condition) failures.Add(message); }
+DataObject Snapshot(IDataObject? value) =>
+    (DataObject)snapshotMethod.Invoke(null,new object?[]{value})!;
+bool SnapshotDenied(IDataObject? value) {
+    try { Snapshot(value); return false; }
+    catch(TargetInvocationException error) {
+        return error.InnerException is InvalidOperationException exception &&
+            exception.Message=="Clipboard formats could not all be preserved." &&
+            exception.InnerException is null;
+    }
+}
+var synthetic=new SyntheticClipboardSource();
+var binary=new byte[]{5,6,7};
+using var stream=new MemoryStream(new byte[]{8,9,10});
+stream.Position=2;
+using var image=new Bitmap(2,2);
+var files=new string[]{@"X:\owned-fixture-a.txt",@"X:\owned-fixture-b.txt"};
+var fileCollection=new StringCollection();
+fileCollection.AddRange(files);
+synthetic.Formats=new[]{DataFormats.UnicodeText,DataFormats.Html,DataFormats.Bitmap,
+    DataFormats.FileDrop,"SyntheticBinary","SyntheticStream","SyntheticFileList"};
+synthetic.Values[DataFormats.UnicodeText]="synthetic text";
+synthetic.Values[DataFormats.Html]="<b>synthetic html</b>";
+synthetic.Values[DataFormats.Bitmap]=image;
+synthetic.Values[DataFormats.FileDrop]=files;
+synthetic.Values["SyntheticBinary"]=binary;
+synthetic.Values["SyntheticStream"]=stream;
+synthetic.Values["SyntheticFileList"]=fileCollection;
+var copy=Snapshot(synthetic);
+Check(copy.GetFormats(false).Length==synthetic.Formats.Length,"all synthetic formats must be copied");
+Check((string)copy.GetData(DataFormats.Html,false)!=="<b>synthetic html</b>",
+    "HTML data must survive complete snapshot");
+Check(!ReferenceEquals(image,copy.GetData(DataFormats.Bitmap,false)),"bitmap must clone");
+Check(!ReferenceEquals(files,copy.GetData(DataFormats.FileDrop,false)),"file-list array must clone");
+Check(!ReferenceEquals(binary,copy.GetData("SyntheticBinary",false)),"binary bytes must clone");
+binary[0]=99;
+Check(((byte[])copy.GetData("SyntheticBinary",false)!)[0]==5,"snapshot must own binary bytes");
+Check(stream.Position==2,"cloning a stream must restore source position");
+Check(!ReferenceEquals(stream,copy.GetData("SyntheticStream",false)) &&
+    ((MemoryStream)copy.GetData("SyntheticStream",false)!).ToArray().SequenceEqual(new byte[]{8,9,10}),
+    "stream must be an independent full copy");
+Check(!ReferenceEquals(fileCollection,copy.GetData("SyntheticFileList",false)) &&
+    ((StringCollection)copy.GetData("SyntheticFileList",false)!).Count==2,
+    "StringCollection must be cloned");
+Check(SnapshotDenied(null),"unknown clipboard must be refused");
+
+var partial=new SyntheticClipboardSource { Formats=new[]{"Good","Missing"} };
+partial.Values["Good"]="good";
+Check(SnapshotDenied(partial),"partial clipboard snapshot must fail");
+partial.ThrowOnData="Missing";
+Check(SnapshotDenied(partial),"throwing format reader must fail without leaking error text");
+partial.ThrowOnData=null;
+partial.NullFormats=true;
+Check(SnapshotDenied(partial),"null format list must fail");
+partial.NullFormats=false;
+partial.ThrowOnFormats=true;
+Check(SnapshotDenied(partial),"throwing format list must fail");
+partial.ThrowOnFormats=false;
+partial.Values["Missing"]=new object();
+Check(SnapshotDenied(partial),"uncloneable object must refuse");
+partial.Values["Missing"]=new SyntheticUnseekableStream();
+Check(SnapshotDenied(partial),"unseekable stream must refuse");
+
+bool Sequence(uint expected,uint actual) =>
+    (bool)sequenceMethod.Invoke(null,new object[]{expected,actual})!;
+Check(!Sequence(0,0)&&!Sequence(1,2)&&Sequence(2,2),
+    "clipboard sequence must fail closed on unknown or later copy");
+
+void Paste(string value,Func<uint> sequence,Action<string> write,
+    Action<DataObject> restore,Action pasteAction,Func<IDataObject?>? read=null) =>
+    pasteMethod.Invoke(null,new object?[]{value,read??(()=>synthetic),write,restore,sequence,pasteAction});
+var writes=0;
+var pasted=0;
+var restored=0;
+var clock=1u;
+Paste("typed synthetic",()=>clock,_=>{writes++;clock++;},_=>restored++,()=>pasted++);
+Check(writes==1&&pasted==1&&restored==1,"stable clipboard restores after exactly one temporary write");
+writes=0;pasted=0;restored=0;clock=1;
+Paste("typed synthetic",()=>clock,_=>{writes++;clock++;},_=>restored++,
+    ()=>{pasted++;clock++;});
+Check(writes==1&&pasted==1&&restored==0,"later user copy must not be overwritten");
+writes=0;pasted=0;restored=0;clock=1;
+try {
+    Paste("typed synthetic",()=>clock++,_=>writes++ ,_=>restored++,()=>pasted++);
+    failures.Add("pre-write sequence mismatch must refuse");
+} catch(TargetInvocationException error) when(
+    error.InnerException is InvalidOperationException exception &&
+    exception.Message=="Clipboard cannot be preserved before typing.") {}
+Check(writes==0&&pasted==0&&restored==0,"pre-write race must cause zero writes");
+writes=0;pasted=0;restored=0;clock=1;
+try {
+    Paste("typed synthetic",()=>clock,_=>writes++, _=>restored++,()=>pasted++,
+        ()=>partial); // partial.GetData returns unsupported object
+    failures.Add("partial snapshot must refuse before clipboard write");
+} catch(TargetInvocationException error) when(
+    error.InnerException is InvalidOperationException exception &&
+    exception.Message=="Clipboard cannot be preserved before typing.") {}
+Check(writes==0&&pasted==0&&restored==0,"failed snapshot must cause zero writes");
+writes=0;pasted=0;clock=1;
+try {
+    Paste("typed synthetic",()=>clock,_=>{writes++;clock++;},
+        _=>throw new InvalidOperationException("synthetic private clipboard payload"),()=>pasted++);
+    failures.Add("restore failure must be reported");
+} catch(TargetInvocationException error) when(
+    error.InnerException is InvalidOperationException exception &&
+    exception.Message=="Clipboard could not be restored." &&
+    exception.InnerException is null) {}
+Check(writes==1&&pasted==1,"restore failure must not pretend that no paste occurred");
+
 foreach(var failure in failures)Console.Error.WriteLine(failure);
 Console.WriteLine($"Native root/token boundary assertions: {(failures.Count==0?"PASS":"FAIL")}");
 return failures.Count==0?0:1;
+
+internal sealed class SyntheticClipboardSource : IDataObject
+{
+    internal string[] Formats { get; set; } = [];
+    internal Dictionary<string,object?> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal bool NullFormats { get; set; }
+    internal bool ThrowOnFormats { get; set; }
+    internal string? ThrowOnData { get; set; }
+    public object? GetData(string format,bool autoConvert)
+    {
+        if(format==ThrowOnData) throw new InvalidOperationException("synthetic private clipboard payload");
+        return Values.TryGetValue(format,out var value)?value:null;
+    }
+    public object? GetData(string format)=>GetData(format,false);
+    public object? GetData(Type format)=>GetData(format.FullName??format.Name,false);
+    public bool GetDataPresent(string format,bool autoConvert)=>Values.ContainsKey(format);
+    public bool GetDataPresent(string format)=>GetDataPresent(format,false);
+    public bool GetDataPresent(Type format)=>GetDataPresent(format.FullName??format.Name,false);
+    public string[] GetFormats(bool autoConvert) =>
+        ThrowOnFormats?throw new InvalidOperationException("synthetic private clipboard payload"):
+        NullFormats?null!:Formats;
+    public string[] GetFormats()=>GetFormats(false);
+    public void SetData(string format,bool autoConvert,object data)=>Values[format]=data;
+    public void SetData(string format,object data)=>SetData(format,false,data);
+    public void SetData(Type format,object data)=>SetData(format.FullName??format.Name,false,data);
+    public void SetData(object data)=>SetData(data.GetType(),data);
+}
+
+internal sealed class SyntheticUnseekableStream : MemoryStream
+{
+    public override bool CanSeek => false;
+}
