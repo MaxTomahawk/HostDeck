@@ -25,7 +25,7 @@ This changes execution order, not the original 140 requirements, eight policies,
 | 0064–0072: MCP contracts and interactive surfaces | Installed stdio/HTTP, discovery, resources/prompts and explicit manager | Real supported hosted rendering and remaining protocol/unsupported-host classification |
 | 0073–0083: remote authentication and administration | Working authenticated remote access; installed authorization-race repair and bounded signed administration | Intended-client isolation beyond shared same-user keys, renewal/revocation and independent installed security acceptance |
 | 0084–0090: ChatGPT plugin and UX | Existing plugin/Skills, ordinary ChatGPT operations, data-first tools and explicit UI | Actual supported desktop/mobile/accessibility and sustained chat-stability acceptance |
-| 0091–0105: providers, manager and document index | Provider catalog/preferences and controlled fulltext backend exist; personal indexing inactive | Complete index controls in existing manager, explicit protected setup/selection, performance and remaining 18-criterion Everything acceptance |
+| 0091–0105: providers, manager and document index | Provider catalog/preferences and controlled fulltext backend exist; actual preview confirms three selected fixed volumes and seven formats, index inactive | Finish candidate/installed acceptance of index controls, verify exact protected approval, performance and remaining 18-criterion Everything acceptance; do not ask for already configured locations again |
 | 0106–0122: provenance, governance and release | Original mappings and historical evidence retained; local build/review/public screening workflow exists | Reconcile original criteria, dispose of historical credential findings, review/test main and produce release |
 | 0123–0140: audit, resource use, diagnostics and local operation | Scoped actual broker/audit/diagnostic/resource evidence | Remaining cross-surface audit, persistence/resource/lifecycle acceptance and user/admin documentation |
 
@@ -46,6 +46,27 @@ succeed without skips, including actual Chrome control flows and the official
 SDK iframe's repeated-notification case. Native boundary/End/clipboard checks
 also pass on Windows. Synthetic backend/browser fixture evidence is distinct
 from actual installed ordinary-ChatGPT acceptance.
+
+The single independent source review of the combined change finds one Important
+post-write clipboard recovery gap. Native regression reproduces it; a temporary
+random payload marker now allows guarded restoration after lost sequence
+observation or a partial write/flush error, without blindly overwriting an
+unowned later copy. Five focused fault variants pass. Actual isolated Windows
+suite 085 then passes ten component cases using the production marked-write
+helpers, including all six earlier data/copy cases and four injected failures.
+One new bounded signed request exits zero with contained descendants; separate
+result readback is isolated/session-zero/completed with all ten cases true.
+This remains component evidence, not keyboard paste, remote acceptance, an
+atomic cross-application guarantee or a changed installed clipboard.
+
+The live read-only index preview confirms existing selection and budgets without
+activation. Its normal coverage/approval notices must not disable the Open
+button: the backend performs the protected digest/owner approval check. The
+browser fixture now includes those real notice codes; the three changed UI
+cases pass again without skips. The browser sources also receive an explicit
+strict type check before bundling; backend tsc alone did not cover ui/.
+The initial full package is retained as a pre-remediation intermediate; qualify
+a separate composition with the repaired native DLL and updated UI bytes.
 
 1. **Availability restored and independently observed:** installed service, tray and user agent are running; the connected MCP returns ready. The existing ordinary-ChatGPT acceptance chat independently confirms device readiness, eligible session and display metadata. Its previous access denial does not recur in this scoped check. This is not complete client or lifecycle acceptance.
 2. **Everything user startup repair:** the service was running but its existing qualified user query instance was absent. Only that missing hash/version-pinned instance was started using its existing startup command. Its actual provider state transitions from not running through loading to healthy/ready; preserve the original independent failure. The same command is registered under the enrolled user's previously absent, nonconflicting Everything startup value. Separate comparison preserves all 296 existing volume/folder/content/index settings and unchanged provider preferences. No service, tray, agent, tunnel or session is interrupted. The same ordinary-ChatGPT acceptance chat independently confirms the repaired provider is running, compatible and healthy/ready. Actual next-logon startup remains unaccepted.

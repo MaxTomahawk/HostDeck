@@ -179,8 +179,13 @@ Check(!Sequence(0,0)&&!Sequence(1,2)&&Sequence(2,2),
     "clipboard sequence must fail closed on unknown or later copy");
 
 void Paste(string value,Func<uint> sequence,Action<string> write,
-    Action<DataObject> restore,Action pasteAction,Func<IDataObject?>? read=null) =>
-    pasteMethod.Invoke(null,new object?[]{value,read??(()=>synthetic),write,restore,sequence,pasteAction});
+    Action<DataObject> restore,Action pasteAction,Func<IDataObject?>? read=null,
+    Func<bool>? ownsTemporary=null)
+{
+    object?[] args={value,read??(()=>synthetic),write,restore,sequence,pasteAction};
+    if(pasteMethod.GetParameters().Length==7)args=args.Concat(new object?[]{ownsTemporary}).ToArray();
+    pasteMethod.Invoke(null,args);
+}
 var writes=0;
 var pasted=0;
 var restored=0;
@@ -234,6 +239,52 @@ try {
     exception.Message=="Clipboard could not be restored." &&
     exception.InnerException is null) {}
 Check(writes==1&&pasted==1,"restore failure must not pretend that no paste occurred");
+
+// A failed identity observation AFTER a successful clipboard write must still
+// preserve the old snapshot when our unique temporary-payload marker remains.
+foreach (var throwsAfterWrite in new[] { false, true })
+{
+    writes=0;pasted=0;restored=0;
+    var seqReads=0;
+    try
+    {
+        Paste("owned temporary",()=>{
+                seqReads++;
+                if(seqReads<=2)return 10u;
+                if(throwsAfterWrite)throw new InvalidOperationException("synthetic sequence failure");
+                return 0u;
+            },_=>writes++, _=>restored++,()=>pasted++,()=>synthetic,()=>true);
+        failures.Add("unknown post-write clipboard identity must be reported");
+    }
+    catch(TargetInvocationException exception) when(exception.InnerException is InvalidOperationException)
+    { Check(!exception.InnerException.Message.Contains("synthetic"),"sequence failure must stay sanitized"); }
+    Check(writes==1&&pasted==0&&restored==1,"post-write identity loss must restore our marked payload before failing");
+}
+
+foreach(var ownsTemporary in new[] { false, true })
+{
+    writes=0;pasted=0;restored=0;
+    var seqReads=0;
+    try
+    {
+        Paste("owned temporary",()=>++seqReads<=3?10u+(uint)(writes>0?1:0):0u,
+            _=>writes++, _=>restored++,()=>pasted++,()=>synthetic,()=>ownsTemporary);
+        failures.Add("post-paste identity loss must remain an error");
+    }
+    catch(TargetInvocationException exception) when(exception.InnerException is InvalidOperationException) { }
+    Check(writes==1&&pasted==1&&restored==(ownsTemporary?1:0),
+        "lost sequence must restore only an owned temporary payload, never a later unowned copy");
+}
+writes=0;pasted=0;restored=0;
+try
+{
+    Paste("owned temporary",()=>10u,_=>{writes++;throw new InvalidOperationException("synthetic post-write flush failure");},
+        _=>restored++,()=>pasted++,()=>synthetic,()=>true);
+    failures.Add("write flush failure must be reported");
+}
+catch(TargetInvocationException exception) when(exception.InnerException is InvalidOperationException)
+{ Check(!exception.InnerException.Message.Contains("synthetic"),"post-write flush error must remain sanitized"); }
+Check(writes==1&&pasted==0&&restored==1,"owned partial write must restore without sending input");
 
 foreach(var failure in failures)Console.Error.WriteLine(failure);
 Console.WriteLine($"Native root/token boundary assertions: {(failures.Count==0?"PASS":"FAIL")}");

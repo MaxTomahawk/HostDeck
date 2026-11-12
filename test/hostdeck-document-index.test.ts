@@ -7,7 +7,8 @@ import {readIndexPreview, readIndexStatus} from '../ui/newtree/document-index.js
 
 const digest='a'.repeat(64);
 const preview={digest,activated:false,roots:['C:\\Owned documents'],formats:['.txt','.pdf'],
-  excludedRoots:[],budgets:{maxDocuments:100,maxIndexBytes:1048576},issues:[]};
+  excludedRoots:[],budgets:{maxDocuments:100,maxIndexBytes:1048576},
+  issues:['NO_AUTOMATIC_WATCHER_OR_SEMANTIC_MODEL','SOURCE_ACL_AND_FRESHNESS_RECHECK_REQUIRED']};
 
 test('index UI distinguishes inactive, partial and complete backend states without inventing progress',()=>{
   assert.deepEqual(readIndexStatus({state:'unconfigured',configured:false}),{state:'unconfigured',run:null});
@@ -27,7 +28,7 @@ test('index UI distinguishes inactive, partial and complete backend states witho
 test('only a bounded backend preview with an exact inactive digest can enable opening',()=>{
   assert.equal(readIndexPreview({configured:false,reason:'ROOTS_NOT_SELECTED'}),null);
   assert.deepEqual(readIndexPreview(preview),{digest,roots:preview.roots,formats:preview.formats,
-    excludedRoots:[],budgets:preview.budgets,issues:[]});
+    excludedRoots:[],budgets:preview.budgets,issues:preview.issues});
   for(const value of [{...preview,digest:'caller approval'},{...preview,activated:true},
     {...preview,budgets:{maxDocuments:Infinity}},{...preview,roots:[{}]},
     {configured:false,reason:'arbitrary'}, {...preview,issues:['x'.repeat(2049)]}])

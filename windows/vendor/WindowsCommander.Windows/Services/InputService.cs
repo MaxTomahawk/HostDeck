@@ -63,9 +63,9 @@ public sealed class InputService : IInputService
         // Synthetic keystroke injection (SendInput / keybd_event) is unreliable
         // for arbitrary text: once more than a dozen or so events are queued,
         // modern apps drop, repeat, and reorder characters. Pasting via the
-        // clipboard hands the target the whole string in one atomic operation,
-        // so it always lands intact regardless of length or Unicode content.
-        // The caller's clipboard text is saved and restored around the paste.
+        // clipboard gives the target one text payload. Delivery still depends
+        // on the target handling Ctrl+V; this is not application readback.
+        // Snapshot all supported clipboard formats before temporary replacement.
         PasteText(text);
         return Task.FromResult(new InputActionResult("type_text", Completed: true, text.Length));
     }
@@ -77,7 +77,10 @@ public sealed class InputService : IInputService
     {
         RunOnStaThread(() =>
         {
-            PasteWithPreservation(text, Clipboard.GetDataObject, Clipboard.SetText,
+            var markerFormat = "HostDeck.Paste." + Guid.NewGuid().ToString("N");
+            var markerValue = Guid.NewGuid().ToString("N");
+            PasteWithPreservation(text, Clipboard.GetDataObject,
+                value => WriteMarkedPaste(value, markerFormat, markerValue),
                 snapshot =>
                 {
                     if (snapshot.GetFormats(autoConvert: false).Length == 0)
@@ -91,7 +94,8 @@ public sealed class InputService : IInputService
                     SendHotkey(new[] { "ctrl" }, "v");
                     // The target consumes Ctrl+V asynchronously.
                     Thread.Sleep(400);
-                });
+                },
+                () => OwnsMarkedPaste(markerFormat, markerValue));
             return true;
         });
     }
@@ -100,7 +104,8 @@ public sealed class InputService : IInputService
     // delegates; no test needs access to the actual user's clipboard.
     internal static void PasteWithPreservation(
         string text, Func<IDataObject?> read, Action<string> write,
-        Action<DataObject> restore, Func<uint> sequence, Action paste)
+        Action<DataObject> restore, Func<uint> sequence, Action paste,
+        Func<bool>? ownsTemporary = null)
     {
         DataObject snapshot;
         uint before;
@@ -121,28 +126,56 @@ public sealed class InputService : IInputService
         try
         {
             write(text);
-            pasted = sequence();
+            try { pasted = sequence(); }
+            catch { throw new InvalidOperationException("Clipboard write identity unavailable."); }
             if (pasted == 0 || pasted == before)
+            {
+                pasted = 0;
                 throw new InvalidOperationException("Clipboard write identity unavailable.");
+            }
             paste();
         }
         finally
         {
-            if (pasted != 0)
+            uint current;
+            try { current = sequence(); }
+            catch { current = 0; }
+            if (pasted == 0 || current == 0)
             {
-                var current = sequence();
-                if (current == 0)
-                    throw new InvalidOperationException("Clipboard state unavailable after typing.");
-                // Skip restoration after an observed later copy. Sequence checks
-                // are not an atomic compare-and-restore across applications.
-                if (SameClipboardSequence(pasted, current))
+                // SetDataObject may succeed before an observation/flush fails.
+                // Recover only if our random temporary-payload marker remains;
+                // a blind restoration could overwrite somebody's later copy.
+                var ours = false;
+                try { ours = ownsTemporary?.Invoke() == true; }
+                catch { /* A failed ownership read is not permission to write. */ }
+                if (ours)
                 {
                     try { restore(snapshot); }
                     catch { throw new InvalidOperationException("Clipboard could not be restored."); }
                 }
+                throw new InvalidOperationException("Clipboard state unavailable after typing.");
+            }
+            // Skip restoration after an observed later copy. Sequence/marker
+            // checks are not atomic compare-and-restore across applications.
+            if (SameClipboardSequence(pasted, current))
+            {
+                try { restore(snapshot); }
+                catch { throw new InvalidOperationException("Clipboard could not be restored."); }
             }
         }
     }
+
+    internal static void WriteMarkedPaste(string text, string markerFormat, string markerValue)
+    {
+        var data = new DataObject();
+        data.SetData(DataFormats.UnicodeText, autoConvert: false, text);
+        data.SetData(markerFormat, autoConvert: false, markerValue);
+        Clipboard.SetDataObject(data, copy: true);
+    }
+
+    internal static bool OwnsMarkedPaste(string markerFormat, string markerValue) =>
+        Clipboard.GetData(markerFormat) is string actual &&
+        string.Equals(actual, markerValue, StringComparison.Ordinal);
 
     internal static bool SameClipboardSequence(uint expected, uint actual) =>
         expected != 0 && expected == actual;

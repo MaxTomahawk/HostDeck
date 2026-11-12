@@ -124,7 +124,17 @@ export function mountDocumentIndex(host: HTMLElement, connection: ManagerConnect
       ['Excluded locations', preview.excludedRoots], ['Formats', preview.formats], ['Issues', preview.issues]] as const) {
       add(previewBox, 'h4', label);
       const list = add(previewBox, 'ul');
-      for (const value of values) add(list, 'li', value);
+      const notes: Record<string, string> = {
+        BROAD_FIXED_VOLUMES_REQUIRE_EXPLICIT_EXCLUSIONS_AND_OWNER_APPROVAL:
+          'Whole-drive selections require explicit exclusions and owner approval.',
+        NO_AUTOMATIC_WATCHER_OR_SEMANTIC_MODEL:
+          'Documents are refreshed by requested scans. Search uses indexed text.',
+        PDF_WITH_ARABIC_OR_SCANNED_CONTENT_MAY_BE_UNQUALIFIED:
+          'Scanned PDFs and some Arabic PDF content may not be searchable.',
+        SOURCE_ACL_AND_FRESHNESS_RECHECK_REQUIRED:
+          'File access is checked again when scanning and returning results.',
+      };
+      for (const value of values) add(list, 'li', label === 'Issues' ? notes[value] ?? value : value);
       if (!values.length) add(list, 'li', 'None');
     }
     const limits = add(previewBox, 'dl'); limits.className = 'manager-dl';
@@ -205,7 +215,9 @@ export function mountDocumentIndex(host: HTMLElement, connection: ManagerConnect
     for (const item of buttons) item.disabled = disabled;
     if (disabled) return;
     const active = status && !['unconfigured', 'selected_not_active'].includes(status.state);
-    open.disabled = uncertain || !preview?.roots.length || !!active || !!preview?.issues.length;
+    // Preview issues are coverage/approval notices, not configuration failures.
+    // The backend remains responsible for the exact protected approval check.
+    open.disabled = uncertain || !preview?.roots.length || !!active;
     start.disabled = uncertain || !active || !['unstarted', 'complete', 'cancelled'].includes(status!.state);
     pause.disabled = uncertain || status?.run?.state !== 'running';
     resume.disabled = uncertain || !['paused', 'interrupted', 'resource_paused'].includes(status?.run?.state ?? '');

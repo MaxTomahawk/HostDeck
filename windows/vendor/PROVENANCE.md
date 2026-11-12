@@ -21,7 +21,10 @@ HostDeck's clipboard paste path now requires a complete independently cloned
 snapshot before replacing clipboard data, preserves an empty clipboard and
 refuses unreadable or unsupported payloads without exposing their contents.
 Observed clipboard sequence changes skip restoration over a later copy; these
-checks are not an atomic transaction across applications. Synthetic native
+checks are not an atomic transaction across applications. A random temporary
+payload marker permits guarded recovery when the write succeeds before a
+sequence observation or clipboard flush fails. Unowned content is not blindly
+restored over. Synthetic native
 regressions do not establish installed or full rich-clipboard acceptance.
 
 HostDeck's local `VisionService` modification exposes the selected on-device
