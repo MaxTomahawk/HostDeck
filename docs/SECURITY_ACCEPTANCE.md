@@ -64,6 +64,30 @@ The isolated diagnostic source in [windows/privilege/probes/README.md](../window
 
 **Gate remains OPEN:** true negative test for an unintended same-SID process *before* elevated effect; separate protected signer/trust-root admission, per-client authorization and legitimate goal/mandate enforcement; true installed package isolation and effects. Source requirements HD-REQ-0123–0129 remain separate purpose/action/effect/context/UTC/audit cases. Any selected protected-signer/account/AppContainer solution needs a concrete owner decision and separately authorized deployment. No test of a compromised Windows administrator can be claimed as an absolute guarantee.
 
+### Actual own app/executor observation 088
+
+A new read-only observation includes the actual packaged host-app ancestor,
+not just its unpackaged execution child. The process API reports a package for
+the app and none for the execution child. Both actual token queries report no
+AppContainer; their SID, logon and session match. The process owners also match
+their token user. These are metadata observations, not effective injection,
+publisher, key-isolation or mandate tests. The token-package API remains UNKNOWN
+after its missing-entrypoint result; the earlier 050 evidence is not rewritten.
+
+The independent source assessment still finds no demonstrated OS/provider
+identity that can close DR01-0007. A same-user callable generic signing proxy
+does not supply that missing boundary. [Official plugin authentication](https://developers.openai.com/plugins/build/auth)
+documents ChatGPT connector mTLS and CIMD client assertions;
+[Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+documents MCP OAuth registration and locally configured secrets. Neither read
+establishes an exclusive identity for this local file-queue submitter. Do not
+infer a Windows application grant from remote OAuth client metadata.
+
+The required negative remains an unrelated same-SID process being refused
+before SYSTEM admission/effect while each intended client succeeds through an
+independently verified identity, without an accessible arbitrary signing proxy.
+No new signer, principal, key, grant or production route is selected or deployed.
+
 ## B007 pending authorization correction 062 — scoped source evidence
 
 A real loopback HTTP MCP regression with signed fixture tokens, an on-disk grant store and an owned file reproduces a facade race: grant revocation or revision replacement during the asynchronous executor check still permits backend dispatch and returns the synthetic private bytes. Adapter reauthorization has the same gap. The original failed runs are retained privately.
