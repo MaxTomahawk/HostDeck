@@ -12,15 +12,23 @@ export interface LiveProvider {
   capabilities?: unknown;
   installed?: unknown; enabled?: unknown; running?: unknown;
   desiredEnabled?: unknown; enabledOverride?: unknown; configured?: unknown;
+  enabledRevision?: number;
   compatible?: unknown; healthy?: unknown; qualified?: unknown;
   reason?: unknown; version?: unknown; instance?: unknown; session_id?: unknown;
 }
 export interface LiveFunction {
   capability: string; preference: string | null; default: string; selected: string;
+  revision?:number;
+}
+export interface ProviderChange {
+  id:string;kind:'preference'|'enablement';target:'files.name'|'files.content'|'everything';
+  before:'direct'|'everything'|boolean|null;after:'direct'|'everything'|boolean|null;
+  revision:number;changed:boolean;createdAt:string;
 }
 export interface ProviderSnapshot {
   providers: LiveProvider[];
   functions: LiveFunction[];
+  changes?:ProviderChange[];changeRetention?:number;
 }
 export interface ManagerEntry {
   candidate: ExtensionCandidate;
@@ -69,6 +77,29 @@ function actualFunctionIds(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string =>
     typeof item === 'string' && /^[a-z][\w.-]{1,75}$/.test(item)) : [];
 }
+const revision=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+export function assertProviderChange(value:unknown):ProviderChange {
+  if(!value||typeof value!=='object')throw new Error('PROVIDER_SNAPSHOT_INVALID');
+  const r=value as ProviderChange;
+  const values:unknown[]=r.kind==='enablement'?[null,true,false]:r.target==='files.content'?[null,'direct']:[null,'direct','everything'];
+  if(!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(r.id)||
+    !((r.kind==='preference'&&['files.name','files.content'].includes(r.target))||(r.kind==='enablement'&&r.target==='everything'))||
+    !values.includes(r.before)||!values.includes(r.after)||!revision(r.revision)||
+    typeof r.changed!=='boolean'||r.changed!==(r.before!==r.after)||(r.changed&&r.revision===0)||
+    typeof r.createdAt!=='string'||r.createdAt.length>30||!Number.isFinite(Date.parse(r.createdAt))||new Date(r.createdAt).toISOString()!==r.createdAt)
+    throw new Error('PROVIDER_SNAPSHOT_INVALID');
+  return {id:r.id,kind:r.kind,target:r.target,before:r.before,after:r.after,revision:r.revision,changed:r.changed,createdAt:r.createdAt};
+}
+export function currentProviderChange(snapshot:ProviderSnapshot,change:ProviderChange):boolean {
+  if(!change.changed||!snapshot.changes?.some(item=>item.id===change.id&&item.kind===change.kind&&
+    item.target===change.target&&item.before===change.before&&item.after===change.after&&item.revision===change.revision))return false;
+  if(change.kind==='preference'){
+    const fn=snapshot.functions.find(fn=>fn.capability===change.target);
+    return fn?.revision===change.revision&&fn.preference===change.after;
+  }
+  const provider=snapshot.providers.find(p=>p.id===change.target);
+  return provider?.enabledRevision===change.revision&&provider.enabledOverride===change.after;
+}
 export function assertProviderSnapshot(value: unknown): ProviderSnapshot {
   if (!value || typeof value !== 'object') throw new Error('PROVIDER_SNAPSHOT_INVALID');
   const input = value as Record<string, unknown>;
@@ -82,7 +113,7 @@ export function assertProviderSnapshot(value: unknown): ProviderSnapshot {
     if (!item || typeof item !== 'object') throw new Error('PROVIDER_SNAPSHOT_INVALID');
     const record = item as LiveProvider;
     if (typeof record.id !== 'string' || !/^[a-z][a-z0-9_-]{1,63}$/.test(record.id) ||
-        seenProviders.has(record.id)) throw new Error('PROVIDER_SNAPSHOT_INVALID');
+        seenProviders.has(record.id)||(record.enabledRevision!==undefined&&!revision(record.enabledRevision))) throw new Error('PROVIDER_SNAPSHOT_INVALID');
     seenProviders.add(record.id);
     providers.push(record);
   }
@@ -94,11 +125,18 @@ export function assertProviderSnapshot(value: unknown): ProviderSnapshot {
     if (typeof record.capability !== 'string' || !/^[a-z][a-z0-9._-]{1,75}$/.test(record.capability) ||
         seenFunctions.has(record.capability) || typeof record.selected !== 'string' ||
         typeof record.default !== 'string' ||
-        !(record.preference === null || typeof record.preference === 'string')) {
+        !(record.preference === null || typeof record.preference === 'string')||
+        (record.revision!==undefined&&!revision(record.revision))) {
       throw new Error('PROVIDER_SNAPSHOT_INVALID');
     }
     seenFunctions.add(record.capability);
     functions.push(record);
+  }
+  if(input.changes!==undefined){
+    if(!Array.isArray(input.changes)||input.changes.length>20||input.changeRetention!==200)throw new Error('PROVIDER_SNAPSHOT_INVALID');
+    const changes=input.changes.map(assertProviderChange);
+    if(new Set(changes.map(change=>change.id)).size!==changes.length)throw new Error('PROVIDER_SNAPSHOT_INVALID');
+    return {providers,functions,changes,changeRetention:200};
   }
   return { providers, functions };
 }

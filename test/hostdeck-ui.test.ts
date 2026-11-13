@@ -249,9 +249,12 @@ test('standalone panel keeps inputs during result updates and treats hostile too
     });
 
     await step('session changes panel reports confirmed receipt', async () => {
-      await page.locator('.manager-tabs button:nth-of-type(3)').click();
+      await page.evaluate(()=>{
+        const buttons=[...document.querySelectorAll<HTMLButtonElement>('.manager-tabs button')].filter(b=>b.textContent==='Changes');
+        if(buttons.length!==1)throw new Error('Changes section unavailable');buttons[0].click();
+      });
       assert.match(await page.$eval(
-        '.manager-section[aria-label="Change evidence in this page session"]',
+        '.manager-section[aria-label="Provider change receipts and restoration"]',
         element => element.textContent ?? '',
       ), /Readback confirmed/);
     });

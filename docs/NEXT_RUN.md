@@ -46,6 +46,30 @@ No candidate/runtime rebuild is needed for these source-tool/documentation edits
 
 ### Concrete remaining work
 
+**Current source round094 — provider change receipts and guarded restoration:**
+HD-REQ-0093/0099/0100 still have a concrete implementation gap: the Changes view
+is page-local and the provider setters have no atomic revision precondition.
+Add a bounded owner/device/executor SQLite journal in the existing registry,
+committed atomically with each existing preference/enablement change. Extend
+the same setters with optional expected_revision; expose revisions and the last
+20 receipts in existing list_providers. Restore only the prior value of a
+still-current receipt using compare-and-set, including ABA protection. Keep
+old clients compatible and mark legacy servers without this feature honestly.
+One focused security/data-preservation pass and combined changed-surface build
+follow the complete backend/UI change. No general extension installation,
+vendor setting, authority/grant, live database or running runtime is changed.
+
+094 source now implements that complete backend/UI slice. Eight SQLite/native-
+Node cases cover atomic rollback, separate-process contention, scope isolation,
+bounded retention, legacy migration and legacy-writer ABA across rollback.
+An actual Chrome/SQLite scenario covers reopened history, guarded restoration,
+concurrent ABA, committed-but-lost acknowledgement and device-change isolation.
+The broader changed-surface pass has41 successes and one outdated UI test
+selector; correcting its positional tab/old label makes that same standalone
+scenario pass. Original failures and retests remain private. Contract1.3 adds
+only optional preconditions and scoped response metadata; no new tool/grant.
+Candidate composition and independent source assessment follow; no installation.
+
 1. **Client authority:** DR01-0007 remains OPEN. Same-SID CurrentUser keys and
    process/package metadata are insufficient. Assessment092 examines a protected
    launcher: initial-object DACLs are plausible, but future runtime threads,

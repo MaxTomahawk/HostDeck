@@ -14,6 +14,20 @@ Tools use the `hostdeck_` namespace. Availability and schemas come from the conn
 
 Each call is subject to the server's identity, device, scope, session, and effect checks. Tool schemas do not grant authority. Browser navigation also uses the local egress policy.
 
+Current provider-setting servers expose per-function `revision`, Everything
+`enabledRevision`, and recent `changes` in `list_providers`. Pass the inspected
+revision as `expected_revision` when changing a preference or integration
+setting. A conflict is not permission to overwrite or automatically retry.
+The returned `change` receipt is durable in the same setting transaction; the
+last20 of up to200 receipts are visible per owner/device/executor. It is not
+independent OS attestation. Older snapshots lack this feature; do not invent it.
+
+Restore only the prior value of a receipt still in the current scoped history
+whose target revision and value still match, using the same setter and expected
+revision. Intervening changes (even away and back) invalidate restoration. After
+an unknown effect, read status/history before another write. This restores
+HostDeck settings, never vendor software or external configuration.
+
 [The generated source contract index](contracts.md) lists tool names/effects/scopes,
 four resource templates and three prompts from the actual source definitions.
 It does not replace live discovery or prove implementation, grants or host support.

@@ -1,6 +1,31 @@
 # HostDeck MCP contract v1
 
-Status: implemented contract registry; backend, transport, authorization and end-to-end acceptance remain separate. Canonical code is `src/hostdeck/contracts.ts`, `contractVersion = 1.1.0`. This is an additive catalog for the full product scope, not a claim that the catalogued capabilities are already installed or exposed.
+Status: implemented contract registry; backend, transport, authorization and end-to-end acceptance remain separate. Canonical code is `src/hostdeck/contracts.ts`, `contractVersion = 1.3.0`. This is an additive catalog for the full product scope, not a claim that the catalogued capabilities are already installed or exposed.
+
+## Provider setting receipts (additive v1.3)
+
+The existing preference and enablement setters accept optional nonnegative
+`expected_revision`. A stale target revision returns `PROVIDER_CONFLICT` without
+changing settings or adding a receipt. Omitting it preserves legacy-call
+compatibility. Current clients should send the revision they inspected.
+`list_providers` exposes function `revision`, Everything `enabledRevision`,
+`changes` (newest20), and `changeRetention:200`. These are scoped by the same
+owner/device/executor tuple; no new grant or protocol method is introduced.
+
+Each successful setter returns `change` with opaque id, kind, target, prior and
+new saved values, target revision, changed flag and UTC createdAt. The setting,
+revision and retained receipt commit together. No-op acknowledgements retain
+the revision and state explicitly that no setting changed. Prior state is not
+backfilled into invented history. Supported legacy database writers still
+advance target revisions through additive SQLite triggers; they do not create
+new API receipts. Retention pruning never resets target revisions.
+
+Restoring a saved value uses the same authorized setter and expected revision.
+The manager permits this only for a still-current receipt in a freshly read
+history; an intervening ABA change is a conflict. A lost response must be
+reconciled by reading current status/history, never by automatic replay. These
+are local operational receipts, not independent OS identity/effect attestation,
+a permanent audit log, vendor-software rollback or full lifecycle acceptance.
 
 ## Search providers (additive v1.1)
 

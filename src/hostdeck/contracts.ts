@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export const contractVersion = '1.2.0';
+export const contractVersion = '1.3.0';
 export type Domain = 'user' | 'desktop' | 'browser' | 'service' | 'management';
 export type Effect = 'read' | 'write' | 'execute' | 'control' | 'manage';
 export interface ToolContract {
@@ -103,8 +103,8 @@ const contracts: readonly ToolContract[] = Object.freeze([
   tool('fulltext_cancel', 'Cancel an owned full-text scan; already indexed text remains until rescanned.', {run_id:id}, ['fulltext:read','fulltext:index'], 'user', 'control'),
   tool('search_files', 'Start an owned bounded file/content search. Explicit provider selection never silently falls back.', { path, pattern: text.min(1), mode: z.enum(['files', 'content']).default('files'), literal: z.boolean().default(true), include_hidden: z.boolean().default(false), limit: count.default(1000), timeout_ms: timeout.default(30_000), provider:z.enum(['direct','everything']).optional(), entry_type:z.enum(['files','directories','all']).default('files'), sort:z.enum(['path','name']).optional(), metadata:z.boolean().default(false) }, ['files:read'], 'user', 'read'),
   tool('list_providers', 'Inspect search providers and current owner/device/function preferences. Does not activate software.', {}, ['files:read'], 'user', 'read'),
-  tool('set_provider_preference', 'Set or clear this owner/device/function search preference; null restores the stable direct default. Does not install or start software.', {capability:z.enum(['files.name','files.content']),provider:z.enum(['direct','everything']).nullable()}, ['files:write'], 'user', 'write'),
-  tool('set_provider_enabled', 'Enable or disable this owner/device/executor Everything integration. Null clears the override (default enabled). Preserves search preferences; no install, start, stop or vendor software effect. Built-in direct is immutable.', {provider:z.literal('everything'),enabled:z.boolean().nullable()}, ['files:write'], 'user', 'write'),
+  tool('set_provider_preference', 'Set or clear this owner/device/function search preference; null restores the stable direct default. Optional expected_revision atomically rejects conflicts. Returns a durable scoped change receipt. Does not install or start software.', {capability:z.enum(['files.name','files.content']),provider:z.enum(['direct','everything']).nullable(),expected_revision:integer.min(0).optional()}, ['files:write'], 'user', 'write'),
+  tool('set_provider_enabled', 'Enable or disable this owner/device/executor Everything integration. Null clears the override (default enabled). Optional expected_revision atomically rejects conflicts. Returns a durable scoped receipt. Preserves preferences; no install, start, stop or vendor software effect. Built-in direct is immutable.', {provider:z.literal('everything'),enabled:z.boolean().nullable(),expected_revision:integer.min(0).optional()}, ['files:write'], 'user', 'write'),
   tool('search_results', 'Read an owned search page: nonnegative zero-based result offset; limit counts results.', { search_id: id, offset: integer.min(0).default(0), limit: count.default(100) }, ['files:read'], 'user', 'read'),
   tool('stop_search', 'Stop an owned search.', { search_id: id }, ['files:read'], 'user', 'control'),
   tool('start_process', 'Start a user command with a bounded initial observation; durable work uses jobs.', { command: text.min(1), shell: z.enum(['powershell', 'cmd', 'wsl']).default('powershell'), working_directory: path.optional(), timeout_ms: timeout.default(10_000) }, ['process:execute'], 'user', 'execute'),

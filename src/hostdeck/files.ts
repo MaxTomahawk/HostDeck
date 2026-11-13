@@ -153,16 +153,16 @@ export class FileAdapter {
         if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
         if(!this.reauthorize)throw new RuntimeError('DENIED');
         await this.authorize(name,args);
-        await this.options.providers.setEnabled(context,args.provider as SearchProvider,args.enabled as boolean|null);
+        const change=await this.options.providers.setEnabled(context,args.provider as SearchProvider,args.enabled as boolean|null,args.expected_revision as number|undefined);
         if(args.enabled===false)for(const job of this.searches.values())if(job.provider==='everything'&&ownerMatches(job.owner,context))this.disableSearch(job);
-        return {provider:args.provider,enabledOverride:args.enabled,desiredEnabled:args.enabled??true,scope:'owner_device_executor',updated:true};
+        return {provider:args.provider,enabledOverride:args.enabled,desiredEnabled:args.enabled??true,scope:'owner_device_executor',updated:true,change};
       }
       case 'hostdeck_set_provider_preference': {
         if(!this.options?.providers)throw new RuntimeError('PROVIDER_CONFIGURATION_UNAVAILABLE');
         if(!this.reauthorize)throw new RuntimeError('DENIED');
         await this.authorize(name,args);
-        await this.options.providers.set(context,args.capability as SearchCapability,args.provider as SearchProvider|null);
-        return {capability:args.capability,preference:args.provider,scope:'owner_device_function',updated:true};
+        const change=await this.options.providers.set(context,args.capability as SearchCapability,args.provider as SearchProvider|null,args.expected_revision as number|undefined);
+        return {capability:args.capability,preference:args.provider,scope:'owner_device_function',updated:true,change};
       }
       default: throw new Error('UNKNOWN_FILE_OPERATION');
     }
@@ -344,14 +344,17 @@ export class FileAdapter {
   }
 
   private async listProviders(context:FileOwnerContext):Promise<unknown> {
-    const enabledOverride=await this.options?.providers?.enabledOverride(context,'everything')??null;
-    const desiredEnabled=enabledOverride??true;
     let everything:unknown={installed:null,running:null,compatible:null,healthy:null,reason:'not_configured',qualified:'not_independently_accepted'};
     if(this.options?.everything)try{this.authorizeEverythingSession(context);everything=await this.options.everything.status();}
     catch(e){everything={installed:null,running:null,compatible:null,healthy:null,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
+    const settings=await this.options?.providers?.snapshot(context);
+    const enabledOverride=settings?.everything.enabledOverride??null,desiredEnabled=enabledOverride??true;
     return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,configured:true,enabled:true,desiredEnabled:true,enabledOverride:null,running:'on_demand',compatible:true,healthy:true},
-      {id:'everything',capabilities:['files.name'],...(everything as object),configured:!!this.options?.everything,enabled:desiredEnabled,desiredEnabled,enabledOverride}],functions:await Promise.all((['files.name','files.content'] as const).map(async capability=>({
-        capability,preference:await this.options?.providers?.preference(context,capability)??null,default:'direct',selected:await this.options?.providers?.select(context,capability)??'direct'})))};
+      {id:'everything',capabilities:['files.name'],...(everything as object),configured:!!this.options?.everything,enabled:desiredEnabled,desiredEnabled,enabledOverride,
+        ...(settings?{enabledRevision:settings.everything.revision}:{})}],functions:(['files.name','files.content'] as const).map(capability=>{
+        const saved=settings?.preferences.find(item=>item.capability===capability);
+        return {capability,preference:saved?.provider??null,default:'direct',selected:saved?.provider??'direct',...(saved?{revision:saved.revision}:{})};}),
+      ...(settings?{changes:settings.changes,changeRetention:200}:{})};
   }
 
   private authorizeEverythingSession(context:FileOwnerContext):void {
