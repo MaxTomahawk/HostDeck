@@ -10,6 +10,26 @@ import { ProcessAdapter, type ProcessContext } from '../src/hostdeck/processes.j
 const executable=path.resolve('windows/HostDeck.DesktopWorker/bin/Debug/net10.0-windows10.0.19041.0/HostDeck.DesktopWorker.exe');
 const env=Object.fromEntries(Object.entries(process.env).filter((x):x is [string,string]=>typeof x[1]==='string'&&!/TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY/i.test(x[0])));
 
+test('filtered Windows environment waits for a real native child and preserves its nonzero exit and Unicode stdout',async t=>{
+ if(process.platform!=='win32'||!existsSync(executable)){t.skip('Windows native worker build required');return}
+ const identity=await inspectDesktopIdentity(executable);
+ assert.ok(identity.eligible&&!identity.elevated);
+ const root=await mkdtemp(path.join(os.tmpdir(),'hostdeck-native-child-'));
+ const adapter=await ProcessAdapter.create({executable,expectedSid:identity.sid!,identity,workspace:root,
+  shells:{powershell:path.join(process.env.SystemRoot!,'System32/WindowsPowerShell/v1.0/powershell.exe')},
+  environment:{SystemRoot:process.env.SystemRoot!,PATH:path.dirname(process.execPath),TEMP:os.tmpdir()},reauthorize:async()=>{}});
+ const script=path.join(root,'native.cjs');
+ await (await import('node:fs/promises')).writeFile(script,"process.stdout.write('native é 中文 🙂'); process.exitCode=37;");
+ const quote=(s:string)=>"'"+s.replaceAll("'","''")+"'";
+ try{
+  const result=await adapter.handle('hostdeck_start_process',{shell:'powershell',
+   command:`& ${quote(process.execPath)} ${quote(script)}; $nativeExit=$LASTEXITCODE; [Console]::Out.WriteLine('|native-exit='+$nativeExit); exit $nativeExit`,timeout_ms:5000},
+   {ownerId:'native-test',deviceId:'fixture',executorId:'fixture',sessionId:identity.session_id,sessionIds:[identity.session_id]}) as {output:string;exit_code:number;state:string};
+  assert.equal(result.state,'exited');assert.equal(result.exit_code,37);
+  assert.equal(result.output.trim(),'native é 中文 🙂|native-exit=37');
+ }finally{await adapter.dispose();await rm(root,{recursive:true,force:true});}
+});
+
 test('native interactive PowerShell input/output and Job Object descendant termination',async t=>{
  if(!process.env.SystemRoot||!existsSync(executable)){t.skip('Windows native desktop worker build is unavailable');return}
  const identity=await inspectDesktopIdentity(executable);assert.ok(identity.sid);assert.ok(identity.session_id>0);

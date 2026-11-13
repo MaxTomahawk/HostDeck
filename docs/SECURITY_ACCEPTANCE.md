@@ -1,6 +1,6 @@
 # Security acceptance scenarios
 
-Status: required test contract, not an executed test report. Reference: `SECURITY_MODEL.md`. Synthetic identifiers below represent separate principals, devices and sessions; they are not deployment configuration.
+Status: the scenario table is a required test contract, not an executed test report. Scoped candidate evidence below does not close the full table. Reference: `SECURITY_MODEL.md`. Synthetic identifiers below represent separate principals, devices and sessions; they are not deployment configuration.
 
 Every runtime result needs the tested SHA/version, a repeatable command/scenario, the expected effect or lack of effect, sanitized evidence and independent review. Denial checks must prove the backend/effect was not reached, not merely inspect an error message. Positive controls prove legitimate authorized work remains usable.
 
@@ -54,3 +54,67 @@ Every runtime result needs the tested SHA/version, a repeatable command/scenario
 | UPDATE-02 | Clean install, reboot, failed upgrade and approved rollback from reviewed main | Service/agent identities, ACLs, health, jobs and rollback verified on actual Windows | Release acceptance |
 
 Pure policy tests use synthetic verified-principal inputs only at the decision boundary and must never be described as successful authentication. Actual token-signature/provider, IPC/ACL, multi-user session, GUI and lifecycle tests remain distinct mandatory checks. A passing scenario proves only its stated boundary; all release and ChatGPT gates remain in force.
+
+
+## B007 intended-client boundary: source-only checkpoint, NOT ACCEPTED
+
+B005 HD-POL-DR01-0007 / HD-TC-DR01-0007 asks for separately identifiable **and** independently authorized intended Codex and HostDeck clients. The existing signed Windows SYSTEM broker proves enrolled signature/key and Windows SID association but **not** the exclusive originating process. Actual owner evidence says a regular **unpackaged, same-SID desktop process can use both CurrentUser enrolled client keys**. The remote privileged adapter being disabled is not a separate same-user OS boundary. A source fixture or code review cannot turn this negative observation into PASS. Preserve existing broker and critical owner-approval behavior; do not test via unauthorized signing.
+
+The isolated diagnostic source in [windows/privilege/probes/README.md](../windows/privilege/probes/README.md) inspects **read-only** process handles and token/package/AppContainer/owner/DACL properties, without executing any broker action, altering keys or printing raw private process identities. It does not verify code signing, kernel creation provenance, app injection resistance, effective token rights or owner mandate. Actual Codex MSIX trust level, package/token binding and image-signing evidence remain **UNKNOWN until independently observed**; an MSIX package identity does not by itself prove AppContainer isolation.
+
+**Gate remains OPEN:** true negative test for an unintended same-SID process *before* elevated effect; separate protected signer/trust-root admission, per-client authorization and legitimate goal/mandate enforcement; true installed package isolation and effects. Source requirements HD-REQ-0123–0129 remain separate purpose/action/effect/context/UTC/audit cases. Any selected protected-signer/account/AppContainer solution needs a concrete owner decision and separately authorized deployment. No test of a compromised Windows administrator can be claimed as an absolute guarantee.
+
+### Actual own app/executor observation 088
+
+A new read-only observation includes the actual packaged host-app ancestor,
+not just its unpackaged execution child. The process API reports a package for
+the app and none for the execution child. Both actual token queries report no
+AppContainer; their SID, logon and session match. The process owners also match
+their token user. These are metadata observations, not effective injection,
+publisher, key-isolation or mandate tests. The token-package API remains UNKNOWN
+after its missing-entrypoint result; the earlier 050 evidence is not rewritten.
+
+The independent source assessment still finds no demonstrated OS/provider
+identity that can close DR01-0007. A same-user callable generic signing proxy
+does not supply that missing boundary. [Official plugin authentication](https://developers.openai.com/plugins/build/auth)
+documents ChatGPT connector mTLS and CIMD client assertions;
+[Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+documents MCP OAuth registration and locally configured secrets. Neither read
+establishes an exclusive identity for this local file-queue submitter. Do not
+infer a Windows application grant from remote OAuth client metadata.
+
+The required negative remains an unrelated same-SID process being refused
+before SYSTEM admission/effect while each intended client succeeds through an
+independently verified identity, without an accessible arbitrary signing proxy.
+No new signer, principal, key, grant or production route is selected or deployed.
+
+### Protected-launcher assessment 092 — not an implemented client boundary
+
+An independent source assessment examines SYSTEM-owned process/thread/token
+objects established before a pinned user client resumes. This can support a
+narrow initial-object experiment; it does not authenticate the actual Codex
+transport or supply a protected goal/action mandate. No such experiment or
+production security change is performed in this round.
+
+The initial thread descriptor does not automatically cover later runtime
+threads: their default descriptors come from the creating token. A changed
+token default DACL also affects other newly created securable objects, requiring
+application compatibility qualification. An asynchronous DACL repair monitor is
+not evidence of atomic protection. See Microsoft's
+[CreateThread contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createthread)
+and [token default DACL](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_default_dacl).
+
+This limits that launcher proposal; it is not a claim that every future Windows
+client design is impossible or a new requirement for absolute injection/admin
+resistance. Keep the original policy scope: independently verified intended
+client identity/authorization and separate goal/action checks before elevated
+effect. Current file-queue signatures still do not establish an exclusive
+origin. No unsupported process-isolation or completed DR01-0007 verdict is made.
+
+## B007 pending authorization correction 062 — scoped source evidence
+
+A real loopback HTTP MCP regression with signed fixture tokens, an on-disk grant store and an owned file reproduces a facade race: grant revocation or revision replacement during the asynchronous executor check still permits backend dispatch and returns the synthetic private bytes. Adapter reauthorization has the same gap. The original failed runs are retained privately.
+
+The candidate rechecks current grants and token lifetime after that asynchronous check, verifies the executor binding and rejects a changed grant revision before dispatch. The same check protects the explicit manager operation and its resource reads. Thirteen affected security/gateway/manager cases pass without skips, including no backend dispatch after revocation, no private read after adapter reauthorization is revoked, expiry/renewal, token expiry while waiting, and manager-resource refusal. Positive controls permit a newly requested operation after renewal without replaying the old request.
+
+The executor barrier is controlled test instrumentation; it is not Windows peer-authentication evidence. Tokens use a fixture signing key, not the deployed OAuth provider. This source result does not close the intended-client, protected signer, streaming-event, installed acceptance or full release gates. No production grant, service or installed module is changed by these tests.

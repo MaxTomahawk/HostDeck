@@ -11,3 +11,24 @@ the public MCP server and does not expose upstream operations directly.
 HostDeck also preserves explicit pointer coordinates instead of replacing them
 with the window centre, and starts a drag at the previously selected origin.
 Window/session bounds remain checked by HostDeck before invoking the service.
+
+HostDeck normalizes function-key names and maps the End navigation key to its
+Windows virtual-key code. Native decode regressions do not themselves prove
+installed keyboard effects. The original source revision and MIT attribution
+remain unchanged.
+
+HostDeck's clipboard paste path now requires a complete independently cloned
+snapshot before replacing clipboard data, preserves an empty clipboard and
+refuses unreadable or unsupported payloads without exposing their contents.
+Observed clipboard sequence changes skip restoration over a later copy; these
+checks are not an atomic transaction across applications. A random temporary
+payload marker permits guarded recovery when the write succeeds before a
+sequence observation or clipboard flush fails. Unowned content is not blindly
+restored over. Synthetic native
+regressions do not establish installed or full rich-clipboard acceptance.
+
+HostDeck's local `VisionService` modification exposes the selected on-device
+WinRT OCR recognizer language and throws a typed, bounded missing-language
+error. This does not import a newer upstream revision or claim multilingual
+OCR accuracy; confidence stays unmeasured. Original MIT attribution and source
+revision above remain unchanged.

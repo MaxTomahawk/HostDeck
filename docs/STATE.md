@@ -7,3 +7,13 @@ State is stored in SQLite through Node's built-in `node:sqlite`. Jobs and owner-
 Artifact reads are bounded to 1 MiB per call and include a SHA-256 digest; manifests expire after seven days and the default owner quota is 256 MiB. `storeArtifact` and `artifactBytes` provide owner-scoped integrity-checked helpers for gateway captures. `apply_artifact` returns a staged `{destination, bytes, mimeType}` result for the gateway to authorize and commit. Diagnostic output contains only device health, timestamp and optional job identifiers/status/timestamps. Events are sequence ordered and retained to 10,000 records. The state directory and its SQLite/WAL/runner files contain sensitive user data and require installer ACLs and retention policy.
 
 Focused local check: `node --import tsx --test test/hostdeck-state.test.ts`. The local Windows run exercised PowerShell and the built native worker. Other platforms can exercise persistence and authorization only.
+
+Provider preferences use their existing separate SQLite database. Revision1.3
+adds scoped change receipts and monotonic target revisions without replacing
+existing preference/enablement rows. A single transaction commits the setting,
+revision and receipt; a failed receipt insert rolls all three back. The latest
+200 receipts are retained per owner/device/executor, with20 returned in provider
+status. Revisions outlive pruning. Additive SQLite triggers invalidate revisions
+for supported older writers as well, so rollback/rollforward cannot silently
+reuse an old receipt after an ABA change. Older state has no invented receipts.
+This operational history is not the signed security audit or OS attestation.

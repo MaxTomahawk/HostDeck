@@ -1,6 +1,6 @@
 # Windows engine qualification
 
-Status: implementation input selection, 2026-10-19. This is not installed-product, security or full capability acceptance. Exact source revisions and license digests are in `SOURCE_MANIFEST.json`.
+Status: historical implementation input selection, 2026-10-19. The desktop worker now references the vendored Windows Commander Windows/Core projects; this historical qualification is not installed-product, security or full capability acceptance. Exact source revisions and license digests are in `SOURCE_MANIFEST.json`.
 
 ## Selection and overlap
 
@@ -49,7 +49,7 @@ Source inspection found no custom MSBuild Exec hooks in the selected solution be
 
 ## Licensing and lifecycle conditions
 
-All four pinned repositories have MIT root licenses at the inspected revisions. Their exact notices must accompany copied source and distributed substantial portions. This qualifies source-level reuse subject to those notices; it is not final clearance of transitive dependencies or release binaries. No third-party desktop implementation has been copied into HostDeck by this qualification.
+All four pinned repositories have MIT root licenses at the inspected revisions. Their exact notices must accompany copied source and distributed substantial portions. This qualifies source-level reuse subject to those notices; it is not final clearance of transitive dependencies or release binaries. No third-party desktop implementation had been copied at the time of this initial qualification. Later vendored imports and modifications are recorded in `windows/vendor/PROVENANCE.md` and the actual worker project reference.
 
 Before adopting a source module, keep its original attribution, record the imported files and revision, inspect dependency licenses, and add HostDeck behavior tests. The worker must run in the authorized logged-in user's session, expose only a bounded private API, enforce session ownership and cancellation/deadlines, and report loss of desktop access truthfully. The service must not inject input from session 0 or automatically cross UAC/secure-desktop boundaries.
 

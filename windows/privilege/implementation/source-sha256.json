@@ -31,7 +31,7 @@
     },
     {
       "name": "Broker.Verify.ps1",
-      "sha256": "17811fe662687dc23745c1f35e4af4397f86663ed2accf102645dd558771ab24"
+      "sha256": "163a936b0e42b44558b79bf6eaedf9eb817e22e933557430f12a334c75e1fc59"
     },
     {
       "name": "Build-Runner.ps1",

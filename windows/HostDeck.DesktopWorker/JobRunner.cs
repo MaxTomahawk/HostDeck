@@ -152,10 +152,18 @@ internal static class JobRunner
             if (!JobNative.GetExitCodeProcess(process.hProcess, out var exit))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             if (!TryGetActiveProcessCount(job, out var remaining)) {
+                // The shell may have already exited while a descendant is
+                // still executing. A simultaneous owner cancellation/timeout
+                // takes precedence, but is confirmed ONLY if TerminateJobObject
+                // and owned-job accounting verify containment.
+                if (File.Exists(r.CancelPath)) return StopTree(job, process.hProcess, "cancelled");
+                if (DateTimeOffset.UtcNow >= deadline) return StopTree(job, process.hProcess, "timed_out");
                 var contained = EnsureNoDescendants(job, process.hProcess, 5000);
                 return ("uncertain", exit, contained);
             }
             if (remaining > 0) {
+                if (File.Exists(r.CancelPath)) return StopTree(job, process.hProcess, "cancelled");
+                if (DateTimeOffset.UtcNow >= deadline) return StopTree(job, process.hProcess, "timed_out");
                 var contained = EnsureNoDescendants(job, process.hProcess, 5000);
                 return contained ? ("interrupted", exit, true) : ("uncertain", exit, false);
             }

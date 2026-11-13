@@ -4,6 +4,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ExcelFileHandler } from '../utils/files/excel.js';
 import { DocxFileHandler, pizzipPackage } from '../utils/files/docx.js';
+import { RuntimeError } from './runtime-error.js';
+import { replaceVisibleDocxXml, validateOfficeStructure, type OfficePart } from './office-xml.js';
+import { isOpenpyxlCommentLayout, readOpenpyxlCommentWorkbook, editOpenpyxlCommentWorkbook } from './office-xlsx.js';
+import { restoreQualifiedPdfArabic } from './pdf-rtl.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024;
@@ -52,10 +56,15 @@ function validateZip(buffer: Buffer): void {
   if (cursor !== centralEnd) throw new Error('DOCUMENT_INVALID_ARCHIVE');
 }
 
-async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): Promise<Buffer> {
+/** Shared bounded ZIP/package validator; full-text reuses it before parsing Office content. */
+export async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx', prebounded?: Buffer): Promise<Buffer> {
   const stat = await fs.stat(file);
   if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
-  const buffer = await fs.readFile(file);
+  // The full-text caller supplies its already bounded, hashed source buffer.
+  // Do not reopen and unboundedly read that pathname a second time. Existing
+  // document read/edit callers retain their original two-argument semantics.
+  const buffer = prebounded ?? await fs.readFile(file);
+  if (buffer.length > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
   validateZip(buffer);
   if (extension === '.docx') {
     const zip = new (pizzipPackage.load())(buffer);
@@ -68,9 +77,105 @@ async function checkOfficeArchive(file: string, extension: '.docx' | '.xlsx'): P
       xmlBytes += Buffer.byteLength(text);
       if (xmlBytes > MAX_ARCHIVE_BYTES || /<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error('DOCUMENT_UNSAFE_XML');
     }
-    if (!zip.file('word/document.xml')) throw new Error('DOCUMENT_INVALID_DOCX');
+    if (!zip.file('word/document.xml')) throw new RuntimeError('DOCUMENT_INVALID_DOCX');
   }
   return buffer;
+}
+
+/** The original unpdf page remains available when RTL text order cannot be qualified. */
+export type PdfPageTextOrder = {
+  page_index: number;
+  text_order: 'not_evaluated_no_arabic' | 'qualified_glyph_repair' | 'unqualified_original_unpdf';
+  limitation?: 'PDF_RTL_ORDER_UNQUALIFIED';
+};
+
+/** Catch ONLY the helper's explicit uncertainty; parser failures still propagate. */
+export function reconcilePdfArabicPage(raw: string, items: readonly unknown[]): {
+  text: string;
+  text_order: PdfPageTextOrder['text_order'];
+  limitation?: PdfPageTextOrder['limitation'];
+} {
+  try {
+    return { text: restoreQualifiedPdfArabic(raw, items), text_order: 'qualified_glyph_repair' };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'PDF_RTL_ORDER_UNQUALIFIED') throw error;
+    return { text: raw, text_order: 'unqualified_original_unpdf',
+      limitation: 'PDF_RTL_ORDER_UNQUALIFIED' };
+  }
+}
+
+/** Existing bounded unpdf text-layer semantics, now with narrowly qualified
+ * glyph repair and per-page uncertainty metadata. No OCR or font changes. */
+export async function readPdfTextFromBuffer(bytes: Uint8Array, selectedPages?: readonly number[]): Promise<{
+  text: string[]; totalPages: number; textOrderCoverage: PdfPageTextOrder[];
+}> {
+  if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
+  const { getDocumentProxy, extractText } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  try {
+    if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
+    const result = await extractText(pdf);
+    const pages = [...result.text];
+    // Only selected Arabic-bearing pages need PDF.js geometry. An unsupported
+    // RTL layout does not revoke the already readable original unpdf page.
+    const selected = selectedPages ?? pages.map((_page, index) => index);
+    const coverage: PdfPageTextOrder[] = [];
+    for (const i of new Set(selected)) {
+      if (!Number.isInteger(i) || i < 0 || i >= result.totalPages) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
+      if (!/\p{Script=Arabic}/u.test(pages[i] ?? '')) {
+        coverage.push({ page_index: i, text_order: 'not_evaluated_no_arabic' });
+        continue;
+      }
+      const page = await pdf.getPage(i + 1);
+      const details = await page.getTextContent(); // Genuine parser errors propagate.
+      const repaired = reconcilePdfArabicPage(pages[i], details.items);
+      pages[i] = repaired.text;
+      coverage.push({ page_index: i, text_order: repaired.text_order,
+        ...(repaired.limitation ? { limitation: repaired.limitation } : {}) });
+    }
+    return { text: pages, totalPages: result.totalPages, textOrderCoverage: coverage };
+  } finally {
+    // Preserve the existing unpdf loading-task cleanup path.
+    try { await pdf.loadingTask.destroy(); }
+    catch { /* Cleanup must not mask the original PDF outcome. */ }
+  }
+}
+
+class OfficeReplacementCountError extends RuntimeError {
+  constructor(expected: number, actual: number) {
+    super('DOCUMENT_REPLACEMENT_COUNT');
+    // Internal adapter tests retain the numbers; the MCP facade returns only code.
+    this.message = `Expected ${expected} occurrence(s) but found ${actual}`;
+  }
+}
+
+function replaceDocxBytes(input: Buffer, before: string, after: string, expected: number): Buffer {
+  if (!Number.isInteger(expected) || expected < 1 || expected > 10000) {
+    throw new RuntimeError('DOCX_EXPECTED_REPLACEMENTS_INVALID');
+  }
+  const zip = new (pizzipPackage.load())(input);
+  const names = Object.keys(zip.files)
+    .filter(name => /^word\/(?:document|header\d+|footer\d+)\.xml$/.test(name))
+    .sort((a, b) => a === 'word/document.xml' ? -1 : b === 'word/document.xml' ? 1 : a.localeCompare(b));
+  if (!names.includes('word/document.xml')) throw new RuntimeError('DOCUMENT_INVALID_DOCX');
+  const edits: Array<{ name: string; xml: string }> = [];
+  let actual = 0;
+  for (const name of names) {
+    const entry = zip.file(name);
+    if (!entry) continue;
+    const xml = entry.asText();
+    const root: OfficePart = name === 'word/document.xml' ? 'document'
+      : name.startsWith('word/header') ? 'hdr' : 'ftr';
+    validateOfficeStructure(xml, root);
+    const result = replaceVisibleDocxXml(xml, before, after);
+    actual += result.count;
+    if (result.count) edits.push({ name, xml: result.xml });
+  }
+  if (actual !== expected) {
+    throw new OfficeReplacementCountError(expected, actual);
+  }
+  for (const edit of edits) zip.file(edit.name, edit.xml);
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
 
 function pdfLibrary(): { PDFDocument: any; StandardFonts: Record<string, string> } {
@@ -244,11 +349,26 @@ export class DocumentAdapter {
     if (ext === '.docx') {
       await checkOfficeArchive(file, '.docx');
       const result = await new DocxFileHandler().read(file, { offset: 0, length: 1000 });
+      if (typeof result.content !== 'string') throw new RuntimeError('DOCUMENT_READ_CONTENT_INVALID');
       if (result.content.length > 2_000_000) throw new Error('DOCUMENT_READ_LIMIT');
-      return { content: result.content, mimeType: 'text/plain', metadata: result.metadata };
+      // Only remove the two upstream tooltips in the outline header and its
+      // final Python tip. Never replace matching words in document body text.
+      const upstreamHead = /^DOCX Outline: ([^\r\n]*)\r?\nEdit with: edit_block\(file, old_string="<w:t>old text<\/w:t>", new_string="<w:t>new text<\/w:t>"\)\r?\nRaw XML: use read_file with offset=1 to see pretty-printed XML for advanced edits\.\r?\n/;
+      const bulkTip = '\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.';
+      const cleanHead = result.content.replace(upstreamHead, (_match, summary: string) => 'DOCX Outline: ' + summary + '\n');
+      const out = cleanHead.endsWith(bulkTip)
+        ? cleanHead.slice(0, -bulkTip.length) : cleanHead;
+      return { content: out + '\nFor literal visible-text replacements use hostdeck_edit_document with change.kind="text_replace", old_text, new_text and expected_replacements. This retains untouched DOCX parts; replacement text inherits the first affected run style.', mimeType: 'text/plain', metadata: result.metadata };
     }
     if (ext === '.xlsx' || ext === '.xlsm') {
       const buffer = await checkOfficeArchive(file, '.xlsx');
+      if (isOpenpyxlCommentLayout(buffer)) {
+        const data = readOpenpyxlCommentWorkbook(buffer, args.sheet as string | undefined, args.range as string | undefined);
+        return { content: data.data, mimeType: 'application/json',
+          metadata: { isExcelFile: true, sheets: data.sheetNames.map(name => ({ name })),
+            selectedSheet: data.sheetName, fileSize: buffer.length, commentPartsRetained: true,
+            compatibilityRead: 'Existing cell/formula values only; comment and visual layout are not rendered.' } };
+      }
       const result = await new ExcelFileHandler().read(file, { sheet: args.sheet as string | undefined, range: args.range as string | undefined, offset: 0, length: 1000 });
       const raw = String(result.content);
       const split = raw.lastIndexOf('\n\n');
@@ -261,19 +381,16 @@ export class DocumentAdapter {
       const stat = await fs.stat(file);
       if (stat.size > MAX_FILE_BYTES) throw new Error('DOCUMENT_FILE_LIMIT');
       const bytes = await fs.readFile(file);
-      const { getDocumentProxy, extractText } = await import('unpdf');
-      const pdf = await getDocumentProxy(new Uint8Array(bytes));
-      try {
-        if (pdf.numPages > MAX_PDF_PAGES) throw new Error('PDF_PAGE_LIMIT');
-        const result = await extractText(pdf);
-        const selected = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : result.text.map((_text, index) => index);
-        if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
-        const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
-        return { content: pages, mimeType: 'application/json', metadata: { totalPages: result.totalPages } };
-      } finally {
-        // unpdf 1.8 removed PDFDocumentProxy.destroy(); the loading task owns worker cleanup in both supported shapes.
-        try { await pdf.loadingTask.destroy(); } catch { /* Cleanup must not mask the read result or original failure. */ }
-      }
+      const requested = Array.isArray(args.page_indexes) ? args.page_indexes as number[] : undefined;
+      const result = await readPdfTextFromBuffer(bytes, requested);
+      const selected = requested ?? result.text.map((_text, index) => index);
+      if (selected.some(index => index < 0 || index >= result.totalPages)) throw new Error('PDF_PAGE_INDEX_OUT_OF_RANGE');
+      const pages = selected.map(index => ({ page_index: index, text: result.text[index] ?? '' }));
+      const coverageByPage = new Map<number, PdfPageTextOrder>(result.textOrderCoverage.map(item => [item.page_index, item]));
+      return { content: pages, mimeType: 'application/json', metadata: {
+        totalPages: result.totalPages,
+        textOrderCoverage: selected.map(index => coverageByPage.get(index)),
+      } };
     }
     throw new Error('DOCUMENT_FORMAT_UNSUPPORTED');
   }
@@ -294,14 +411,20 @@ export class DocumentAdapter {
       if (!change || typeof change.kind !== 'string') throw new Error('DOCUMENT_CHANGE_INVALID');
       if (ext === '.docx' && change.kind === 'text_replace') {
         if (typeof change.old_text !== 'string' || typeof change.new_text !== 'string') throw new Error('DOCUMENT_CHANGE_INVALID');
-        const handler = new DocxFileHandler();
-        const result = await handler.editRange(temp, '', { oldStr: escapeXmlText(change.old_text), newStr: escapeXmlText(change.new_text), expectedReplacements: change.expected_replacements });
-        if (!result.success) throw new Error(result.errors?.[0]?.error ?? 'DOCUMENT_EDIT_FAILED');
+        const edited = replaceDocxBytes(sourceBytes, change.old_text, change.new_text,
+          Number(change.expected_replacements ?? 1));
+        await fs.writeFile(temp, edited);
       } else if ((ext === '.xlsx' || ext === '.xlsm') && change.kind === 'table_range') {
         if (ext === '.xlsm') throw new Error('XLSM_EDIT_UNSUPPORTED_MACROS_PRESERVED');
         if (!Array.isArray(change.cells)) throw new Error('DOCUMENT_CHANGE_INVALID');
-        const range = `${String(change.sheet)}!${String(change.range)}`;
-        await new ExcelFileHandler().editRange(temp, range, change.cells);
+        if (isOpenpyxlCommentLayout(sourceBytes)) {
+          const edited = editOpenpyxlCommentWorkbook(sourceBytes, String(change.sheet),
+            String(change.range), change.cells as unknown[][]);
+          await fs.writeFile(temp, edited);
+        } else {
+          const range = `${String(change.sheet)}!${String(change.range)}`;
+          await new ExcelFileHandler().editRange(temp, range, change.cells);
+        }
       } else if (ext === '.pdf' && change.kind.startsWith('pdf_')) {
         const bytes = await this.editPdfBytes(sourceBytes, change);
         await fs.writeFile(temp, bytes);

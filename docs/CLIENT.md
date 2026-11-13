@@ -1,6 +1,6 @@
 # HostDeck client setup
 
-HostDeck exposes its management panel through the MCP Apps resource `ui://hostdeck/management` and serves the same panel locally at `/ui`. It uses live tool responses for devices, sessions, windows, jobs, files, terminal jobs, and screenshot artifacts. Results are treated as text or fetched image artifacts; the panel does not grant access by itself. The gateway remains responsible for device, session, job and effect authorization.
+HostDeck exposes its management panel through the versioned MCP Apps resource `ui://hostdeck/management/v2` and serves the same panel locally at `/ui`. It uses live tool responses for devices, sessions, windows, jobs, files, terminal jobs, and screenshot artifacts. Results are treated as text or fetched image artifacts; the panel does not grant access by itself. The gateway remains responsible for device, session, job and effect authorization.
 
 ## Local use
 
@@ -10,7 +10,7 @@ When OAuth client metadata is configured, the page offers authorization-code log
 
 ## ChatGPT and OAuth setup status
 
-`plugin/hostdeck/` is a portable source package, not an installed or connected ChatGPT plugin. Its endpoint template is preparation only. A reachable, verified HTTPS endpoint and an approved OAuth client registration are required before a ChatGPT connector can be configured. Do not put access tokens or client secrets in the plugin package or UI bundle. Actual SSO, ChatGPT discovery, tool and Skill use, and panel behavior have not yet been accepted.
+`plugin/hostdeck/` is a portable source package; copying it does not install a client connection. Its endpoint template requires a reachable, verified HTTPS endpoint and an approved OAuth client registration. The existing authorized installation has actual connected ordinary-ChatGPT discovery and scoped operation evidence. Preserve that connection instead of registering another app to repeat setup. Do not put access tokens or client secrets in the plugin package or UI bundle. Complete Skill, interactive panel and supported mobile acceptance remain separate open gates.
 
 The server loads authorization-server metadata only for its configured issuer and validates the returned issuer and HTTPS endpoints. The owner must provision the client ID, resource/audience and least-privilege scopes through the approved identity-provider process. A successful metadata fetch or local UI login alone is not end-to-end acceptance.
 
@@ -37,10 +37,12 @@ and [MCP security guidance](https://developers.cloudflare.com/cloudflare-one/acc
 
 ## Management panel
 
-The local panel and MCP Apps resource share the same client application. The host registers `ui://hostdeck/management` as an MCP App resource and associates it with supported tools using the MCP Apps metadata. Local UI uses the same-origin `/mcp` route. Device/session selection comes from authorized server responses; files require explicit save, terminal activity is submitted as bounded jobs, and screenshot previews are retrieved as owned artifacts.
+The local panel and MCP Apps resource share the same client application. Only the explicit read-only `hostdeck_open_manager` tool advertises the versioned manager resource. Ordinary tool calls remain compact and do not open it. The obsolete unversioned resource is refused by the current server. Local UI uses the same-origin `/mcp` route. Device/session selection comes from authorized server responses; files require explicit save, terminal activity is submitted as bounded jobs, and screenshot previews are retrieved as owned artifacts.
+
+The Extensions view separates research candidates from installed and qualified providers. Unsupported lifecycle actions are labelled unavailable. Its Document content section uses explicit status, preview, approved opening, start, pause, resume, cancel and search actions. Opening the manager performs no indexing request; opening an approved index does not start a scan. A protected selection approval and explicit scan start are different actions. After an uncertain mutation, read status before another effect; the client never automatically retries it. These controls are source/built-candidate features until that candidate is installed. See [the management panel reference](../ui/newtree/README.md) for exact behavior.
 
 The managed browser requires an explicitly configured Chrome or Edge executable and an owned temporary profile. It does not install browsers or attach to personal profiles or debugging endpoints. Private/local egress is denied unless an explicit network-policy integration allows it; the current adapter's hostname check is not a complete DNS-rebinding-resistant network boundary.
 
 ## Acceptance status
 
-The UI/CLI, native PKCE and optional Cloudflare profile are prepared; focused signed-assertion checks pass. A real fresh installation and package update completed; a native session fix is awaiting the pending elevated update. Real Cloudflare login/provisioning, actual ChatGPT connection and MCP Apps use, reboot recovery, and final upgrade/rollback acceptance remain open. See [NEXT_RUN.md](NEXT_RUN.md).
+Real installed Windows and ordinary-ChatGPT evidence covers scoped authentication, device/file/search/job operations and selected desktop effects. Actual upgrade/rollback/rollforward and active-job recovery results are retained for their recorded binaries. Headless browser and SDK fixtures verify source behavior but do not establish actual ChatGPT panel/mobile/accessibility acceptance. Automatic logon/reboot, remaining lifecycle/client cases, exclusive administrator-client identity and final release remain open. See [NEXT_RUN.md](NEXT_RUN.md) for the current installed/candidate boundary.

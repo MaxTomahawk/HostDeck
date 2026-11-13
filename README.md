@@ -24,8 +24,21 @@ The `hostdeck` npm executable points to the same built entry point after packagi
 
 `ui/newtree/` contains the MCP Apps management panel and the local `/ui` interface. The panel uses actual MCP responses for device status, sessions, windows, jobs, files, bounded terminal jobs, and screenshot artifacts. See [docs/CLIENT.md](docs/CLIENT.md) for platform setup requirements and acceptance boundaries.
 
+The portable skill's contract index is generated from the actual source:
+
+```powershell
+node --import tsx scripts/sync-hostdeck-reference.mjs --check
+python scripts/package-hostdeck-plugin.py --output <new-private-plugin.zip>
+```
+
+Only `sync-hostdeck-reference.mjs --write` regenerates a stale reference. The offline packager requires Python 3 and PyYAML, admits an exact nine-file source set, preserves the original MIT license, validates JSON/YAML and local references, and never overwrites an archive. The ZIP is a source template with an unresolved endpoint, not an uploaded plugin or a changed live connection. Review it before using the existing plugin's release process.
+
 ## Current status
 
-This source package is under development. A build or focused test does not establish a complete Windows installation or product acceptance. Service lifecycle, installer and rollback, remote OAuth/ingress, real ChatGPT tool discovery and interaction, and independent end-to-end acceptance remain outstanding. Automatic upstream monitoring is inactive.
+This source package is under development. Scoped actual Windows evidence covers installation, upgrade/rollback/rollforward, durable-job recovery and connected ordinary-ChatGPT operations. These results belong to their recorded builds; they do not qualify every later candidate. Automatic logon/reboot, complete supported-host interaction, intended administrator-client isolation, historical credential disposition and final independent product acceptance remain open. Automatic upstream monitoring is inactive.
+
+For daily use, keep the installed service and enrolled-user tray running and use the existing authorized client connection. A source build does not update that installation. Do not run an installer, rollback or stop command against a working installation outside an owner-designated maintenance window. See [Windows operation](docs/WINDOWS.md) and [client setup](docs/CLIENT.md).
+
+The inherited `npm run release*` commands are retired and exit without effects. Local package preparation is documented in [docs/WINDOWS.md](docs/WINDOWS.md); publishing still requires reviewed, tested `main`, complete acceptance and the privacy/history gates.
 
 Read [docs/NEXT_RUN.md](docs/NEXT_RUN.md) for the current execution checkpoint and [docs/PUBLIC_SOURCE_POLICY.md](docs/PUBLIC_SOURCE_POLICY.md) before preparing public changes.

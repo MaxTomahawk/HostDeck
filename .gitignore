@@ -8,6 +8,9 @@ yarn-error.log*
 dist/
 *.tsbuildinfo
 
+# Local Python audit tools
+__pycache__/
+
 # IDE and editor files
 .idea/
 .vscode/
@@ -58,3 +61,5 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+test/native-boundaries/bin/
+test/native-boundaries/obj/

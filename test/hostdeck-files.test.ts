@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -7,6 +7,16 @@ import { FileAdapter } from '../src/hostdeck/files.js';
 import { publicError } from '../src/hostdeck/gateway.js';
 
 const context = { ownerId: 'owner-a', deviceId: 'device-a', executorId: 'executor-a' };
+
+async function cleanupWorkspace(workspace:string,prefix:string):Promise<void>{
+  const actual=await realpath(workspace),parent=await realpath(os.tmpdir());
+  const equal=(a:string,b:string)=>process.platform==='win32'?
+    a.toLowerCase()===b.toLowerCase():a===b;
+  assert.ok(equal(actual,path.resolve(workspace))&&equal(path.dirname(actual),parent));
+  assert.ok(path.basename(actual).startsWith(prefix));
+  assert.equal((await lstat(workspace)).isSymbolicLink(),false);
+  await rm(workspace,{recursive:true,force:true});
+}
 
 async function waitForSearch(adapter: FileAdapter, searchId: string): Promise<{ complete: boolean; state: string; total_results: number }> {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -18,7 +28,7 @@ async function waitForSearch(adapter: FileAdapter, searchId: string): Promise<{ 
 }
 
 test('file adapter confines paths, pages owner-bound searches, and never silently deletes or overwrites', async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), 'hostdeck-files-test-'));
+  const workspace = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hostdeck-files-test-')));
   const docs = path.join(workspace, 'docs');
   const calls: string[] = [];
   try {
@@ -82,12 +92,13 @@ test('file adapter confines paths, pages owner-bound searches, and never silentl
       assert.equal(deleted.permanent, true);
       await assert.rejects(stat(path.join(workspace, 'existing.txt')));
     }
-    assert.equal(calls.length, process.platform === 'win32' ? 6 : 4);
-  } finally { await rm(workspace, { recursive: true, force: true }); }
+    // Directory disclosure now also reauthorizes after collecting its page.
+    assert.equal(calls.length, process.platform === 'win32' ? 7 : 5);
+  } finally { await cleanupWorkspace(workspace,'hostdeck-files-test-'); }
 });
 
 test('permanent nonrecursive deletion removes an empty directory and preserves a populated one',async()=>{
- const workspace=await mkdtemp(path.join(os.tmpdir(),'hostdeck-delete-empty-'));
+ const workspace=await realpath(await mkdtemp(path.join(os.tmpdir(),'hostdeck-delete-empty-')));
  try{
   await mkdir(path.join(workspace,'empty'));await mkdir(path.join(workspace,'populated'));
   await writeFile(path.join(workspace,'populated','keep.txt'),'keep');
@@ -99,5 +110,5 @@ test('permanent nonrecursive deletion removes an empty directory and preserves a
   assert.equal(await readFile(path.join(workspace,'populated','keep.txt'),'utf8'),'keep');
   await adapter.handle('hostdeck_delete_path',{...args,path:'empty'},context);
   await assert.rejects(stat(path.join(workspace,'empty')),{code:'ENOENT'});
- }finally{await rm(workspace,{recursive:true,force:true});}
+ }finally{await cleanupWorkspace(workspace,'hostdeck-delete-empty-');}
 });

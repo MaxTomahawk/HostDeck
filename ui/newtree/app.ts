@@ -2,6 +2,9 @@ import { App } from '@modelcontextprotocol/ext-apps';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { mountExtensionManager } from './extension-manager.js';
+import { parseManagerHostInput, parseManagerHostResult, createManagerHostContextApplier,
+  type ManagerToolInput, type ManagerHostContext } from './manager-host-context.js';
 
 const app = new App({ name: 'HostDeck Management', version: '1.1.0' }, {});
 const $ = <T extends HTMLElement>(selector: string, root: ParentNode = document) => root.querySelector<T>(selector)!;
@@ -12,6 +15,11 @@ const tokenInput = $('#token') as HTMLInputElement;
 const connection = $('#connection');
 let connected = false;
 let currentView = 'overview';
+let pendingManagerInput: ManagerToolInput | null = null;
+let pendingManagerContext: ManagerHostContext | null = null;
+let hostConnected = false;
+// Persist across SDK notification replays and user navigation within this iframe.
+const applyManagerContextOnce = createManagerHostContextApplier();
 let client: Client | undefined;
 let transport: StreamableHTTPClientTransport | undefined;
 let activeSession = '';
@@ -47,7 +55,9 @@ function unwrap(value: any): any {
 async function call(name: string, extra: Record<string, unknown> = {}): Promise<any> {
   if (!connected) throw new Error('Connect to HostDeck first.');
   const deviceId = device.value.trim(); if (!deviceId) throw new Error('Enter the authorized device ID.');
-  const args = { device_id: deviceId, ...extra };
+  // Device ID is selected by this UI, never overridden by a nested tool
+  // argument. All requests still cross HostDeck's authenticated policy gate.
+  const args = { ...extra, device_id: deviceId };
   if (client) {
     const result: any = await client.callTool({ name, arguments: args });
     if (result.isError) throw new Error(result.content?.map((part: any) => part.text ?? '').join('\n') || 'HostDeck request failed.');
@@ -153,6 +163,15 @@ function baseCard(): HTMLElement { content.replaceChildren(); return node(conten
 function buildOverview(): void {
   content.replaceChildren(); node(content, 'section', undefined, 'card').id = 'device-overview'; node(content, 'section', undefined, 'card').id = 'recent-jobs'; void run(overview);
 }
+function buildProviders(): void {
+  const pane = baseCard();
+  mountExtensionManager(pane, {
+    call,
+    deviceId: () => device.value.trim(),
+    isCurrent: () => currentView === 'providers' && content.contains(pane),
+  });
+}
+
 function buildFiles(): void {
   const pane = baseCard(); const pathField = input(pane, 'Workspace path', 'file-path', '.'); const output = node(pane, 'div');
   button(pane, 'List directory', () => void run(async () => { const value = await call('hostdeck_list_directory', { path: pathField.value, depth: 2, limit: 100 }); output.replaceChildren(); for (const item of rows(value, 'entries')) node(output, 'p', `${item.type} · ${item.path}`); return value; }));
@@ -199,10 +218,11 @@ function buildScreen(): void {
 }
 function render(): void {
   if (!device.value.trim()) { status.textContent = 'Enter the authorized device ID.'; return; }
-  if (currentView === 'overview') buildOverview(); else if (currentView === 'files') buildFiles(); else if (currentView === 'jobs') buildJobs(); else if (currentView === 'terminal') buildTerminal(); else if (currentView === 'screen') buildScreen();
+  if (currentView === 'overview') buildOverview(); else if (currentView === 'files') buildFiles(); else if (currentView === 'providers') buildProviders(); else if (currentView === 'jobs') buildJobs(); else if (currentView === 'terminal') buildTerminal(); else if (currentView === 'screen') buildScreen();
 }
 document.querySelectorAll<HTMLButtonElement>('nav button').forEach(item => item.addEventListener('click', () => { currentView = item.dataset.view!; render(); }));
 $('#refresh').addEventListener('click', render);
+device.addEventListener('change', () => { if (currentView === 'providers') render(); });
 $('#connect').addEventListener('click', async () => {
   if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') {
     try { await connectWithAccessToken(); } catch { status.textContent = 'Cloudflare Access connection failed. Sign in to the protected HostDeck page and retry.'; }
@@ -220,7 +240,38 @@ $('#connect').addEventListener('click', async () => {
 });
 $('#disconnect').addEventListener('click', async () => { await client?.close().catch(() => {}); client = undefined; transport = undefined; accessToken = undefined; connected = false; connection.hidden = false; status.textContent = 'Disconnected. Token cleared from memory.'; });
 if (window.parent !== window) {
-  void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => { connected = true; connection.hidden = true; status.textContent = 'Connected to HostDeck. Enter the authorized device ID.'; }).catch(() => { status.textContent = 'HostDeck MCP App connection unavailable.'; });
+  // Register MCP Apps SDK notifications BEFORE connect(). A host may send
+  // tool input/result during the ui/initialize handshake. Neither notification
+  // is trusted as identity, authorization, a grant, or an effect receipt.
+  const applyHostContext = () => {
+    const applied = applyManagerContextOnce(pendingManagerContext, hostConnected, (deviceId, view) => {
+      device.value = deviceId;
+      device.readOnly = true; // Hosted manager device is chosen by a scoped tool.
+      currentView = view;
+      render(); // Calls inside render still use the authenticated facade.
+    });
+    if (applied) status.textContent = 'HostDeck manager context loaded. Device authorization is enforced by each tool call.';
+  };
+  app.ontoolinput = params => {
+    pendingManagerInput = parseManagerHostInput(params);
+    pendingManagerContext = null;
+    // Invalid host hints clear pending state but must not mutate visible UI.
+    if (!pendingManagerInput) return;
+  };
+  app.ontoolresult = result => {
+    pendingManagerContext = parseManagerHostResult(result, pendingManagerInput);
+    // A malformed/mismatched replay has no display or request side effect.
+    if (!pendingManagerContext) return;
+    applyHostContext();
+  };
+  void app.connect(new PostMessageTransport(window.parent, window.parent)).then(() => {
+    hostConnected = true;
+    connected = true;
+    connection.hidden = true;
+    if (!pendingManagerContext) status.textContent =
+      'Connected to HostDeck. Open the manager tool to select an authorized device.';
+    applyHostContext();
+  }).catch(() => { status.textContent = 'HostDeck MCP App connection unavailable.'; });
 } else {
   connection.hidden = false;
   if (window.__HOSTDECK_AUTH_MODE__ === 'cloudflare-access') { $('#token').closest('label')!.hidden = true; $('#connect').textContent = 'Connect with Cloudflare Access'; status.textContent = 'Use the Cloudflare Access session for this protected HostDeck page.'; }
