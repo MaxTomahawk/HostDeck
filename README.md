@@ -3,7 +3,7 @@
 This dedicated `chatgpt-marketplace` branch publishes two ChatGPT plugins to the user's existing GitHub marketplace:
 
 - **Operator 1.3.0**: five skills and its unchanged, existing registered OAuth App.
-- **HostDeck 0.3.2**: two skills (`hostdeck-operations` and `hostdeck-acceptance`), a full documented canonical 54-tool capability catalog, and a binding to the user's existing registered HostDeck MCP App.
+- **HostDeck 0.3.3**: two skills (`hostdeck-operations` and `hostdeck-acceptance`), a generated reference for 67 source contracts, document-search and provider-setting workflows, and the unchanged binding to the existing registered HostDeck MCP App. Runtime availability comes from live discovery.
 
 This marketplace branch is **publicly readable GitHub source**, separate from HostDeck's software delivery branch. Only plugin metadata, public-safe instructions, icons and **non-secret technical App IDs** belong here. The associated MCP services, users, OAuth credentials, Windows device identity/grants and connected data are **not made public** by this repository. No RatServer private infrastructure source or protected HostDeck runtime configuration is included.
 

@@ -14,4 +14,14 @@ A successful OAuth connection does **not** guarantee a nonempty MCP `tools/list`
 4. If the MCP server exposes tools correctly but ChatGPT still lists zero, refresh the *existing registered App's* tool catalog and retry a new session. GitHub marketplace **Sync now** refreshes plugin content, not necessarily the App's tool catalog.
 5. Once actual tools appear, first invoke `hostdeck_device_status` for an explicitly authorized device, then use the independent acceptance method.
 
-A source registry of 54 tools is not the same as a running `tools/list` response. Do not bypass policy, broaden grants, expose unauthenticated introspection, or add placeholder tools to hide an empty catalog. Differentiate **connection/authentication**, **grant/policy**, **deployed adapters**, and **host-side cached discovery** in the report.
+A source registry is not the same as a running `tools/list` response. The bundled contract index describes 67 source contracts; the installed adapters and authenticated grants decide which are exposed. Do not bypass policy, broaden grants, expose unauthenticated introspection, or add placeholder tools to hide an empty catalog. Differentiate **connection/authentication**, **grant/policy**, **deployed adapters**, and **host-side cached discovery** in the report.
+
+For a stale schema, refresh the existing App once and inspect the outcome before
+another request. A long-running chat may retain its old tool signatures; a fresh
+ordinary chat can inspect the updated catalog without reconnecting or changing
+OAuth. An unknown refresh outcome is not permission to repeat it blindly.
+
+Plugin content and App tool catalogs refresh separately. Updating this Skill does
+not install a Windows package, start document indexing or grant a maintenance
+window. The supported explicit manager uses `ui://hostdeck/management/v2`; the
+old unversioned URI is refused. Actual rendering depends on the current host.
