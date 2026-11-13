@@ -17,11 +17,12 @@ test caches remain after an execution-layer cleanup rejection; no alternate rout
 | Delivery component | Actual boundary |
 |---|---|
 | Installed068 / transition072 | Manifest `e26238ea`, config `9cd02886`; current service still Running/Auto, same PID. Actual Windows/ordinary-ChatGPT scoped evidence is retained. |
-| Windows candidate084 | Source `e1bd12f`, manifest `ff207604`; 23,037 members previously verified. End/clipboard preservation and explicit index controls built/qualified; NOT installed. |
-| Portable plugin089 | Source `294afa6`; 67 source contracts, four templates, three prompts. Updated workflows and exact nine-file source-template ZIP; two builds have identical bytes. NOT a live plugin update. |
+| Current Windows candidate095 | Source `6bee466`, manifest `0da1b820`; all 23,037 members verified, nine agent/UI changes from 084. Durable provider-setting receipts/CAS/restoration built and package-qualified; NOT installed. Native/service/tray/broker bytes remain084. |
+| Retained Windows candidate084 | Source `e1bd12f`, manifest `ff207604`; End/clipboard preservation and explicit index controls retained unchanged as the 095 baseline. NOT installed. |
+| Portable plugin095 | Source `6bee466`; 67 source contracts at 1.3, four templates, three prompts. Exact nine-file source-template ZIP SHA `137f36ab`; NOT a live plugin update. Reproducibility of the unchanged builder is retained from089. |
 | Owner selection087 | Existing selected volumes/formats/budgets approved; real installed reader accepts the digest. No scan started. Do not ask for that same selection/approval again. |
 | Client observation090 | Existing ordinary ChatGPT: two read-only calls succeed and observer reports host display confirmation. Actual visual/keyboard/mobile/accessibility interaction remains unaccepted. |
-| Transition preview091 | Actual pinned installer functions on a private copy predict config `7fe4898f`; separate byte/JSON comparison proves only the worker hash changes. Live config/service unchanged; NOT protected-staged or executable recovery. |
+| Transition preview091 | Actual pinned installer functions on a private copy predict config `7fe4898f`; separate byte/JSON comparison proves only the worker hash changes. Live config/service unchanged. Worker and installer bytes still match 095; rebind its NEW manifest in future recovery. NOT protected-staged or executable recovery. |
 
 ### Cheap repeatable checks
 
@@ -46,37 +47,28 @@ No candidate/runtime rebuild is needed for these source-tool/documentation edits
 
 ### Concrete remaining work
 
-**Current source round094 — provider change receipts and guarded restoration:**
-HD-REQ-0093/0099/0100 still have a concrete implementation gap: the Changes view
-is page-local and the provider setters have no atomic revision precondition.
-Add a bounded owner/device/executor SQLite journal in the existing registry,
-committed atomically with each existing preference/enablement change. Extend
-the same setters with optional expected_revision; expose revisions and the last
-20 receipts in existing list_providers. Restore only the prior value of a
-still-current receipt using compare-and-set, including ABA protection. Keep
-old clients compatible and mark legacy servers without this feature honestly.
-One focused security/data-preservation pass and combined changed-surface build
-follow the complete backend/UI change. No general extension installation,
-vendor setting, authority/grant, live database or running runtime is changed.
+**Completed source round094 / composition095:** provider settings and bounded
+receipts commit atomically with monotonic target revisions. Optional CAS guards
+restoration/ABA, including supported older database writers. History is opt-in;
+ordinary status remains compact. New Chrome/SQLite tests cover reopened history,
+lost acknowledgements and context changes; eight native SQLite cases include
+separate-process contention and retention/scope. Final 11 changed tests pass;
+retained broader 41 cases plus the corrected standalone path remain evidence.
+Independent source review of 7ac2dfe finds no Critical/Important; the later
+compactness-only correction 6bee466 has focused tests and is not a second review.
 
-094 source now implements that complete backend/UI slice. Eight SQLite/native-
-Node cases cover atomic rollback, separate-process contention, scope isolation,
-bounded retention, legacy migration and legacy-writer ABA across rollback.
-An actual Chrome/SQLite scenario covers reopened history, guarded restoration,
-concurrent ABA, committed-but-lost acknowledgement and device-change isolation.
-The broader changed-surface pass has41 successes and one outdated UI test
-selector; correcting its positional tab/old label makes that same standalone
-scenario pass. Original failures and retests remain private. Contract1.3 adds
-only optional preconditions and scoped response metadata; no new tool/grant.
-Candidate composition and independent source assessment follow; no installation.
-
-The bounded independent source review of094/7ac2dfe finds no concrete Critical/
-Important blocker. A final compactness correction makes history opt-in via
-include_changes; ordinary list_providers never returns20 unsolicited receipts.
-The manager explicitly reads history, while setters read back scoped receipts
-only on supporting servers. Eleven changed receipt/browser/legacy-UI cases
-pass after that correction; the test Node is byte-identical to packaged Node.
-No administrator-client security claim or full requirement acceptance follows.
+095 reuses 084's native bytes and changes nine agent/UI members. All 23,037
+payload hashes and exact membership are read back. The first completed full
+readback then fails only a digest-text case comparison at its final worker/
+installer postcondition; corrected bounded comparisons match actual file hashes.
+The original failed log is retained, with no payload edit or full-loop replay.
+Its own packaged Node/SDK/facade/worker passes 11 scoped operations, including
+actual process reopen, persistent receipts, stale-CAS denial and separate raw
+SQLite verification. This is not installed or actual hosted-UI acceptance.
+Independent ordinary-ChatGPT096 makes one directory read and stops on
+FILES_PATH_OUTSIDE_WORKSPACE before any job or write. Do not bypass that private
+path boundary or broaden grants; future handoff needs a deliberately delivered
+public artifact within the existing authorized workspace, or installed acceptance.
 
 1. **Client authority:** DR01-0007 remains OPEN. Same-SID CurrentUser keys and
    process/package metadata are insufficient. Assessment092 examines a protected
@@ -90,7 +82,7 @@ No administrator-client security claim or full requirement acceptance follows.
    require their actual scoped evidence. Browser/SDK fixtures are not host proof.
    The owner has been asked to expand the existing inline acceptance panel;
    Computer Use activation and verified navigation are currently unavailable.
-3. **Transition:** retain084 and copy-only091. Before a permitted installation,
+3. **Transition:** retain095, its084 baseline and copy-only091. Before a permitted installation,
    prepare/verify exact protected staging, fresh preservation preconditions and
    request-bound recovery. A NEW concrete maintenance window is required before
    any switch/restart; current preview is expressly unbound and unauthorized.
@@ -107,8 +99,8 @@ about4MiB, without walking packages or reading full logs. Its IDs/verdict words
 are lookup hints, never accepted coverage. Consult it before choosing another
 probe; audit-time and search/paging work already have retained records.
 Operator checkpoints carry source/evidence pointers; they are reports, not effect
-proof. The one heartbeat runs 13 November01:35 Europe/Amsterdam in this thread;
-pause it on delivery and do not create another watcher or duplicate plan.
+proof. The one 01:35 heartbeat was delivered, paused on entry and then deleted after
+its one-time purpose was fulfilled. Do not create another schedule or plan.
 
 <details>
 <summary>Retained earlier execution notes and original evidence boundaries — historical, not a second plan</summary>
