@@ -70,6 +70,14 @@ scenario pass. Original failures and retests remain private. Contract1.3 adds
 only optional preconditions and scoped response metadata; no new tool/grant.
 Candidate composition and independent source assessment follow; no installation.
 
+The bounded independent source review of094/7ac2dfe finds no concrete Critical/
+Important blocker. A final compactness correction makes history opt-in via
+include_changes; ordinary list_providers never returns20 unsolicited receipts.
+The manager explicitly reads history, while setters read back scoped receipts
+only on supporting servers. Eleven changed receipt/browser/legacy-UI cases
+pass after that correction; the test Node is byte-identical to packaged Node.
+No administrator-client security claim or full requirement acceptance follows.
+
 1. **Client authority:** DR01-0007 remains OPEN. Same-SID CurrentUser keys and
    process/package metadata are insufficient. Assessment092 examines a protected
    launcher: initial-object DACLs are plausible, but future runtime threads,

@@ -15,7 +15,9 @@ Tools use the `hostdeck_` namespace. Availability and schemas come from the conn
 Each call is subject to the server's identity, device, scope, session, and effect checks. Tool schemas do not grant authority. Browser navigation also uses the local egress policy.
 
 Current provider-setting servers expose per-function `revision`, Everything
-`enabledRevision`, and recent `changes` in `list_providers`. Pass the inspected
+`enabledRevision` in `list_providers`. Ask for `include_changes:true` only when
+the user needs retained receipts or reconciliation; ordinary status omits them.
+Pass the inspected
 revision as `expected_revision` when changing a preference or integration
 setting. A conflict is not permission to overwrite or automatically retry.
 The returned `change` receipt is durable in the same setting transaction; the

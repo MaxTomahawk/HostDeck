@@ -9,7 +9,8 @@ The existing preference and enablement setters accept optional nonnegative
 changing settings or adding a receipt. Omitting it preserves legacy-call
 compatibility. Current clients should send the revision they inspected.
 `list_providers` exposes function `revision`, Everything `enabledRevision`,
-`changes` (newest20), and `changeRetention:200`. These are scoped by the same
+and `changeRetention:200`. Only explicit `include_changes:true` returns
+`changes` (newest20); ordinary status remains compact. These are scoped by the same
 owner/device/executor tuple; no new grant or protocol method is introduced.
 
 Each successful setter returns `change` with opaque id, kind, target, prior and

@@ -138,7 +138,8 @@ export function assertProviderSnapshot(value: unknown): ProviderSnapshot {
     if(new Set(changes.map(change=>change.id)).size!==changes.length)throw new Error('PROVIDER_SNAPSHOT_INVALID');
     return {providers,functions,changes,changeRetention:200};
   }
-  return { providers, functions };
+  if(input.changeRetention!==undefined&&input.changeRetention!==200)throw new Error('PROVIDER_SNAPSHOT_INVALID');
+  return { providers, functions,...(input.changeRetention===200?{changeRetention:200}:{}) };
 }
 export function mergeManagerCatalog(snapshot: ProviderSnapshot): ManagerEntry[] {
   const byId = new Map(snapshot.providers.map(item => [item.id, item]));

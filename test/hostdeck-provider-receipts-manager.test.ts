@@ -74,6 +74,9 @@ test('real browser and SQLite: durable restoration, concurrent ABA, lost acknowl
   await page.waitForFunction(()=>document.body.textContent?.includes('Preference verified on readback'));
   assert.equal((await registry.snapshot(context)).preferences[0].revision,1);
   await page.reload();await ready();await click('Changes');
+  assert.equal(await page.$$eval('article[data-change-id]',items=>items.length),0,'history is not loaded with ordinary status');
+  await click('Read retained provider changes');
+  await page.waitForFunction(()=>document.querySelectorAll('article[data-change-id]').length===1);
   assert.equal(await page.$$eval('article[data-change-id]',items=>items.length),1,'history survives closing/reopening the view');
   assert.equal(await restores(),1);
   await page.click('article[data-change-id] button');

@@ -145,7 +145,7 @@ export class FileAdapter {
       case 'hostdeck_list_processes': return this.listProcesses(args);
       case 'hostdeck_list_providers': {
         await this.authorize(name,args);
-        const result=await this.listProviders(context);
+        const result=await this.listProviders(context,args.include_changes===true);
         await this.authorize(name,args);
         return result;
       }
@@ -343,18 +343,18 @@ export class FileAdapter {
     for (const [id, job] of this.searches) if (job.done) this.searches.delete(id);
   }
 
-  private async listProviders(context:FileOwnerContext):Promise<unknown> {
+  private async listProviders(context:FileOwnerContext,includeChanges=false):Promise<unknown> {
     let everything:unknown={installed:null,running:null,compatible:null,healthy:null,reason:'not_configured',qualified:'not_independently_accepted'};
     if(this.options?.everything)try{this.authorizeEverythingSession(context);everything=await this.options.everything.status();}
     catch(e){everything={installed:null,running:null,compatible:null,healthy:null,reason:e instanceof RuntimeError?e.code:'EVERYTHING_UNAVAILABLE',qualified:'not_independently_accepted'};}
-    const settings=await this.options?.providers?.snapshot(context);
+    const settings=await this.options?.providers?.snapshot(context,includeChanges);
     const enabledOverride=settings?.everything.enabledOverride??null,desiredEnabled=enabledOverride??true;
     return {providers:[{id:'direct',capabilities:['files.name','files.content'],installed:true,configured:true,enabled:true,desiredEnabled:true,enabledOverride:null,running:'on_demand',compatible:true,healthy:true},
       {id:'everything',capabilities:['files.name'],...(everything as object),configured:!!this.options?.everything,enabled:desiredEnabled,desiredEnabled,enabledOverride,
         ...(settings?{enabledRevision:settings.everything.revision}:{})}],functions:(['files.name','files.content'] as const).map(capability=>{
         const saved=settings?.preferences.find(item=>item.capability===capability);
         return {capability,preference:saved?.provider??null,default:'direct',selected:saved?.provider??'direct',...(saved?{revision:saved.revision}:{})};}),
-      ...(settings?{changes:settings.changes,changeRetention:200}:{})};
+      ...(settings?{...(includeChanges?{changes:settings.changes}:{}),changeRetention:200}:{})};
   }
 
   private authorizeEverythingSession(context:FileOwnerContext):void {

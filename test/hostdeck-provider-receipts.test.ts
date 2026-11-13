@@ -110,7 +110,8 @@ test('actual file adapter exposes durable receipts and rechecks authorization be
  const call=(name:string,args:any={})=>adapter.handle('hostdeck_'+name,{device_id:c.deviceId,...args},c);
  const changed:any=await call('set_provider_preference',{capability:'files.name',provider:'everything',expected_revision:0});
  assert.equal(changed.change.revision,1);
- const view:any=await call('list_providers');assert.equal(view.functions[0].revision,1);assert.equal(view.changes[0].id,changed.change.id);
+ const compact:any=await call('list_providers');assert.equal(compact.changes,undefined,'ordinary status never includes unsolicited history');
+ const view:any=await call('list_providers',{include_changes:true});assert.equal(view.functions[0].revision,1);assert.equal(view.changes[0].id,changed.change.id);
  await assert.rejects(call('set_provider_preference',{capability:'files.name',provider:'direct',expected_revision:0}),/PROVIDER_CONFLICT/);
  allowed=false;await assert.rejects(call('set_provider_enabled',{provider:'everything',enabled:false,expected_revision:0}),/DENIED/);
  assert.equal((await providers.snapshot(c)).changes.length,1);

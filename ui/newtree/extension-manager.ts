@@ -260,7 +260,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
         const applied=fresh.enabledRevision!==undefined?assertProviderChange(receipt.change):null;
         if(applied&&(applied.kind!=='enablement'||applied.target!=='everything'||applied.before!==prior||
           applied.after!==desired||applied.revision!==fresh.enabledRevision!+1))throw new Error('Write receipt mismatch; refresh to reconcile.');
-        const after=assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+        const after=assertProviderSnapshot(await endpoint('hostdeck_list_providers',before.changeRetention===200?{include_changes:true}:undefined));
         if(!valid())throw new Error('Device or context changed before readback; outcome uncertain.');
         snapshot=after;entries=mergeManagerCatalog(after);mutationUncertain=false;
         const checked=after.providers.find(item=>item.id==='everything');
@@ -328,6 +328,11 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
       add(changes, 'p', lastChange.readback);
     } else add(changes, 'p', 'No provider setting change attempted during this page session.');
     if(snapshot?.changes===undefined){
+      if(snapshot?.changeRetention===200){
+        add(changes,'p','Retained history is read only on request. Ordinary provider status stays compact.');
+        const load=button(changes,'Read retained provider changes',()=>{void refresh(true);});
+        load.disabled=busy||saving||!current();return;
+      }
       add(changes, 'p', 'This connected server does not expose durable provider history. The page-session display clears when closed; preferences remain saved. Refresh after a server upgrade.');
       return;
     }
@@ -355,7 +360,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     saving=true;refreshButton.disabled=true;renderChanges();
     lastChange={capability:change.target,preference:String(change.before??'Automatic'),outcome:'Restoration preflight',readback:'Not yet verified.'};
     try{
-      const before=assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+      const before=assertProviderSnapshot(await endpoint('hostdeck_list_providers',{include_changes:true}));
       if(!valid())throw new Error('CONTEXT_CHANGED');
       snapshot=before;entries=mergeManagerCatalog(before);
       if(!currentProviderChange(before,change)){
@@ -370,7 +375,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
       const committed=assertProviderChange(receipt?.change);
       if(committed.kind!==change.kind||committed.target!==change.target||committed.before!==change.after||
         committed.after!==change.before||committed.revision!==change.revision+1)throw new Error('RECEIPT_MISMATCH');
-      const after=assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+      const after=assertProviderSnapshot(await endpoint('hostdeck_list_providers',{include_changes:true}));
       if(!valid())throw new Error('CONTEXT_CHANGED');
       snapshot=after;entries=mergeManagerCatalog(after);mutationUncertain=false;
       lastChange.outcome=currentProviderChange(after,committed)?'Restoration verified':'Restoration readback conflict';
@@ -467,7 +472,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
         const applied=fresh.revision!==undefined?assertProviderChange(receipt.change):null;
         if(applied&&(applied.kind!=='preference'||applied.target!==fn.capability||applied.before!==fn.preference||
           applied.after!==desired||applied.revision!==fresh.revision!+1))throw new Error('Write receipt mismatch; refresh to reconcile.');
-        const after = assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+        const after = assertProviderSnapshot(await endpoint('hostdeck_list_providers',before.changeRetention===200?{include_changes:true}:undefined));
         if (!current() || connection.deviceId() !== target) throw new Error('Device changed before readback; reconcile before retrying.');
         snapshot = after; entries = mergeManagerCatalog(after);mutationUncertain=false;
         const checked = after.functions.find(item => item.capability === fn.capability);
@@ -494,7 +499,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
     preference.addEventListener('change', () => { apply.disabled = saving || mutationUncertain || preference.value === (selectedFunction()?.preference ?? ''); });
     renderPreference();
   }
-  async function refresh(): Promise<void> {
+  async function refresh(includeChanges=tab==='changes'): Promise<void> {
     if (busy || saving || !current()) return;
     busy = true; refreshButton.disabled = true;
     liveStatus.setAttribute('aria-busy', 'true');
@@ -508,7 +513,7 @@ export function mountExtensionManager(host: HTMLElement, connection: ManagerConn
         : 'HostDeck device readiness is unknown. Provider status and qualifications remain separate.';
     });
     try {
-      const value = assertProviderSnapshot(await endpoint('hostdeck_list_providers'));
+      const value = assertProviderSnapshot(await endpoint('hostdeck_list_providers',includeChanges&&snapshot?.changeRetention===200?{include_changes:true}:undefined));
       if (!current() || connection.deviceId() !== deviceAtStart || ordinal !== requestedSerial) return;
       snapshot = value; snapshotDevice = deviceAtStart; entries = mergeManagerCatalog(value);mutationUncertain=false;
       liveStatus.textContent = 'Live status read from HostDeck for this device. Research-only candidates remain unknown.';

@@ -92,7 +92,7 @@ export class ProviderRegistry {
       .run(c.ownerId,c.deviceId,c.executorId,c.ownerId,c.deviceId,c.executorId);
     return receipt;
   }
-  async snapshot(context:FileOwnerContext):Promise<ProviderSettings> {
+  async snapshot(context:FileOwnerContext,includeChanges=true):Promise<ProviderSettings> {
     this.check(context,'files.name');
     return this.withDatabase(db=>this.transaction(db,()=>{
       const keys=[context.ownerId,context.deviceId,context.executorId];
@@ -102,8 +102,8 @@ export class ProviderRegistry {
         return {capability,provider,revision:this.revision(db,context,'preference:'+capability)};
       });
       const enabled=db.prepare('SELECT enabled FROM provider_enablement WHERE owner=? AND device=? AND executor=? AND provider=?').get(...keys,'everything');
-      const changes=db.prepare('SELECT payload FROM provider_changes WHERE owner=? AND device=? AND executor=? ORDER BY sequence DESC LIMIT 20').all(...keys)
-        .map(row=>JSON.parse(String(row.payload)) as ProviderChange);
+      const changes=includeChanges?db.prepare('SELECT payload FROM provider_changes WHERE owner=? AND device=? AND executor=? ORDER BY sequence DESC LIMIT 20').all(...keys)
+        .map(row=>JSON.parse(String(row.payload)) as ProviderChange):[];
       return {preferences,everything:{enabledOverride:enabled?enabled.enabled===1:null,revision:this.revision(db,context,'enablement:everything')},changes};
     }));
   }
