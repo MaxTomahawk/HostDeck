@@ -1,47 +1,71 @@
 # Acceptance method
 
-## Establish scope and authority
+## Start from the actual boundary
 
-1. Verify this is ordinary ChatGPT and inventory the actual connected HostDeck tools and host-supported resources/prompts/Apps. Record which protocol surfaces the host does not expose; do not assume every MCP method is a callable model tool. Record local time with Europe/Amsterdam offset, plugin/package version, runtime version/device identity where available, and the exact reviewed source SHA.
-2. Read `MaxTomahawk/HostDeck` delivery PR #9 and its current branch, then `docs/MASTERPLAN.md`, `docs/NEXT_RUN.md`, `docs/MCP_CONTRACT.md`, `docs/ENGINE_QUALIFICATION.md`, `SOURCE_MANIFEST.json`, `windows/vendor/PROVENANCE.md`, `docs/WINDOWS.md`, `docs/SECURITY_MODEL.md`, `docs/SECURITY_ACCEPTANCE.md`, `docs/UPSTREAM.md` and the relevant implementation/tests. Discover actual paths rather than assuming all listed files still exist. `main`, a development branch, a packaged candidate and the installed runtime can differ. Date-stamped docs may describe an earlier foundation; compare their claims with code and live results.
-3. If an existing connected Operator project for HostDeck is available to the user, consult it only for coordination/evidence pointers. Follow actual artifact references; a checkpoint is a report, not independent execution evidence. Private local receipts unavailable to ChatGPT remain **unverified**, not **missing implementation**. Do not request secrets or indiscriminate diagnostic dumps.
+For resumed work, read the current request, existing scope and latest relevant
+checkpoint. Identify the specific integration or original criterion being
+accepted, current source SHA, installed build and available HostDeck tools.
+Consult `docs/NEXT_RUN.md` and the active delivery PR; do not assume a historical
+PR number is current. Resolve contradictory status against Git, actual runtime
+identity and original receipts. A checkpoint is a report, not execution proof.
 
-## Build the comparison
+Use existing valid evidence first. Do not replay a completed operation, job or
+uncertain request to produce a newer report. Reconcile the same identifier after
+a lost response. Lack of access to private evidence means **unverified here**,
+not **missing implementation**. Ask only for the minimum actual protected input.
 
-Determine the actual origin of the user's older Remote Desktop Commander plugin. Inspect its exposed tools and verified repository; separately identify HostDeck's Desktop Commander origin from Git/remotes/manifests. Treat `wonderwhy-er/DesktopCommanderMCP` as a candidate to verify, not an identity asserted by this document.
+## Preserve the agreed scope
 
-Inspect `docs/ENGINE_QUALIFICATION.md`, `SOURCE_MANIFEST.json`, Git diffs and vendor provenance for actual use and decisions around `exalsch/windows-commander-mcp`, `CursorTouch/Windows-MCP`, `deploymenttheory/windows-mcp-server`, `TransductiveScience/desktop-commander-mcp` and any other recorded sources. Follow real repository URLs and pinned revisions. Distinguish **copied/modified**, **dependency**, **behavior reference**, **evaluated/rejected**, **planned** and **unknown**. Preserve licensing context. Compare relevant pinned revisions and current upstream behavior separately; do not attribute new upstream functions to an older installed HostDeck build.
+For a first full acceptance, derive the checklist from the existing masterplan,
+requirements, policies and acceptance criteria. For continued acceptance, reuse
+that checklist and inspect only changed or failed boundaries and genuinely open
+original criteria. Do not add new requirements or extra output oracles, such as
+Word-to-PDF export when the exposed PDF contract accepts Markdown.
 
-Derive a complete checklist from the masterplan and implementation rather than this illustrative list alone:
+Retain the original groups: files/search/Everything and document content;
+Office/PDF/OCR; terminal/processes and durable jobs/artifacts; Windows input,
+windows/screenshots/accessibility/clipboard; managed browser; identity/grants,
+local/remote MCP and diagnostics; Skills/resources/prompts/management UI;
+installer/service/session/tray, logon/reboot/crash and upgrade/rollback;
+licenses/provenance/privacy, reviewed main and release integrity. No passing
+subset replaces full acceptance.
 
-- File discovery/search/read/edit/move and structured documents/PDFs.
-- Terminal and interactive processes versus durable jobs, cancellation/timeout, idempotency, reconnect, output artifacts and integrity.
-- Windows discovery/focus/UIA, screenshot/OCR, pointer/keyboard, clipboard formats and eligible-session boundaries.
-- Managed browser navigation/DOM interaction, profile ownership, egress and cleanup.
-- Devices, diagnostics, scoped identity/grants, events/audit and negative authorization.
-- MCP tools/resources/prompts, structured errors/results and actual ChatGPT tool selection.
-- Management App/UI rendering and a real interaction, not only resource discovery or HTML source.
-- Installer, LocalService, user agent/tray, automatic startup, actual reboot, upgrade/rollback and recovery.
-- Direct Windows Cloudflare/OAuth ingress and independent management recovery.
-- Permanent signed local administrative broker, audit/receipts, replay/uncertain-result recovery and explicit local/remote authorization boundaries. Local acceptance does not grant remote administrator access.
-- Developer/release docs, licenses, update provenance and public-source/history release gates.
+RDC and fork functionality is an implementation input to reuse. Investigate its
+provenance only when needed for an actual integration/licensing decision. An
+already recorded comparison does not need repeating. Do not build replacement
+functions or run comparative probes merely to restate an existing capability.
 
-## Execute bounded representative tests
+## Verify effects without disrupting use
 
-Start with authenticated device/status and harmless reads. For each exposed supported subsystem, use a fresh disposable fixture under a server-authorized test directory. Test meaningful input→effect→returned result, read back created data, verify artifact bytes/hashes where exposed, and inspect terminal receipts before marking jobs successful. Reuse actual IDs on follow-up reads; never replay uncertain effects.
+Use tools actually exposed by the authenticated HostDeck connection, with their
+current schemas, explicit device/session and existing authorization. A source
+contract, schema, mock, compile or exit code alone does not prove user effects.
+MCP resources/prompts and host rendering are distinct from model-callable tools.
 
-For GUI/browser tests use only an explicitly identified test window/profile and read its result before another action. Do not capture unrelated private content. Test authorization boundaries through harmless denied/read-only cases or isolated fixtures; do not probe another person's device or mutate a real protected path to demonstrate a denial.
+Test the changed integration and security/data boundaries, then perform one
+integrated final pass. Bundle reproduced defects for repair and rerun only the
+affected paths. Automate repeated mechanical checks with existing small scripts.
+Use a fresh disposable fixture only when a necessary check lacks valid evidence;
+read its result before another action and preserve its original failure.
 
-Compare the old plugin and HostDeck with equivalent safe fixtures when both connections are available. If the old plugin is absent, label its comparison **source/documentation only** and continue. A missing reference connector is not a reason to stop testing HostDeck.
+Do not stop/restart working services, tray, agent, tunnel or sessions outside an
+explicit maintenance window. No implicit reboot, index start, wider grant,
+production identity/infra change, history rewrite or upstream monitoring. Source
+preparation is not permission for those effects. Do not reroute a denied action.
+Cleanup covers only exact owned fixtures within the actual authorized boundary.
 
-Do not reboot the user's PC, stop existing services, install software, update/rollback the running product, change DNS/firewall/accounts, or open a privileged shell merely to complete this test report. Review available receipts and mark their evidence level. Preserve all user data. Clean up only exact fixtures owned by this run after recording their results; never perform broad recursive cleanup from an inferred path.
+## State exactly what the result proves
 
-## Report format
+Lead with the concrete outcome and remaining repair. Use a compact table only
+when several original criteria need comparison:
 
-Give a short verdict followed by a table:
+`Criterion | Implementation | Result | Evidence and build | Remaining action`
 
-`Feature | Old plugin/baseline | HostDeck intended | HostDeck implementation | Live result/evidence level | Evidence ref | Gap/action`
-
-Implementation states: **implemented**, **partial**, **absent**, **unknown**. Test results: **PASS**, **FAIL**, **NOT TESTED**, **BLOCKED**, **NOT APPLICABLE**. Evidence levels: **live in this chat**, **independently inspected receipt**, **source only**, **documented claim only**, **unavailable**. Do not collapse these into one status. An advertised schema or a passing mock is not live implementation proof. A runtime failure can be configuration, access, compatibility or implementation; identify what the evidence establishes.
-
-If giving completion percentages, show the checklist, denominator, weights and how unknown/blocked items count. Otherwise omit percentages. End with top gaps ordered by user impact and a compact `CODEX_HANDOFF.md` block containing source/runtime versions, reproduced steps, redacted error, expected/actual behavior and the next concrete repair. Keep it usable in a fresh Codex chat without this conversation's history.
+Keep implementation (**implemented/partial/absent/unknown**) distinct from result
+(**PASS/FAIL/NOT TESTED/BLOCKED/NOT APPLICABLE**) and evidence (**live here/original
+receipt/source only/reported/unavailable**). Identify configuration, permission,
+compatibility and implementation failures from actual observations. Keep
+original failures and request/job/artifact identifiers. Redact secrets and private
+host data. Return a short handoff in the existing chat/checkpoint; create no new
+plan, review task or standalone report unless requested. A scoped PASS does not
+prove the full product or authorize release.

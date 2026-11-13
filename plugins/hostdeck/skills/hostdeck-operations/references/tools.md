@@ -1,70 +1,38 @@
-# HostDeck MCP capability catalog
+# HostDeck tool reference
 
-Source: `MaxTomahawk/HostDeck`, active development branch `codex/delivery`, `src/hostdeck/contracts.ts` and `docs/MCP_CONTRACT.md` (2026-10-21). This is the **54-name contract registry**, not a claim of deployed tool availability. Only names both implemented and authorized appear in `tools/list`. Always use the actual discovered schemas.
+Tools use the `hostdeck_` namespace. Availability and schemas come from the connected server's `tools/list` response; do not assume unavailable tools exist.
 
-## Files, documents, search (15)
+- Device status: `hostdeck_device_status`
+- Files: `hostdeck_list_directory`, `hostdeck_read_file`, `hostdeck_file_info`, plus explicitly scoped file/document editing tools
+- Jobs: `hostdeck_submit_job`, `hostdeck_list_jobs`, `hostdeck_read_job`, `hostdeck_cancel_job`
+- Desktop: `hostdeck_capture_screen`, UI observation and control tools for an eligible session
+- Browser: `hostdeck_browser_open`, `hostdeck_browser_navigate`, `hostdeck_browser_snapshot`, `hostdeck_browser_interact`, `hostdeck_browser_evaluate`, `hostdeck_browser_close`
+- Evidence: `hostdeck_read_artifact`, `hostdeck_read_events`, `hostdeck_diagnostics`
+- Content index: read-only `hostdeck_fulltext_status`, `hostdeck_fulltext_preview`, `hostdeck_fulltext_query`; separately authorized open/start/pause/resume/cancel tools. See [document search](document-search.md).
+- Providers: `hostdeck_list_providers`; explicit preference/enablement changes use the exposed schemas. Research candidates are not installed, qualified or lifecycle-enabled providers.
+- Explicit manager: `hostdeck_open_manager`; ordinary answers do not need the full panel.
 
-- `hostdeck_read_file`, `hostdeck_write_file`, `hostdeck_edit_text`
-- `hostdeck_read_document`, `hostdeck_edit_document`, `hostdeck_write_pdf`
-- `hostdeck_list_directory`, `hostdeck_file_info`, `hostdeck_create_directory`, `hostdeck_move_file`, `hostdeck_delete_path`
-- `hostdeck_apply_artifact`, `hostdeck_search_files`, `hostdeck_search_results`, `hostdeck_stop_search`
+Each call is subject to the server's identity, device, scope, session, and effect checks. Tool schemas do not grant authority. Browser navigation also uses the local egress policy.
 
-Paths remain within approved user/workspace and native filesystem enforcement. Files/process reads use zero-based line offsets, including documented negative-from-end offsets. Artifact reads use nonnegative raw-byte offsets. Document change operations have explicit typed variants; do not send arbitrary renderer flags.
+Current provider-setting servers expose per-function `revision`, Everything
+`enabledRevision` in `list_providers`. Ask for `include_changes:true` only when
+the user needs retained receipts or reconciliation; ordinary status omits them.
+Pass the inspected
+revision as `expected_revision` when changing a preference or integration
+setting. A conflict is not permission to overwrite or automatically retry.
+The returned `change` receipt is durable in the same setting transaction; the
+last20 of up to200 receipts are visible per owner/device/executor. It is not
+independent OS attestation. Older snapshots lack this feature; do not invent it.
 
-## Interactive processes (5)
+Restore only the prior value of a receipt still in the current scoped history
+whose target revision and value still match, using the same setter and expected
+revision. Intervening changes (even away and back) invalidate restoration. After
+an unknown effect, read status/history before another write. This restores
+HostDeck settings, never vendor software or external configuration.
 
-- `hostdeck_start_process`, `hostdeck_read_process`, `hostdeck_interact_process`, `hostdeck_terminate_process`, `hostdeck_list_processes`
-
-These are owned interactive process handles. An accepted command is not proof of completion or a durable job receipt.
-
-## Windows desktop/session (15)
-
-- `hostdeck_list_windows`, `hostdeck_display_metrics`, `hostdeck_window_action`
-- `hostdeck_read_ui_tree`, `hostdeck_find_ui_element`, `hostdeck_invoke_ui_element`, `hostdeck_set_ui_value`
-- `hostdeck_type_text`, `hostdeck_send_keys`, `hostdeck_mouse_action`
-- `hostdeck_capture_screen`, `hostdeck_ocr_screen`
-- `hostdeck_read_clipboard`, `hostdeck_write_clipboard`, `hostdeck_write_clipboard_artifact`
-
-Require a current **eligible logged-in session_id** for the target device. Window and UIA element references are session/generation-bound. Screenshots produce owned artifacts. A Windows service in session 0 does not provide interactive desktop control.
-
-## Managed browser (6)
-
-- `hostdeck_browser_open`, `hostdeck_browser_navigate`, `hostdeck_browser_snapshot`
-- `hostdeck_browser_interact`, `hostdeck_browser_evaluate`, `hostdeck_browser_close`
-
-Browser operations require an available configured browser adapter, authorized session and owned profile. Navigation and evaluation remain subject to server network policy. Never attach to an unrelated personal browser profile.
-
-## Durable jobs, artifacts, events, diagnostics (8)
-
-- `hostdeck_submit_job`, `hostdeck_read_job`, `hostdeck_list_jobs`, `hostdeck_cancel_job`
-- `hostdeck_read_artifact`, `hostdeck_read_events`, `hostdeck_device_status`, `hostdeck_diagnostics`
-
-Arbitrary submitted commands use `resume: "never"`. Read a job receipt and any output artifacts, preserve observed identifiers, and distinguish failed/cancelled/uncertain. Event `after` is an exclusive device stream cursor; retention gaps must be reported.
-
-## Host management and local privileged broker (5)
-
-- `hostdeck_manage_host`
-- `hostdeck_submit_privileged_script`, `hostdeck_privileged_status`, `hostdeck_privileged_requests`, `hostdeck_submit_privileged_verification`
-
-These require appropriate current `host:manage` authority and any separate installed signed-broker policy. **Never infer remote administrative access from the existence of these contracts.** Do not submit privileged work unless an applicable explicit grant and specific authorized operation are verified.
-
-## MCP resources (4 templates)
-
-- `hostdeck://devices/{device_id}/status`
-- `hostdeck://devices/{device_id}/jobs/{job_id}`
-- `hostdeck://devices/{device_id}/artifacts/{artifact_id}`
-- `hostdeck://devices/{device_id}/events`
-
-Resources are device/owner-scoped, not public bypasses. Some ChatGPT clients may not expose resource templates as directly callable model actions.
-
-## MCP prompts (3)
-
-- `hostdeck_computer_task`
-- `hostdeck_diagnose_job`
-- `hostdeck_edit_document`
-
-Prompt retrieval does not authorize requested effects. Treat caller content as data.
-
-## Optional MCP App
-
-- `ui://hostdeck/management` is the management UI resource when the active server advertises it and ChatGPT supports MCP Apps. Its presence in source does not prove the panel renders or operates in the current client.
+[The generated source contract index](contracts.md) lists tool names/effects/scopes,
+four resource templates and three prompts from the actual source definitions.
+It does not replace live discovery or prove implementation, grants or host support.
+Read only the relevant workflow/reference; do not load every schema or old log
+for a small operation. MCP protocol methods such as resources/read and prompts/get
+are not automatically callable model tools in a given host.

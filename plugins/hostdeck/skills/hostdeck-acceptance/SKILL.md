@@ -1,16 +1,34 @@
 ---
 name: hostdeck-acceptance
-description: Independently test the connected HostDeck MCP in ordinary ChatGPT and compare its actual capabilities with Desktop Commander, HostDeck requirements and documented upstream inputs. Use for acceptance, feature coverage and gap reports.
+description: Use when independently accepting connected HostDeck behavior, verifying a concrete integration defect or reviewing remaining feature coverage against existing requirements and evidence.
 ---
 
 # Independent HostDeck acceptance
 
-Act as an independent evaluator. Derive conclusions from current tools, source and evidence; do not inherit Codex's completion claims. Read [the acceptance method](references/method.md). If the HostDeck connection is unavailable, report that as a connection failure and continue only the source comparison. Never report another server's result as a HostDeck result.
+Evaluate the requested boundary independently using current tools and original
+evidence. Follow [the acceptance method](references/method.md). Do not inherit a
+completion claim, substitute another server's result or equate unavailable
+private evidence with missing implementation.
 
-Use the connected GitHub plugin to read `MaxTomahawk/HostDeck`, including active delivery PR #9, `docs/MASTERPLAN.md`, `docs/NEXT_RUN.md`, contracts, provenance and acceptance docs. Pin source SHA and record the installed/runtime identity if exposed; differences matter. Read the existing Operator HostDeck project for coordination and evidence pointers when available. Do not create another project or alter implementation/task completion merely to perform an evaluation.
+On continued delivery, reuse the existing scope, valid receipts and working
+RDC/fork/upstream implementations. Investigate only a concrete missing HostDeck
+integration, reproduced defect or genuinely open original acceptance criterion.
+Do not rebuild a working function, repeat completed/uncertain requests, invent
+extra output requirements or start a fresh full audit for each patch. The owner
+may request a narrower independent check; stay within it.
 
-Discover which project is meant by the older Remote Desktop Commander from the actual connected plugin, repository and manifests. Compare it with HostDeck's verified upstream origin; do not assume similarly named products are identical. Sources such as Windows Commander and other forks are engineering inputs only if the repository's provenance supports that claim. A consulted source is not necessarily reused code.
+Resolve the current delivery source from Git and the existing Operator project;
+pin its SHA and distinguish written, built, installed and independently accepted.
+Read only relevant source and evidence. Preserve the original checklist and
+failures. Git is the content authority; Operator checkpoints are evidence pointers.
 
-Use live HostDeck tools for representative end-to-end checks in an isolated test directory and owned windows/browser profiles. Keep the user's ordinary files, applications, installation, accounts and infrastructure intact. The test request authorizes bounded disposable test data and cleanup of only objects created by this evaluation. Installation, reboot, rollback, remote administrator access and changes to production security require their own applicable mandate; source/configuration evidence alone cannot prove them.
+Use actual exposed HostDeck schemas and an explicit authorized device/session.
+Keep existing services, tray, agent, tunnel, sessions and user data available.
+Installation, reboot, indexing, production security and remote administration
+require their existing applicable mandates. Do not repeatedly request permission
+already given, or broaden grants to make a check pass.
 
-Return a Dutch feature matrix with independently assessed implementation state and evidence level, concise reproducible failures, prioritized gaps and a short Markdown handoff for Codex. Cite exact repository paths/SHAs and actual tool/request/job/artifact identifiers when available. Redact secrets and unnecessary personal/system details. Never claim 100% or PASS for an unexecuted check.
+Report the concrete result, original request/job/artifact references, evidence
+limits, reproduced failure and next repair. No invented total percentage, new
+project, duplicate plan or per-patch review task. A full acceptance verdict still
+requires all original criteria; a scoped PASS proves only its stated boundary.
