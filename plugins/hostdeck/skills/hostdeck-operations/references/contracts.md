@@ -9,8 +9,12 @@ the connected server's actual tools and schemas. Required scopes are necessary
 conditions, not grants; device/session/effect checks still apply. Unknown
 host resource or prompt support must remain unknown, not accepted.
 
-Regenerate with `node --import tsx scripts/sync-hostdeck-reference.mjs --write`;
-validate without writing by replacing `--write` with `--check`.
+This marketplace copy is a snapshot of [product source 6bee466](https://github.com/MaxTomahawk/HostDeck/tree/6bee466e4287e188554c89c0f4f9869a6dec5d4c).
+The generator belongs to that product checkout, not this marketplace branch:
+[scripts/sync-hostdeck-reference.mjs](https://github.com/MaxTomahawk/HostDeck/blob/6bee466e4287e188554c89c0f4f9869a6dec5d4c/scripts/sync-hostdeck-reference.mjs).
+From its product root, regenerate with
+`node --import tsx scripts/sync-hostdeck-reference.mjs --write`; validate the
+product copy without writing by replacing `--write` with `--check`.
 
 ## browser
 
